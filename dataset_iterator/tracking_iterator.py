@@ -1,9 +1,9 @@
 import numpy as np
-from dlutils import MultiChannelIterator
+from dataset_iterator import MultiChannelIterator
 from random import random
 from sklearn.model_selection import train_test_split
 from .multichannel_iterator import copy_geom_tranform_parameters
-from dlutils.image_data_generator_mm import transfer_illumination_aug_parameters
+from dataset_iterator.image_data_generator_mm import transfer_illumination_aug_parameters
 
 class TrackingIterator(MultiChannelIterator):
 	def __init__(self,
