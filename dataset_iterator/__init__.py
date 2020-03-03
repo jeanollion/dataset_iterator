@@ -1,4 +1,4 @@
-name = "dlutils"
+name = "dataset_iterator"
 
 from .index_array_iterator import IndexArrayIterator
 from .image_data_generator_mm import ImageDataGeneratorMM

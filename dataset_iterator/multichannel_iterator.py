@@ -1,6 +1,6 @@
 import numpy as np
-from dlutils import IndexArrayIterator, ImageDataGeneratorMM
-from dlutils import pre_processing_utils as pp
+from dataset_iterator import IndexArrayIterator, ImageDataGeneratorMM
+from dataset_iterator import pre_processing_utils as pp
 from .utils import remove_duplicates
 from sklearn.model_selection import train_test_split
 from math import ceil

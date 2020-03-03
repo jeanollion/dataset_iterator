@@ -19,5 +19,5 @@ setuptools.setup(
         "Operating System :: OS Independent",
     ],
     python_requires='>=3',
-    install_requires=['h5py>=2.9', 'numpy', 'scipy', 'scikit-learn', 'keras']
+    install_requires=['h5py>=2.9', 'numpy', 'scipy', 'scikit-learn', 'tensorflow', 'keras_preprocessing']
 )

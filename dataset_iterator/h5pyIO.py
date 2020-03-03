@@ -1,5 +1,5 @@
 import h5py
-from dlutils import AtomicFileHandler
+from .atomic_file_handler import AtomicFileHandler
 from .datasetIO import DatasetIO
 
 class H5pyIO(DatasetIO):
