@@ -3,10 +3,8 @@ import numpy as np
 from scipy.ndimage import center_of_mass, find_objects, maximum_filter
 from scipy.ndimage.measurements import mean
 from math import copysign
-from dataset_iterator.image_data_generator_mm import has_object_at_y_borders
 import sys
 import itertools
-import dataset_iterator.pre_processing_utils as pp
 try:
 	import edt
 except Exception:
@@ -23,7 +21,6 @@ class DyIterator(TrackingIterator):
 		return_categories = False,
 		return_labels = False,
 		compute_edm = None, # expected values: "current" "all"
-		compute_weights=False,
 		mask_channels=[1, 2, 3],
 		weightmap_channel = None,
 		output_multiplicity = 1,
@@ -55,7 +52,6 @@ class DyIterator(TrackingIterator):
 		self.weightmap_channel = weightmap_channel
 		self.return_labels = return_labels
 		self.compute_edm = compute_edm
-		self.compute_weights=compute_weights
 		assert not compute_edm or compute_edm in ["all", "current"], "invalid value for compute_edm argument"
 		assert not compute_edm or 'edt' in sys.modules, "edt module not installed"
 		super().__init__(h5py_file_path, channel_keywords, input_channels, output_channels, None, None, channels_prev, channels_next, mask_channels, output_multiplicity, channel_scaling_param, group_keyword, image_data_generators, batch_size, shuffle, perform_data_augmentation, seed)
@@ -101,21 +97,8 @@ class DyIterator(TrackingIterator):
 					prevLabelIm = prevlabelIms[i,...,1]
 				_compute_dy(labelIms[i,...,2], labelIms[i,...,1], prevLabelIm, dyIm[i,...,1], categories_next[i,...,0] if self.return_categories else None)
 
-		if self.weightmap_channel is not None or self.compute_weights:
-			if self.compute_weights: # TODO use pp function
-				# no prev weights!
-				labelImsWM = labelIms[...,1:]
-				wm = np.ones(shape = labelImsWM.shape, dtype=np.float32)
-				n_nonzeros = np.count_nonzero(labelImsWM)
-				if n_nonzeros!=0:
-					n_tot = np.prod(labelImsWM.shape)
-					valnz = (n_tot - n_nonzeros) / n_nonzeros
-					wm[labelImsWM!=0]=valnz
-					for b,c in itertools.product(range(wm.shape[0]), range(wm.shape[-1])):
-						contours = pp.get_contour_mask(labelImsWM[b,...,c])
-						wm[b,...,c][contours] = 0
-			else:
-				wm = batch_by_channel[self.weightmap_channel]
+		if self.weightmap_channel is not None:
+			wm = batch_by_channel[self.weightmap_channel]
 			dyIm = np.concatenate([dyIm, wm], -1)
 			if self.return_categories:
 				if return_next:
@@ -218,3 +201,6 @@ def _compute_dy(labelIm, labelIm_prev, labelIm_of_prevCells, dyIm, categories=No
 			else: # previous has single next
 				value=1
 			categories[labelIm == label] = value
+
+def has_object_at_y_borders(mask_img):
+    return np.any(mask_img[[-1,0], :], 1) # np.flip()

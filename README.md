@@ -1,7 +1,5 @@
 # Dataset Iterator
-This repo contains
-- a keras iterator class for multi-channel images contained in dataset files such as hdf5
-- a data generator class with transformation specific to mother machine data.
+This repo contains keras iterator classes for multi-channel (time-lapse) images contained in dataset files such as hdf5.
 
 ## Dataset structure:
 One dataset file can contain several sub-datasets (dataset_name0, dataset_name1, etc...), the iterator will iterate through all of them as if they were concatenated.

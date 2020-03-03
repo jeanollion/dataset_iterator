@@ -1,6 +1,5 @@
 import numpy as np
-from dataset_iterator import IndexArrayIterator, ImageDataGeneratorMM
-from dataset_iterator import pre_processing_utils as pp
+from dataset_iterator import IndexArrayIterator
 from .utils import remove_duplicates
 from sklearn.model_selection import train_test_split
 from math import ceil
@@ -274,10 +273,6 @@ class MultiChannelIterator(IndexArrayIterator):
 					for k,v in params.items():
 						aug_param_array[i][chan_idx][k]=v
 				batch[i] = self._apply_augmentation(batch[i], chan_idx, params)
-			#else:
-			#	if chan_idx not in self.mask_channels: # in case no data augmentation -> set range to [0, 1] # todo add parameter ? # do this for all grayscale channels
-			#		batch[i] = pp.adjust_histogram_range(batch[i])
-
 		return batch
 
 	def _apply_augmentation(self, img, chan_idx, aug_params):
@@ -516,8 +511,9 @@ class MultiChannelIterator(IndexArrayIterator):
 		labels = [self.labels[i][j] for i,j in zip(ds_idx, idx)]
 		indices = [str(int(s[1]))+"-"+s[0].split('-')[1] for s in [l.split("_f") for l in labels]] #caveat: s[0].split('-')[1] is not the parent idx but the parentTrackHead idx, same in most case but ...
 		return values, path, labels, indices
+
 # class util methods
-def copy_geom_tranform_parameters(aug_param_source, aug_param_dest):
+def copy_geom_tranform_parameters(aug_param_source, aug_param_dest): # TODO : parametrizable
 	aug_param_dest['theta'] = aug_param_source.get('theta', 0)
 	aug_param_dest['tx'] = aug_param_source.get('tx', 0)
 	aug_param_dest['ty'] = aug_param_source.get('ty', 0)
