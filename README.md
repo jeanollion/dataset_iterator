@@ -45,3 +45,4 @@ test_it = MultiChannelIterator(dataset_file_path = file_path, channel_keywords =
 ```
 
 Such datasets can be generated directly from [BACMMAN software](https://github.com/jeanollion/bacmman).
+See [this tutorial](https://github.com/jeanollion/bacmman/wiki/FineTune-DistNet) for instance.
