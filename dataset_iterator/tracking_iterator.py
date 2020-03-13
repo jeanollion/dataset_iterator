@@ -3,6 +3,7 @@ from dataset_iterator import MultiChannelIterator
 from random import random
 from sklearn.model_selection import train_test_split
 from .multichannel_iterator import copy_geom_tranform_parameters
+import copy
 
 class TrackingIterator(MultiChannelIterator):
 	def __init__(self,

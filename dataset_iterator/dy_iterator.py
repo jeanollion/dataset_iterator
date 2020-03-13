@@ -12,7 +12,7 @@ except Exception:
 
 class DyIterator(TrackingIterator):
 	def __init__(self,
-		h5py_file_path,
+		dataset_file_path,
 		channel_keywords=['/raw', '/regionLabels', '/prevRegionLabels', '/edm'], # channel @1 must be label & @2 previous label
 		input_channels=[0],
 		output_channels = [1, 2, 3],
@@ -54,7 +54,7 @@ class DyIterator(TrackingIterator):
 		self.compute_edm = compute_edm
 		assert not compute_edm or compute_edm in ["all", "current"], "invalid value for compute_edm argument"
 		assert not compute_edm or 'edt' in sys.modules, "edt module not installed"
-		super().__init__(h5py_file_path, channel_keywords, input_channels, output_channels, None, None, channels_prev, channels_next, mask_channels, output_multiplicity, channel_scaling_param, group_keyword, image_data_generators, batch_size, shuffle, perform_data_augmentation, seed)
+		super().__init__(dataset_file_path, channel_keywords, input_channels, output_channels, None, None, channels_prev, channels_next, mask_channels, output_multiplicity, channel_scaling_param, group_keyword, image_data_generators, batch_size, shuffle, perform_data_augmentation, seed)
 
 	def _get_output_batch(self, batch_by_channel, ref_chan_idx, aug_param_array):
 		# dy is computed and returned instead of labels & prevLabels
