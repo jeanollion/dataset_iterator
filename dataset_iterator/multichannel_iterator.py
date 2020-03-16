@@ -32,6 +32,8 @@ class MultiChannelIterator(IndexArrayIterator):
 		self.channel_scaling_param = channel_scaling_param
 		self.dtype = dtype
 		self.perform_data_augmentation=perform_data_augmentation
+		if mask_channels is None:
+			mask_channels = []
 		self.mask_channels = mask_channels
 		self.output_multiplicity=output_multiplicity
 		if len(mask_channels)>0:
