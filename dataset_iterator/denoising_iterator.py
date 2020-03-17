@@ -37,13 +37,12 @@ class DenoisingIterator(MultiChannelIterator):
 			wm = self.weight_map_functions[output_chan_idx](batch)
 		else:
 			wm = None
+		batch_i = None
 		if self.output_postprocessing_functions is not None and self.output_postprocessing_functions[output_chan_idx] is not None:
 			batch = self.output_postprocessing_functions[output_chan_idx](batch)
 			if isinstance(batch, tuple) or isinstance(batch, list):
 				assert len(batch)==2, "if output_postprocessing_function must return either output batch either input & output batches"
 				batch_i, batch = batch
-			else:
-				batch_i = None
 		if wm is not None:
 			batch = np.concatenate([batch, wm], -1)
 		if batch_i is not None:
