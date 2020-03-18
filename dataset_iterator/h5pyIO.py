@@ -28,6 +28,14 @@ class H5pyIO(DatasetIO):
     def write_direct(self, path, data, dest_sel):
         self.h5py_file[path].write_direct(data, dest_sel)
 
+    @staticmethod
+    def get_parent_path(path):
+        idx = path.rfind('/')
+        if idx>0:
+            return path[:idx]
+        else:
+            return None
+
 def h5py_dataset_iterator(g, prefix=''):
     for key in g.keys():
         item = g[key]
@@ -42,10 +50,3 @@ def get_dataset_paths(h5py_file, suffix, group_keyword=None):
 
 def get_datasets(h5py_file, suffix, group_keyword=None):
     return [ds for (path, ds) in h5py_dataset_iterator(h5py_file) if path.endswith(suffix) and (group_keyword==None or group_keyword in path)]
-
-def get_parent_path(path):
-    idx = path.rfind('/')
-    if idx>0:
-        return path[:idx]
-    else:
-        return None

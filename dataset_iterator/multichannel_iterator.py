@@ -97,11 +97,11 @@ class MultiChannelIterator(IndexArrayIterator):
 				if scaling_info!=None:
 					self.channel_scaling[c]=[None]*len(self.paths)
 					for ds_idx, path in enumerate(self.paths):
-						group = get_parent_path(path)
+						group = self.datasetIO.get_parent_path(path)
 						for i in range(scaling_info.get('level', 1)):
-							group = get_parent_path(group)
+							group = self.datasetIO.get_parent_path(group)
 							if group==None:
-								raise ValueError("scaling group level too high for channel {}({}) group path: {}".format(c, channel_keywords[c]), _get_parent_path(path))
+								raise ValueError("scaling group level too high for channel {}({}) group path: {}".format(c, channel_keywords[c]), self.datasetIO.get_parent_path(path))
 						# percentiles are located in attributes of group
 						# TODO test if this raise an error when not present
 						percentiles = self.datasetIO.get_attribute(group, channel_keywords[c].replace('/', '')+'_percentiles')
@@ -333,6 +333,12 @@ class MultiChannelIterator(IndexArrayIterator):
 		else:
 			return self.paths[ds_idx].replace(self.channel_keywords[0], self.channel_keywords[channel_idx])
 
+	def inspect_indices(self, index_array):
+		a = np.array(index_array, dtype=np.int)
+		i = self._get_ds_idx(a)
+		p = [self.paths[ii] for ii in i]
+		return(a, i, p)
+
 	def predict(self, output_file_path, model, output_keys, write_every_n_batches = 100, output_shape = None, apply_to_prediction=None, **create_dataset_options):
 		# todo: modify so that losses / accuracy are computed
 		of = get_datasetIO(output_file_path, 'a')
@@ -365,7 +371,6 @@ class MultiChannelIterator(IndexArrayIterator):
 				batch_by_channel, aug_param_array, ref_chan_idx = self._get_batch_by_channel(index_array, False, input_only=True)
 				input = self._get_input_batch(batch_by_channel, ref_chan_idx, aug_param_array)
 				cur_pred = model.predict(input)
-				#cur_pred= input
 				if apply_to_prediction is not None:
 					cur_pred = apply_to_prediction(cur_pred)
 				if cur_pred.shape[-1]!=len(output_keys):

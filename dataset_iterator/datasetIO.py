@@ -24,6 +24,10 @@ class DatasetIO:
     def __contains__(self, key):
         raise NotImplementedError
 
+    @staticmethod
+    def get_parent_path(path):
+        raise NotImplementedError
+    
 def get_datasetIO(file_path, mode):
     if file_path.endswith(".h5") or file_path.endswith(".hdf5"):
         from .h5pyIO import H5pyIO
