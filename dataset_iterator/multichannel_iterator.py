@@ -163,7 +163,7 @@ class MultiChannelIterator(IndexArrayIterator):
 		perform_data_augmentation_test=options.pop('perform_data_augmentation_test', self.perform_data_augmentation)
 		seed_test=options.pop('seed_test', self.seed)
 		train_idx, test_idx = train_test_split(self.allowed_indexes, **options)
-
+		self._close_datasetIO()
 		train_iterator = copy.copy(self)
 		train_iterator.set_allowed_indexes(train_idx)
 
@@ -531,3 +531,5 @@ def copy_geom_tranform_parameters(aug_param_source, aug_param_dest): # TODO : pa
 	aug_param_dest['flip_vertical'] = aug_param_source.get('flip_vertical', 0)
 	if 'bacteria_swim' in aug_param_source:
 		aug_param_dest['bacteria_swim'] = copy.deepcopy(aug_param_source['bacteria_swim'])
+	if 'rotate90' in aug_param_source:
+		aug_param_dest['rotate90'] = aug_param_dest['rotate90']
