@@ -21,20 +21,15 @@ class AutoencoderIterator(MultiChannelIterator):
         self.extract_tile_function = extract_tile_function
         super().__init__(dataset_file_path, channel_keywords, [0], [0], weight_map_functions, output_postprocessing_functions, None, output_multiplicity, channel_scaling_param, group_keyword, image_data_generators, batch_size, shuffle, perform_data_augmentation, seed)
 
-    def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array):
-        batch = super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array)
-        if self.extract_tile_function is not None:
-            return self.extract_tile_function(batch)
-        else:
-            return batch
-
     def _get_batches_of_transformed_samples(self, index_array):
         batch_by_channel, aug_param_array, ref_chan_idx = self._get_batch_by_channel(index_array, self.perform_data_augmentation)
-        output = self._get_output_batch(batch_by_channel, ref_chan_idx, aug_param_array)
+        if self.extract_tile_function is not None: # if several channels -> return coords and extract same tiles for all channels
+            batch_by_channel[ref_chan_idx] = self.extract_tile_function(batch_by_channel[ref_chan_idx])
+        output = self._get_output_batch(batch_by_channel, ref_chan_idx, None)
         if isinstance(output, list):
             [input, output] = output
         else:
-            input = self._get_input_batch(batch_by_channel, ref_chan_idx, aug_param_array)
+            input = self._get_input_batch(batch_by_channel, ref_chan_idx, None)
         if self.output_multiplicity>1:
             if not isinstance(output, list):
                 output = [output] * self.output_multiplicity

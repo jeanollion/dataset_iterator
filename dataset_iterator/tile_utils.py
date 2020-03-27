@@ -6,13 +6,14 @@ from .utils import ensure_multiplicity
 
 OVERLAP_MODE = ["NO_OVERLAP", "ALLOW", "FORCE"]
 
-def extract_tile_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, random_stride=False):
+def extract_tile_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, random_stride=False, scaling_function=None):
     def func(batch):
         tiles = extract_tiles(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, random_stride=random_stride, return_coords=False)
         if perform_augmentation:
-            return augment_tiles_inplace(tiles, all([s==tile_shape[0] for s in tile_shape]), len(tile_shape))
-        else:
-            return tiles
+            tiles = augment_tiles_inplace(tiles, all([s==tile_shape[0] for s in tile_shape]), len(tile_shape))
+        if scaling_function is not None:
+            tiles = scaling_function(tiles)
+        return tiles
     return func
 
 def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, random_stride=False, return_coords=False):
