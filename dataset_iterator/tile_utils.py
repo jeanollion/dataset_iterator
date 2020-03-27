@@ -2,7 +2,7 @@ import itertools
 from math import ceil
 import numpy as np
 from numpy.random import randint
-from .helpers import ensure_multiplicity
+from .utils import ensure_multiplicity
 
 OVERLAP_MODE = ["NO_OVERLAP", "ALLOW", "FORCE"]
 
@@ -10,7 +10,7 @@ def extract_tile_function(tile_shape, perform_augmentation=True, overlap_mode=OV
     def func(batch):
         tiles = extract_tiles(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, random_stride=random_stride)
         if perform_augmentation:
-            return augment_tiles(tiles, all([s==tile_shape[0] for s in tile_shape]), len(tile_shape))
+            return augment_tiles_inplace(tiles, all([s==tile_shape[0] for s in tile_shape]), len(tile_shape))
         else:
             return tiles
     return func
@@ -100,3 +100,17 @@ def augment_tiles(tiles, rotate, n_dims=2):
         rot_axis = (1, 2) if n_dims==2 else (2, 3)
         augmented = np.concatenate((augmented, np.rot90(augmented, k=1, axes=rot_axis)))
     return augmented
+
+AUG_FUN = [
+    lambda img : np.flip(img, axis=0),
+    lambda img : np.flip(img, axis=1),
+    lambda img : np.flip(img, axis=(0, 1)),
+    lambda img : np.rot90(img, k=1, axes=(0,1))
+]
+
+def augment_tiles_inplace(tiles, rotate, n_dims=2):
+    aug = randint(-1, 4 if rotate else 3, size=n_tiles)
+    for b in range(tile.shape[0]):
+        if aug[b]>=0:
+            tiles[b] = AUG_FUN[aug[b]](tiles[b])
+    return tiles
