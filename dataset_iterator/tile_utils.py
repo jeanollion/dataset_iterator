@@ -101,16 +101,31 @@ def augment_tiles(tiles, rotate, n_dims=2):
         augmented = np.concatenate((augmented, np.rot90(augmented, k=1, axes=rot_axis)))
     return augmented
 
-AUG_FUN = [
+AUG_FUN_2D = [
+    lambda img : img,
     lambda img : np.flip(img, axis=0),
     lambda img : np.flip(img, axis=1),
     lambda img : np.flip(img, axis=(0, 1)),
-    lambda img : np.rot90(img, k=1, axes=(0,1))
+    lambda img : np.rot90(img, k=1, axes=(0,1)),
+    lambda img : np.rot90(img, k=3, axes=(0,1)), # rot + flip0
+    lambda img : np.rot90(np.flip(img, axis=1), k=1, axes=(0,1)),
+    lambda img : np.rot90(np.flip(img, axis=(0, 1)), k=1, axes=(0,1))
+]
+AUG_FUN_3D = [
+    lambda img : img,
+    lambda img : np.flip(img, axis=1),
+    lambda img : np.flip(img, axis=2),
+    lambda img : np.flip(img, axis=(1, 2)),
+    lambda img : np.rot90(img, k=1, axes=(1,2)),
+    lambda img : np.rot90(img, k=3, axes=(1,2)), # rot + flip0
+    lambda img : np.rot90(np.flip(img, axis=2), k=1, axes=(1,2)),
+    lambda img : np.rot90(np.flip(img, axis=(1, 2)), k=1, axes=(1,2))
 ]
 
 def augment_tiles_inplace(tiles, rotate, n_dims=2):
-    aug = randint(-1, 4 if rotate else 3, size=tiles.shape[0])
+    aug_fun = AUG_FUN_2D if n_dims==2 else AUG_FUN_3D
+    aug = randint(0, len(aug_fun) if rotate else len(aug_fun)/2, size=tiles.shape[0])
     for b in range(tiles.shape[0]):
-        if aug[b]>=0:
-            tiles[b] = AUG_FUN[aug[b]](tiles[b])
+        if aug[b]>0: # 0 is identity
+            tiles[b] = aug_fun[aug[b]](tiles[b])
     return tiles
