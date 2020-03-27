@@ -109,7 +109,7 @@ AUG_FUN = [
 ]
 
 def augment_tiles_inplace(tiles, rotate, n_dims=2):
-    aug = randint(-1, 4 if rotate else 3, size=n_tiles)
+    aug = randint(-1, 4 if rotate else 3, size=tile.shape[0])
     for b in range(tile.shape[0]):
         if aug[b]>=0:
             tiles[b] = AUG_FUN[aug[b]](tiles[b])
