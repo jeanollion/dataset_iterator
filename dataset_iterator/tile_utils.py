@@ -86,7 +86,7 @@ def _get_tile_coords_axis(size, tile_size, overlap_mode=OVERLAP_MODE[1], min_ove
     stride = np.cumsum(stride)
     coords = np.array([tile_size*idx + stride[idx] for idx in range(n_tiles)])
     if random_stride:
-        half_mean_stride = ceil(0.5 * sum_stride/(n_tiles-1))
+        half_mean_stride = np.abs(ceil(0.5 * sum_stride/(n_tiles-1)))
         coords += randint(-half_mean_stride, half_mean_stride, size=n_tiles)
         coords[0] = max(coords[0], 0)
         coords[-1] = min(coords[-1], size-tile_size)
