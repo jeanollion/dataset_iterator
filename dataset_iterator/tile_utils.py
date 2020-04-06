@@ -81,7 +81,6 @@ def _get_tile_coords_axis(size, tile_size, overlap_mode=OVERLAP_MODE[1], min_ove
     stride = np.array([0]+[sum_stride//(n_tiles-1)]*(n_tiles-1), dtype=int)
     remains = sum_stride%(n_tiles-1)
     stride[1:remains+1] += 1
-    assert stride.sum()==sum_stride, "sum stride wrong"
     if o_mode!=0:
         stride=-stride
     stride = np.cumsum(stride)
