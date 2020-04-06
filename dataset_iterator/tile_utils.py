@@ -1,5 +1,5 @@
 import itertools
-from math import ceil
+from math import ceil, floor
 import numpy as np
 from numpy.random import randint
 from .utils import ensure_multiplicity
@@ -29,7 +29,7 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
         one of ["NO_OVERLAP", "ALLOW", "FORCE"]
         "NO_OVERLAP" maximum number of tiles so that they do not overlap
         "ALLOW" maximum number of tiles that fit in the image, allowing overlap
-        "FORCE"  maximum number of tiles that fit in the image with a minimum overlap defined by min_overlap
+        "FORCE"  maximum number of tiles that fit in the image while enforcing a minimum overlap defined by min_overlap. If min_overlap is less than zero, it enforces a distance between tiles
     min_overlap : integer or tuple
         min overlap along each spatial dimension. only used in mode "FORCE"
     random_stride : type
@@ -72,16 +72,19 @@ def _get_tile_coords_axis(size, tile_size, overlap_mode=OVERLAP_MODE[1], min_ove
         n_tiles = ceil(size/tile_size)
     elif o_mode==2:
         assert min_overlap<tile_size, "invalid min_overlap: value: {} should be <{}".format(min_overlap, tile_size)
-        n_tiles = ceil((size - min_overlap)/(tile_size - min_overlap))
+        if min_overlap>=0:
+            n_tiles = ceil((size - min_overlap)/(tile_size - min_overlap))
+        else:
+            n_tiles = floor((size - min_overlap)/(tile_size - min_overlap))
     if n_tiles==2:
-        if o_mode==2 or (o_mode==1 and not random_stride):
+        if (o_mode==2 and min_overlap>=0) or (o_mode==1 and not random_stride):
             return [0, size-tile_size]
 
     sum_stride = np.abs(n_tiles * tile_size - size)
     stride = np.array([0]+[sum_stride//(n_tiles-1)]*(n_tiles-1), dtype=int)
     remains = sum_stride%(n_tiles-1)
     stride[1:remains+1] += 1
-    if o_mode!=0:
+    if o_mode!=0 and not (o_mode==2 and min_overlap<0):
         stride=-stride
     stride = np.cumsum(stride)
     coords = np.array([tile_size*idx + stride[idx] for idx in range(n_tiles)])
