@@ -82,13 +82,16 @@ class MultiChannelIterator(IndexArrayIterator):
 					raise ValueError('Dataset {dsi} with path {dspath} from channel {chan}({chank}) has shape {dsshape} that differs from first dataset with path {ds1path} with shape {ds1shape}'.format(dsi=ds_idx, dspath=self._get_dataset_path(c, ds_idx), chan=c, chank=self.channel_keywords[c], dsshape=ds.shape[1:], ds1path=self._get_dataset_path(c, 0), ds1shape=self.channel_image_shapes[c] ))
 
 		# labels
-		self.labels = [self.datasetIO.get_dataset(path.replace(self.channel_keywords[0], '/labels')) for path in self.paths]
-		for i, ds in enumerate(self.labels):
-			 self.labels[i] = np.char.asarray(ds[()].astype('unicode')) # todo: check if necessary to convert to char array ? unicode is necessary
-		if len(self.labels)!=len(self.ds_array[0]):
-			raise ValueError('Invalid input file: number of label array differ from dataset number')
-		if any(len(self.labels[i].shape)==0 or self.labels[i].shape[0]!=self.ds_array[0][i].shape[0] for i in range(len(self.labels))):
-			raise ValueError('Invalid input file: at least one dataset has element numbers that differ from corresponding label array')
+		try:
+			self.labels = [self.datasetIO.get_dataset(path.replace(self.channel_keywords[0], '/labels')) for path in self.paths]
+			for i, ds in enumerate(self.labels):
+				self.labels[i] = np.char.asarray(ds[()].astype('unicode')) # todo: check if necessary to convert to char array ? unicode is necessary
+			if len(self.labels)!=len(self.ds_array[0]):
+				raise ValueError('Invalid input file: number of label array differ from dataset number')
+			if any(len(self.labels[i].shape)==0 or self.labels[i].shape[0]!=self.ds_array[0][i].shape[0] for i in range(len(self.labels))):
+				raise ValueError('Invalid input file: at least one dataset has element numbers that differ from corresponding label array')
+		except:
+			pass
 		# set scaling information for each dataset
 		self.channel_scaling = [None]*len(channel_keywords)
 		if self.channel_scaling_param!=None:
@@ -402,9 +405,10 @@ class MultiChannelIterator(IndexArrayIterator):
 		self.perform_data_augmentation = perform_aug
 
 	def _ensure_dataset(self, output_file, output_shape, output_keys, ds_i, **create_dataset_options):
-		label_path = self.paths[ds_i].replace(self.channel_keywords[0], '/labels')
-		if label_path not in output_file:
-			output_file.create_dataset(label_path, data = np.asarray(self.labels[ds_i], dtype=np.string_))
+		if self.labels is not None:
+			label_path = self.paths[ds_i].replace(self.channel_keywords[0], '/labels')
+			if label_path not in output_file:
+				output_file.create_dataset(label_path, data = np.asarray(self.labels[ds_i], dtype=np.string_))
 		dim_path = self.paths[ds_i].replace(self.channel_keywords[0], '/originalDimensions')
 		if dim_path not in output_file and dim_path in datasetIO:
 			output_file.create_dataset(dim_path, data=self.datasetIO.get_dataset(dim_path))
@@ -515,7 +519,7 @@ class MultiChannelIterator(IndexArrayIterator):
 		values[:,0] = idx
 		values[:,1] = ds_idx
 		path = [self.paths[i] for i in ds_idx]
-		labels = [self.labels[i][j] for i,j in zip(ds_idx, idx)]
+		labels = [self.labels[i][j] for i,j in zip(ds_idx, idx)] if self.labels is not None else None
 		indices = [str(int(s[1]))+"-"+s[0].split('-')[1] for s in [l.split("_f") for l in labels]] #caveat: s[0].split('-')[1] is not the parent idx but the parentTrackHead idx, same in most case but ...
 		return values, path, labels, indices
 
