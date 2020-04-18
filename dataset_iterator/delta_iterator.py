@@ -5,17 +5,18 @@ import numpy as np
 
 class DeltaIterator(TrackingIterator):
     def __init__(self,
-        dataset_file_path,
+        dataset,
         channel_keywords=['/raw', '/regionLabels', '/prevRegionLabels'], # channel @1 must be label & @2 previous label
-        group_keyword=None,
-        image_data_generators=None,
-        batch_size=32,
-        shuffle=True,
-        perform_data_augmentation=True,
-        seed=None,
-        dtype='float32'):
+        **kwargs):
         assert len(channel_keywords)==3, "Channels must be: raw, regions labels and preious region labels"
-        super().__init__(dataset_file_path, channel_keywords, [0, 1], [2], None, None, [True, True, False], [False, False, False], [1, 2], 1, None, group_keyword, image_data_generators, batch_size, shuffle, perform_data_augmentation, seed)
+        super().__init__(dataset=dataset,
+                         channel_keywords=channel_keywords,
+                         input_channels=[0, 1],
+                         output_channels=[2],
+                         channels_prev=[True, True, False],
+                         channels_next=[False, False, False],
+                         mask_channels=[1, 2],
+                         **kwargs)
 
     def _get_input_batch(self, batch_by_channel, ref_chan_idx, aug_param_array):
         # current frame: remove all cells but no_next

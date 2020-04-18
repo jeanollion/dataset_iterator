@@ -1,7 +1,6 @@
 class DatasetIO:
-    def __init__(self, file_path, mode):
-        self.file_path=file_path
-        self.mode = mode
+    def __init__(self, path):
+        self.path=path
 
     def close(self):
         raise NotImplementedError
@@ -13,7 +12,7 @@ class DatasetIO:
         raise NotImplementedError
 
     def get_attribute(self, path, attribute_name):
-        raise NotImplementedError
+        return None
 
     def create_dataset(self, path, data, **create_dataset_options):
         raise NotImplementedError
@@ -27,10 +26,12 @@ class DatasetIO:
     @staticmethod
     def get_parent_path(path):
         raise NotImplementedError
-    
-def get_datasetIO(file_path, mode):
-    if file_path.endswith(".h5") or file_path.endswith(".hdf5"):
+
+def get_datasetIO(dataset, mode):
+    if isinstance(dataset, DatasetIO):
+        return dataset
+    elif dataset.endswith(".h5") or dataset.endswith(".hdf5"):
         from .h5pyIO import H5pyIO
-        return H5pyIO(file_path, mode)
+        return H5pyIO(dataset, mode)
     else:
         raise ValueError("File type not supported (yet)")

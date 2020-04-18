@@ -3,23 +3,17 @@ from dataset_iterator import MultiChannelIterator
 
 class AutoencoderIterator(MultiChannelIterator):
     def __init__(self,
-            dataset_file_path,
+            dataset,
             channel_keywords=['/raw'],
             extract_tile_function = None, # if not none: each batch will be split into tiles
-            weight_map_functions=None,
-            output_postprocessing_functions=None, # we accept a function that returns both input and output
-            output_multiplicity = 1,
-            channel_scaling_param=None, #[{'level':1, 'qmin':5, 'qmax':95}],
-            group_keyword=None,
-            image_data_generators=None,
-            batch_size=32,
-            shuffle=True,
-            perform_data_augmentation=True,
-            seed=None,
-            dtype='float32'):
+            **kwargs):
         assert len(channel_keywords)==1, "Only one channel must be provided"
         self.extract_tile_function = extract_tile_function
-        super().__init__(dataset_file_path, channel_keywords, [0], [0], weight_map_functions, output_postprocessing_functions, None, output_multiplicity, channel_scaling_param, group_keyword, image_data_generators, batch_size, shuffle, perform_data_augmentation, seed)
+        super().__init__(dataset=dataset,
+                         channel_keywords=channel_keywords,
+                         input_channels=[0],
+                         output_channels=[0],
+                         **kwargs)
 
     def _get_batches_of_transformed_samples(self, index_array):
         batch_by_channel, aug_param_array, ref_chan_idx = self._get_batch_by_channel(index_array, self.perform_data_augmentation)

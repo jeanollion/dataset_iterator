@@ -4,8 +4,8 @@ from .datasetIO import DatasetIO
 
 class H5pyIO(DatasetIO):
     def __init__(self, h5py_file, mode):
-        super().__init__(h5py_file, mode)
-        self.h5py_file = h5py.File(AtomicFileHandler(h5py_file), 'r') # this does work with version 1.14 and 2.9 of h5py but not with version 2.8
+        super().__init__(h5py_file)
+        self.h5py_file = h5py.File(AtomicFileHandler(h5py_file), mode) # this does work with version 1.14 and 2.9 of h5py but not with version 2.8
 
     def close(self):
         self.h5py_file.close()
