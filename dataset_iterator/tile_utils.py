@@ -73,10 +73,15 @@ def _get_tile_coords_axis(size, tile_size, overlap_mode=OVERLAP_MODE[1], min_ove
     elif o_mode==2:
         assert min_overlap<tile_size, "invalid min_overlap: value: {} should be <{}".format(min_overlap, tile_size)
         if min_overlap>=0:
-            n_tiles = ceil((size - min_overlap)/(tile_size - min_overlap))
+            n_tiles = 1 + ceil((size - tile_size)/(tile_size - min_overlap)) # size = tile_size + (n-1) * (tile_size - min_overlap)
         else:
-            n_tiles = floor((size - min_overlap)/(tile_size - min_overlap))
-    if n_tiles==2:
+            n_tiles = floor((size - min_overlap)/(tile_size - min_overlap)) # n-1 gaps and n tiles: size = n * tile_size + (n-1)*-min_overlap
+    if n_tiles==1:
+        coords = [(size - tile_size)//2]
+        if random_stride and coords[0]>0:
+            coords += randint(-coords[0], size-(coords[0]+tile_size), size=1)
+        return coords
+    elif n_tiles==2:
         if (o_mode==2 and min_overlap>=0) or (o_mode==1 and not random_stride):
             return [0, size-tile_size]
 
@@ -89,8 +94,11 @@ def _get_tile_coords_axis(size, tile_size, overlap_mode=OVERLAP_MODE[1], min_ove
     stride = np.cumsum(stride)
     coords = np.array([tile_size*idx + stride[idx] for idx in range(n_tiles)])
     if random_stride:
-        half_mean_stride = np.abs(ceil(0.5 * sum_stride/(n_tiles-1)))
-        coords += randint(-half_mean_stride, half_mean_stride, size=n_tiles)
+        if min_overlap>0:
+            half_mean_gap = floor(0.5 * (tile_size - sum_stride/(n_tiles-1)))
+        else:
+            half_mean_gap = ceil(0.5 * sum_stride/(n_tiles-1))
+        coords += randint(-half_mean_gap, half_mean_gap+1, size=n_tiles)
         coords[0] = max(coords[0], 0)
         coords[-1] = min(coords[-1], size-tile_size)
     return coords
