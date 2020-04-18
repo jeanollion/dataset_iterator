@@ -19,8 +19,10 @@ class MultipleFileIO(DatasetIO):
     ----------
     directory : string
         Each subdirectory in this directory will be considered to contain images from one channel.
+    n_image_per_file : int
+        how many images contains each file. set zero if each file contains several images but this number is unknown
     target_shape : tuple
-        tuple of integers, dimensions to resize input images to.
+        tuple of integers, dimensions to resize input images to. if None all image must have same dimension. no check is done at initialization
     channel_map_interpolation : dict
         interpolation scheme for each channel. Key is the channel directory
         value is the interpolation method used to resample the image if the
@@ -29,9 +31,7 @@ class MultipleFileIO(DatasetIO):
           If PIL version 1.1.3 or newer is installed, "lanczos" is also
           supported. If PIL version 3.4.0 or newer is installed, "box" and
           "hamming" are also supported.
-          if None: no resampling is performed
-    n_image_per_file : int
-        how many images contains each file. set zero if each file contains several images but this number is unknown
+          if None: no resampling is performed else target_shape must be provided. if not none, an iterpolation for each channel that will be used must be provided
     data_format : type
         one of `channels_first`, `channels_last`.
     data_type : string
@@ -50,7 +50,7 @@ class MultipleFileIO(DatasetIO):
     data_type
 
     """
-    def __init__(self, directory, n_image_per_file=1, target_shape=None, channel_map_interpolation=None , data_format='channels_last', data_type='float32', supported_image_fun = lambda f : f.endswith(('.png', '.tif', '.tiff'))):
+    def __init__(self, directory, n_image_per_file, target_shape=None, channel_map_interpolation=None , data_format='channels_last', data_type='float32', supported_image_fun = lambda f : f.endswith(('.png', '.tif', '.tiff'))):
         super().__init__(directory)
         if pil_image is None:
             raise ImportError('Could not import PIL.Image. The use of `MultipleFilesIO` requires PIL.')
