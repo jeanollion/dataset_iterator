@@ -12,7 +12,7 @@ except ImportError:
     pil_image = None
 
 
-class MultipleFilesIO(DatasetIO):
+class MultipleFileIO(DatasetIO):
     """Allows to iterate an image dataset that contains several image files
 
     Parameters
