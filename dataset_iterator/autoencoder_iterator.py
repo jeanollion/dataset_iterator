@@ -5,20 +5,19 @@ class AutoencoderIterator(MultiChannelIterator):
     def __init__(self,
             dataset,
             channel_keywords=['/raw'],
-            extract_tile_function = None, # if not none: each batch will be split into tiles
             **kwargs):
         assert len(channel_keywords)==1, "Only one channel must be provided"
-        self.extract_tile_function = extract_tile_function
         super().__init__(dataset=dataset,
                          channel_keywords=channel_keywords,
                          input_channels=[0],
                          output_channels=[0],
                          **kwargs)
-
+        
+    # we allow the output_postprocessing_function to return the modified input
     def _get_batches_of_transformed_samples(self, index_array):
         batch_by_channel, aug_param_array, ref_chan_idx = self._get_batch_by_channel(index_array, self.perform_data_augmentation)
-        if self.extract_tile_function is not None: # if several channels -> return coords and extract same tiles for all channels
-            batch_by_channel[ref_chan_idx] = self.extract_tile_function(batch_by_channel[ref_chan_idx])
+        #if self.extract_tile_function is not None: # if several channels -> save numpy state, and reset it before each tile computation
+        #    batch_by_channel[ref_chan_idx] = self.extract_tile_function(batch_by_channel[ref_chan_idx])
         output = self._get_output_batch(batch_by_channel, ref_chan_idx, None)
         if isinstance(output, list):
             [input, output] = output

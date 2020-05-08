@@ -17,6 +17,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 output_channels=[0],
                 weight_map_functions=None,
                 output_postprocessing_functions=None,
+                extract_tile_function=None,
                 mask_channels=[],
                 output_multiplicity = 1,
                 channel_scaling_param=None, #[{'level':1, 'qmin':5, 'qmax':95}],
@@ -63,6 +64,7 @@ class MultiChannelIterator(IndexArrayIterator):
         if output_postprocessing_functions is not None:
             assert len(output_postprocessing_functions)==len(output_postprocessing_functions), "output postprocessing functions should have same length as output channels"
         self.output_postprocessing_functions = output_postprocessing_functions
+        self.extract_tile_function=extract_tile_function
         self.paths=None
         self._open_datasetIO()
         # check that all ds have compatible length between input and output
@@ -231,6 +233,13 @@ class MultiChannelIterator(IndexArrayIterator):
         aug_param_array = [[dict()]*len(self.channel_keywords) for i in range(len(index_array))]
         for chan_idx in channels:
             batch_by_channel[chan_idx] = self._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, channels[0], aug_param_array, perform_augmentation=perform_augmentation)
+
+        if self.extract_tile_function is not None:
+            numpy_rand_state = np.random.get_state()
+            for chan_idx in channels:
+                np.random.set_state(numpy_rand_state) # ensure same tile + aug if tile fun implies randomness
+                batch_by_channel[chan_idx] = self.extract_tile_function(batch_by_channel[chan_idx])
+
         return batch_by_channel, aug_param_array, channels[0]
 
     def _get_input_batch(self, batch_by_channel, ref_chan_idx, aug_param_array):
