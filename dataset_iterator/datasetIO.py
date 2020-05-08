@@ -1,6 +1,4 @@
 class DatasetIO:
-    def __init__(self, path):
-        self.path=path
 
     def close(self):
         raise NotImplementedError
@@ -14,10 +12,10 @@ class DatasetIO:
     def get_attribute(self, path, attribute_name):
         return None
 
-    def create_dataset(self, path, data, **create_dataset_options):
+    def create_dataset(self, path, **create_dataset_kwargs):
         raise NotImplementedError
 
-    def write_direct(self, path, data, dest_sel):
+    def write_direct(self, path, data, source_sel, dest_sel):
         raise NotImplementedError
 
     def __contains__(self, key):
@@ -27,11 +25,12 @@ class DatasetIO:
     def get_parent_path(path):
         raise NotImplementedError
 
-def get_datasetIO(dataset, mode):
-    if isinstance(dataset, DatasetIO):
+def get_datasetIO(dataset, mode='r'):
+    print("type: {}, subclass: {}".format(type(dataset), issubclass(type(dataset), DatasetIO)))
+    if issubclass(type(dataset), DatasetIO):
         return dataset
-    elif dataset.endswith(".h5") or dataset.endswith(".hdf5"):
-        from .h5pyIO import H5pyIO
-        return H5pyIO(dataset, mode)
-    else:
-        raise ValueError("File type not supported (yet)")
+    elif isinstance(dataset, str):
+        if dataset.endswith(".h5") or dataset.endswith(".hdf5"):
+            from .h5pyIO import H5pyIO
+            return H5pyIO(dataset, mode)
+    raise ValueError("File type not supported (yet)")

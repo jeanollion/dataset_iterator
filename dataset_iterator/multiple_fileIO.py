@@ -51,7 +51,8 @@ class MultipleFileIO(DatasetIO):
 
     """
     def __init__(self, directory, n_image_per_file, target_shape=None, channel_map_interpolation=None , data_format='channels_last', data_type='float32', supported_image_fun = lambda f : f.endswith(('.png', '.tif', '.tiff'))):
-        super().__init__(directory)
+        super().__init__()
+        self.path = directory
         if pil_image is None:
             raise ImportError('Could not import PIL.Image. The use of `MultipleFilesIO` requires PIL.')
         self.n_image_per_file = n_image_per_file
@@ -83,7 +84,7 @@ class MultipleFileIO(DatasetIO):
     def get_attribute(self, path, attribute_name):
         return None
 
-    def create_dataset(self, path, data, **create_dataset_options):
+    def create_dataset(self, path, **create_dataset_kwargs):
         raise NotImplementedError("Not implemented yet")
 
     def __contains__(self, key):
@@ -98,14 +99,13 @@ class MultipleFileIO(DatasetIO):
                     return True
             return False
 
-    def write_direct(self, path, data, dest_sel):
+    def write_direct(self, path, data, source_sel, dest_sel):
         raise NotImplementedError("Not implemented yet")
 
     def get_images(self, path):
         return [join(path, f) for f in listdir(path) if self.supported_image_fun(f)]
 
-    @staticmethod
-    def get_parent_path(path):
+    def get_parent_path(self, path):
         return os.path.dirname(os.path.normpath(path))
 
 # adapted from keras_preprocessing

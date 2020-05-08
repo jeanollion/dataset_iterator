@@ -7,6 +7,7 @@ import time
 import copy
 from math import copysign
 from .datasetIO import DatasetIO, get_datasetIO
+from .utils import ensure_multiplicity
 
 class MultiChannelIterator(IndexArrayIterator):
     def __init__(self,
@@ -357,11 +358,21 @@ class MultiChannelIterator(IndexArrayIterator):
         p = [self.paths[ii] for ii in i]
         return(a, i, p)
 
-    def predict(self, output_file_path, model, output_keys, write_every_n_batches = 100, output_shape = None, apply_to_prediction=None, **create_dataset_options):
-        # todo: modify so that losses / accuracy are computed
-        of = get_datasetIO(output_file_path, 'a')
-        if output_shape is None:
-            output_shape = self.channel_image_shapes[0]
+    def predict(self, output, model, output_keys, write_every_n_batches = 100, n_output_channels=1, output_image_shapes = None, apply_to_prediction=None, close_outputIO=True, **create_dataset_options):
+        if isinstance(output, DatasetIO):
+            of = output
+        else:
+            of = get_datasetIO(output, 'a')
+        if output_image_shapes is None:
+            output_image_shapes = self.channel_image_shapes[0]
+        if not isinstance(output_keys, list):
+            output_keys = [output_keys]
+        if not isinstance(output_image_shapes, list):
+            output_image_shapes = [output_image_shapes]
+        output_image_shapes = ensure_multiplicity(len(output_keys), output_image_shapes)
+        n_output_channels = ensure_multiplicity(len(output_keys), n_output_channels)
+        output_shapes = [ois+(nc,) for ois, nc in zip(output_image_shapes, n_output_channels)]
+        # set iterators parameters for prediction & record them
         batch_index = self.batch_index
         self.batch_index=0
         shuffle = self.shuffle
@@ -374,16 +385,17 @@ class MultiChannelIterator(IndexArrayIterator):
         if np.any(self.index_array[1:] < self.index_array[:-1]):
             raise ValueError('Index array should be monotonically increasing')
 
-        buffer = [np.zeros(shape = (write_every_n_batches*self.batch_size,)+output_shape, dtype=self.dtype) for c in output_keys]
+        buffer = [np.zeros(shape = (write_every_n_batches*self.batch_size,)+output_shapes[oidx], dtype=self.dtype) for oidx,k in enumerate(output_keys)]
 
         for ds_i, ds_i_i, ds_i_len in zip(*np.unique(self._get_ds_idx(self.index_array), return_index=True, return_counts=True)):
-            self._ensure_dataset(of, output_shape, output_keys, ds_i, **create_dataset_options)
+            self._ensure_dataset(of, output_shapes, output_keys, ds_i, **create_dataset_options)
             paths = [self.paths[ds_i].replace(self.channel_keywords[0], output_key) for output_key in output_keys]
             index_arrays = np.array_split(self.index_array[ds_i_i:(ds_i_i+ds_i_len)], ceil(ds_i_len/self.batch_size))
             print("predictions for dataset:", self.paths[ds_i])
             unsaved_batches = 0
             buffer_idx = 0
-            current_indices=[]
+            output_idx = 0
+            #current_indices=[]
             start_pred = time.time()
             for i, index_array in enumerate(index_arrays):
                 batch_by_channel, aug_param_array, ref_chan_idx = self._get_batch_by_channel(index_array, False, input_only=True)
@@ -391,46 +403,51 @@ class MultiChannelIterator(IndexArrayIterator):
                 cur_pred = model.predict(input)
                 if apply_to_prediction is not None:
                     cur_pred = apply_to_prediction(cur_pred)
-                if cur_pred.shape[-1]!=len(output_keys):
-                    raise ValueError('prediction should have as many channels as output_keys argument')
-                if cur_pred.shape[1:-1]!=output_shape:
-                    raise ValueError("prediction shape differs from output shape")
-
-                for c in range(len(output_keys)):
-                    buffer[c][buffer_idx:(buffer_idx+input.shape[0])] = cur_pred[..., c]
-
+                if not isinstance(cur_pred, list):
+                    cur_pred = [cur_pred]
+                assert len(cur_pred)==len(output_keys), 'prediction should have as many output as output_keys argument'
+                for oidx in range(len(output_keys)):
+                    assert cur_pred[oidx].shape[1:] == output_shapes[oidx], "prediction shape differs from output shape for output idx={} : prediction: {} target: {}".format(oidx, cur_pred[oidx].shape[1:], output_shapes[oidx])
+                for oidx in range(len(output_keys)):
+                    buffer[oidx][buffer_idx:(buffer_idx+input.shape[0])] = cur_pred
                 buffer_idx+=input.shape[0]
                 unsaved_batches +=1
-                current_indices.append(index_array)
+                #current_indices.append(index_array)
                 if unsaved_batches==write_every_n_batches or i==len(index_arrays)-1:
                     start_save = time.time()
-                    idx_o = list(np.concatenate(current_indices))
-                    for c in range(len(output_keys)):
-                        of.write_direct(paths[c], buffer[c][0:buffer_idx], dest_sel=idx_o)
+                    #idx_o = list(np.concatenate(current_indices))
+                    print("dest sel: {} -> {}".format(output_idx, output_idx+buffer_idx))
+                    for oidx in range(len(output_keys)):
+                        of.write_direct(paths[oidx], buffer[oidx], source_sel=np.s_[0:buffer_idx], dest_sel=np.s_[output_idx:(output_idx+buffer_idx)])
                     end_save = time.time()
                     print("#{} batches ({} images) computed in {}s and saved in {}s".format(unsaved_batches, buffer_idx, start_save-start_pred, end_save-start_save))
-
                     unsaved_batches=0
+                    output_idx+=buffer_idx
                     buffer_idx=0
-                    current_indices = []
+                    #current_indices = []
                     start_pred = time.time()
-        of.close()
+        if close_outputIO:
+            of.close()
+
+        # reset iterators parameters
         self.shuffle = shuffle
         self.batch_index = batch_index
         self.perform_data_augmentation = perform_aug
 
-    def _ensure_dataset(self, output_file, output_shape, output_keys, ds_i, **create_dataset_options):
+    def _ensure_dataset(self, output_file, output_shapes, output_keys, ds_i, **create_dataset_options):
+        if self.datasetIO is None:
+            self._open_datasetIO()
         if self.labels is not None:
             label_path = self.paths[ds_i].replace(self.channel_keywords[0], '/labels')
             if label_path not in output_file:
-                output_file.create_dataset(label_path, data = np.asarray(self.labels[ds_i], dtype=np.string_))
+                output_file.create_dataset(label_path, data=np.asarray(self.labels[ds_i], dtype=np.string_))
         dim_path = self.paths[ds_i].replace(self.channel_keywords[0], '/originalDimensions')
-        if dim_path not in output_file and dim_path in datasetIO:
+        if dim_path not in output_file and dim_path in self.datasetIO:
             output_file.create_dataset(dim_path, data=self.datasetIO.get_dataset(dim_path))
-        for output_key in output_keys:
+        for oidx, output_key in enumerate(output_keys):
             ds_path = self.paths[ds_i].replace(self.channel_keywords[0], output_key)
             if ds_path not in output_file:
-                output_file.create_dataset(ds_path, (self.ds_array[0][ds_i].shape[0],)+output_shape, dtype=self.dtype, **create_dataset_options) #, compression="gzip" # no compression for compatibility with java driver
+                output_file.create_dataset(ds_path, shape=(self.ds_array[0][ds_i].shape[0],)+output_shapes[oidx], dtype=self.dtype, **create_dataset_options) #, compression="gzip" # no compression for compatibility with java driver
 
     def _has_object_at_y_borders(self, mask_channel_idx, ds_idx, im_idx):
         ds = self.ds_array[mask_channel_idx][ds_idx]

@@ -1,35 +1,48 @@
 import h5py
 from .atomic_file_handler import AtomicFileHandler
 from .datasetIO import DatasetIO
+import threading
 
 class H5pyIO(DatasetIO):
-    def __init__(self, h5py_file, mode):
-        super().__init__(h5py_file)
-        self.h5py_file = h5py.File(AtomicFileHandler(h5py_file), mode) # this does work with version 1.14 and 2.9 of h5py but not with version 2.8
+    def __init__(self, h5py_file_path, mode, atomic=False):
+        super().__init__()
+        self.path = h5py_file_path
+        self.mode = mode
+        self.atomic = atomic
+        self.__lock__ = threading.Lock()
+        self.h5py_file=None
+
+    def _get_file(self):
+        if self.h5py_file is None:
+            with self.__lock__:
+                if self.h5py_file is None:
+                    file = AtomicFileHandler(self.path) if self.atomic else self.path # this does work with version 1.14 and 2.9 of h5py but not with version 2.8
+                    self.h5py_file = h5py.File(file, self.mode)
+        return self.h5py_file
 
     def close(self):
         self.h5py_file.close()
+        self.h5py_file = None
 
     def get_dataset_paths(self, channel_keyword, group_keyword):
-        return get_dataset_paths(self.h5py_file, channel_keyword, group_keyword)
+        return get_dataset_paths(self._get_file(), channel_keyword, group_keyword)
 
     def get_dataset(self, path):
-        return self.h5py_file[path]
+        return self._get_file()[path]
 
     def get_attribute(self, path, attribute_name):
-        return self.h5py_file[path].attrs.get(attribute_name)
+        return self._get_file()[path].attrs.get(attribute_name)
 
-    def create_dataset(self, path, data, **create_dataset_options):
-        self.h5py_file.create_dataset(path, data, **create_dataset_options)
+    def create_dataset(self, path, **create_dataset_kwargs):
+        self._get_file().create_dataset(path, **create_dataset_kwargs)
 
     def __contains__(self, key):
-        return key in self.h5py_file
+        return key in self._get_file()
 
-    def write_direct(self, path, data, dest_sel):
-        self.h5py_file[path].write_direct(data, dest_sel)
+    def write_direct(self, path, data, source_sel, dest_sel):
+        self._get_file()[path].write_direct(data, source_sel, dest_sel)
 
-    @staticmethod
-    def get_parent_path(path):
+    def get_parent_path(self, path):
         idx = path.rfind('/')
         if idx>0:
             return path[:idx]
