@@ -21,8 +21,9 @@ class H5pyIO(DatasetIO):
         return self.h5py_file
 
     def close(self):
-        self.h5py_file.close()
-        self.h5py_file = None
+        if self.h5py_file is not None:
+            self.h5py_file.close()
+            self.h5py_file = None
 
     def get_dataset_paths(self, channel_keyword, group_keyword):
         return get_dataset_paths(self._get_file(), channel_keyword, group_keyword)

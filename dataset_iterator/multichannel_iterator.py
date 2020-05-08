@@ -367,11 +367,8 @@ class MultiChannelIterator(IndexArrayIterator):
         p = [self.paths[ii] for ii in i]
         return(a, i, p)
 
-    def predict(self, output, model, output_keys, write_every_n_batches = 100, n_output_channels=1, output_image_shapes = None, apply_to_prediction=None, close_outputIO=True, **create_dataset_options):
-        if isinstance(output, DatasetIO):
-            of = output
-        else:
-            of = get_datasetIO(output, 'a')
+    def predict(self, output, model, output_keys, write_every_n_batches = 100, n_output_channels=1, output_image_shapes = None, prediction_function=None, apply_to_prediction=None, close_outputIO=True, **create_dataset_options):
+        of = get_datasetIO(output, 'a')
         if output_image_shapes is None:
             output_image_shapes = self.channel_image_shapes[0]
         if not isinstance(output_keys, list):
@@ -395,6 +392,10 @@ class MultiChannelIterator(IndexArrayIterator):
             raise ValueError('Index array should be monotonically increasing')
 
         buffer = [np.zeros(shape = (write_every_n_batches*self.batch_size,)+output_shapes[oidx], dtype=self.dtype) for oidx,k in enumerate(output_keys)]
+        if prediction_function is None:
+            pred_fun = lambda model, input : model.predict(input)
+        else:
+            pred_fun = prediction_function
 
         for ds_i, ds_i_i, ds_i_len in zip(*np.unique(self._get_ds_idx(self.index_array), return_index=True, return_counts=True)):
             self._ensure_dataset(of, output_shapes, output_keys, ds_i, **create_dataset_options)
@@ -409,7 +410,7 @@ class MultiChannelIterator(IndexArrayIterator):
             for i, index_array in enumerate(index_arrays):
                 batch_by_channel, aug_param_array, ref_chan_idx = self._get_batch_by_channel(index_array, False, input_only=True)
                 input = self._get_input_batch(batch_by_channel, ref_chan_idx, aug_param_array)
-                cur_pred = model.predict(input)
+                cur_pred = pred_fun(model, input)
                 if apply_to_prediction is not None:
                     cur_pred = apply_to_prediction(cur_pred)
                 if not isinstance(cur_pred, list):
