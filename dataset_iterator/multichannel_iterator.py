@@ -391,7 +391,7 @@ class MultiChannelIterator(IndexArrayIterator):
         if np.any(self.index_array[1:] < self.index_array[:-1]):
             raise ValueError('Index array should be monotonically increasing')
 
-        buffer = [np.zeros(shape = (write_every_n_batches*self.batch_size,)+output_shapes[oidx], dtype=self.dtype) for oidx,k in enumerate(output_keys)]
+        buffer = [np.zeros(shape = (min(len(self) * self.batch_size, write_every_n_batches*self.batch_size),)+output_shapes[oidx], dtype=self.dtype) for oidx,k in enumerate(output_keys)]
         if prediction_function is None:
             pred_fun = lambda model, input : model.predict(input)
         else:
@@ -405,7 +405,6 @@ class MultiChannelIterator(IndexArrayIterator):
             unsaved_batches = 0
             buffer_idx = 0
             output_idx = 0
-            #current_indices=[]
             start_pred = time.time()
             for i, index_array in enumerate(index_arrays):
                 batch_by_channel, aug_param_array, ref_chan_idx = self._get_batch_by_channel(index_array, False, input_only=True)
@@ -418,14 +417,13 @@ class MultiChannelIterator(IndexArrayIterator):
                 assert len(cur_pred)==len(output_keys), 'prediction should have as many output as output_keys argument'
                 for oidx in range(len(output_keys)):
                     assert cur_pred[oidx].shape[1:] == output_shapes[oidx], "prediction shape differs from output shape for output idx={} : prediction: {} target: {}".format(oidx, cur_pred[oidx].shape[1:], output_shapes[oidx])
+                print("predicted: {}->{}".format(output_idx, cur_pred[0].shape[0]))
                 for oidx in range(len(output_keys)):
-                    buffer[oidx][buffer_idx:(buffer_idx+input.shape[0])] = cur_pred
-                buffer_idx+=input.shape[0]
+                    buffer[oidx][buffer_idx:(buffer_idx+cur_pred[oidx].shape[0])] = cur_pred[oidx]
+                buffer_idx+=cur_pred[0].shape[0] # assumes all outputs have same batch size
                 unsaved_batches +=1
-                #current_indices.append(index_array)
                 if unsaved_batches==write_every_n_batches or i==len(index_arrays)-1:
                     start_save = time.time()
-                    #idx_o = list(np.concatenate(current_indices))
                     print("dest sel: {} -> {}".format(output_idx, output_idx+buffer_idx))
                     for oidx in range(len(output_keys)):
                         of.write_direct(paths[oidx], buffer[oidx], source_sel=np.s_[0:buffer_idx], dest_sel=np.s_[output_idx:(output_idx+buffer_idx)])
@@ -434,7 +432,6 @@ class MultiChannelIterator(IndexArrayIterator):
                     unsaved_batches=0
                     output_idx+=buffer_idx
                     buffer_idx=0
-                    #current_indices = []
                     start_pred = time.time()
         if close_outputIO:
             of.close()
