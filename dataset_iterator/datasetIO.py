@@ -26,7 +26,7 @@ class DatasetIO:
         raise NotImplementedError
 
 def get_datasetIO(dataset, mode='r'):
-    print("type: {}, subclass: {}".format(type(dataset), issubclass(type(dataset), DatasetIO)))
+    #print("type: {}, subclass: {}".format(type(dataset), issubclass(type(dataset), DatasetIO)))
     if issubclass(type(dataset), DatasetIO):
         return dataset
     elif isinstance(dataset, str):

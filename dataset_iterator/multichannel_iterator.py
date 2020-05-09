@@ -104,7 +104,7 @@ class MultiChannelIterator(IndexArrayIterator):
             if any(len(self.labels[i].shape)==0 or self.labels[i].shape[0]!=self.ds_array[0][i].shape[0] for i in range(len(self.labels))):
                 raise ValueError('Invalid input file: at least one dataset has element numbers that differ from corresponding label array')
         except:
-            pass
+            self.labels = None
         # set scaling information for each dataset
         self.channel_scaling = [None]*len(channel_keywords)
         if self.channel_scaling_param!=None:
