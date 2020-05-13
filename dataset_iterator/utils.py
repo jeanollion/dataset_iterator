@@ -15,3 +15,15 @@ def ensure_multiplicity(n, object):
     elif n==0:
         return []
     return object
+
+def flatten_list(l):
+    flat_list = []
+    for item in l:
+        append_to_list(flat_list, item)
+    return flat_list
+
+def append_to_list(l, element):
+    if isinstance(element, list):
+        l.extend(element)
+    else:
+        l.append(element)

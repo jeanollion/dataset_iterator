@@ -7,7 +7,7 @@ import time
 import copy
 from math import copysign
 from .datasetIO import DatasetIO, get_datasetIO
-from .utils import ensure_multiplicity
+from .utils import ensure_multiplicity, flatten_list
 
 class MultiChannelIterator(IndexArrayIterator):
     def __init__(self,
@@ -20,6 +20,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 extract_tile_function=None,
                 mask_channels=[],
                 output_multiplicity = 1,
+                input_multiplicity = 1,
                 channel_scaling_param=None, #[{'level':1, 'qmin':5, 'qmax':95}],
                 group_keyword=None,
                 image_data_generators=None,
@@ -44,6 +45,7 @@ class MultiChannelIterator(IndexArrayIterator):
             mask_channels = []
         self.mask_channels = mask_channels
         self.output_multiplicity=output_multiplicity
+        self.input_multiplicity=input_multiplicity
         if len(mask_channels)>0:
             assert min(mask_channels)>=0, "invalid mask channel: should be >=0"
             assert max(mask_channels)<len(channel_keywords), "invalid mask channel: should be in range [0-{})".format(len(channel_keywords))
@@ -209,15 +211,20 @@ class MultiChannelIterator(IndexArrayIterator):
         batch_by_channel, aug_param_array, ref_chan_idx = self._get_batch_by_channel(index_array, self.perform_data_augmentation)
 
         if self.output_channels is None or len(self.output_channels)==0:
-            return self._get_input_batch(batch_by_channel, ref_chan_idx, aug_param_array)
+            input = self._get_input_batch(batch_by_channel, ref_chan_idx, aug_param_array)
+            return _apply_multiplicity(input, self.input_multiplicity)
         else:
             input = self._get_input_batch(batch_by_channel, ref_chan_idx, aug_param_array)
             output = self._get_output_batch(batch_by_channel, ref_chan_idx, aug_param_array)
-            if self.output_multiplicity>1:
-                if not isinstance(output, list):
-                    output = [output] * self.output_multiplicity
-                else:
-                    output = output * self.output_multiplicity
+            if isinstance(self.output_multiplicity, dict):
+                output_len = len(output) if isinstance(output, (list, tuple)) else 1
+                assert max(self.output_multiplicity.keys())<output_len, "invalid output_multiplicity : keys should be included in output_channels list range"
+            if isinstance(self.input_multiplicity, dict):
+                input_len = len(input) if isinstance(input, (list, tuple)) else 1
+                assert max(self.input_multiplicity.keys())<input_len, "invalid input_multiplicity : keys should be included in input_channels list range"
+
+            input = _apply_multiplicity(input, self.input_multiplicity)
+            output = _apply_multiplicity(output, self.output_multiplicity)
             return (input, output)
 
     def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False):
@@ -514,9 +521,9 @@ class MultiChannelIterator(IndexArrayIterator):
             self.index_array = np.copy(index_a)
 
     def evaluate(self, model, metrics, progress_callback=None):
-        if len(metrics) != len(self.output_channels)*self.output_multiplicity:
-            raise ValueError("metrics should be an array of length equal to output number ({})".format(len(self.output_channels)*self.output_multiplicity))
-
+        output_number = sum(self.output_multiplicity.values()) if isinstance(self.output_multiplicity, dict) else len(self.output_channels)*self.output_multiplicity
+        if len(metrics) != output_number:
+            raise ValueError("metrics should be an array of length equal to output number ({})".format(output_number))
         shuffle = self.shuffle
         perform_aug = self.perform_data_augmentation
         self.shuffle=False
@@ -563,6 +570,19 @@ class MultiChannelIterator(IndexArrayIterator):
         return values, path, labels, indices
 
 # class util methods
+def _apply_multiplicity(batch, multiplicity):
+    if multiplicity==1:
+        return batch
+    if isinstance(batch, tuple):
+        batch = list(batch)
+    elif not isinstance(batch, list):
+        batch = [batch]
+    if isinstance(multiplicity, dict):
+        batch = [[batch[oidx]]*n for oidx, n in multiplicity.items()]
+        return flatten_list(batch)
+    elif multiplicity>1:
+        return batch * multiplicity
+
 def copy_geom_tranform_parameters(aug_param_source, aug_param_dest): # TODO : parametrizable
     aug_param_dest['theta'] = aug_param_source.get('theta', 0)
     aug_param_dest['tx'] = aug_param_source.get('tx', 0)
