@@ -2,7 +2,27 @@ from .datasetIO import DatasetIO, get_datasetIO
 import threading
 
 class MultipleDatasetIO(DatasetIO):
+    """DatasetIO that wraps several dataset IO associated, each to one or several channels.
+
+    Parameters
+    ----------
+    dataset_map_channel_keywords : dict
+        keys: datasetIO (or path that DatasetIO.get_datasetIO method can transform in a datasetIO instance)
+        values: channel keyword or list of channel keywords that will be looked for in the datasetIO
+
+        for the moment all datasetIO should be of the same type or at least having path to each channel that only differ by the channel keyword
+    Attributes
+    ----------
+    channel_keywords_map_dataset : dict
+        mapping channel_keyword -> datasetIO
+    path_map_dataset : dict
+        mapping of dataset path > dataset
+    __lock__ : threading.Lock()
+    dataset_map_channel_keywords
+
+    """
     def __init__(self, dataset_map_channel_keywords):
+        super().__init__()
         self.dataset_map_channel_keywords= dict()
         for ds, keys in dataset_map_channel_keywords.items():
             ds = get_datasetIO(ds)
@@ -40,7 +60,6 @@ class MultipleDatasetIO(DatasetIO):
                             self.path_map_dataset[path]  = self.channel_keywords_map_dataset[channel_keyword]
                             break
             ds = self.path_map_dataset[path]
-            #raise ValueError("Unknown path: "+path)
         return ds
 
     def get_dataset(self, path):
