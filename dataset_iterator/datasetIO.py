@@ -21,8 +21,7 @@ class DatasetIO:
     def __contains__(self, key):
         raise NotImplementedError
 
-    @staticmethod
-    def get_parent_path(path):
+    def get_parent_path(self, path):
         raise NotImplementedError
 
 def get_datasetIO(dataset, mode='r'):
