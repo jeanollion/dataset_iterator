@@ -1,3 +1,5 @@
+import numpy as np
+
 def remove_duplicates(seq):
     seen = set()
     seen_add = seen.add
@@ -27,3 +29,14 @@ def append_to_list(l, element):
         l.extend(element)
     else:
         l.append(element)
+
+def pick_from_array(array, proportion):
+    if proportion<=0:
+        return []
+    elif proportion<1:
+        return np.random.choice(array, replace=False, size=int(len(array)*proportion+0.5))
+    elif proportion==1:
+        return array
+    else:
+        rep = int(proportion)
+        return np.concatenate( [array]*rep + [pick_from_array(array, proportion - rep) ]).astype(np.int, copy=False)
