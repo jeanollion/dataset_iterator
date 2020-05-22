@@ -11,3 +11,4 @@ from .multiple_fileIO import MultipleFileIO
 from .datasetIO import DatasetIO
 from .multiple_fileIO import MultipleFileIO
 from .multiple_datasetIO import MultipleDatasetIO
+from .concatenate_datasetIO import ConcatenateDatasetIO
