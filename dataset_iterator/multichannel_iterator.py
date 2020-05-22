@@ -1,6 +1,6 @@
 import numpy as np
 from dataset_iterator import IndexArrayIterator
-from .utils import remove_duplicates
+from .utils import remove_duplicates, pick_from_array
 from sklearn.model_selection import train_test_split
 from math import ceil
 import time
@@ -8,6 +8,7 @@ import copy
 from math import copysign
 from .datasetIO import DatasetIO, get_datasetIO
 from .utils import ensure_multiplicity, flatten_list
+from itertools import groupby
 
 class MultiChannelIterator(IndexArrayIterator):
     def __init__(self,
@@ -68,6 +69,7 @@ class MultiChannelIterator(IndexArrayIterator):
         self.output_postprocessing_functions = output_postprocessing_functions
         self.extract_tile_function=extract_tile_function
         self.paths=None
+        self.group_map_paths=None
         self._open_datasetIO()
         # check that all ds have compatible length between input and output
         indexes = np.array([ds.shape[0] for ds in self.ds_array[0]])
@@ -88,7 +90,13 @@ class MultiChannelIterator(IndexArrayIterator):
             indexes[i]=indexes[i-1]+indexes[i]
         self.ds_len=indexes
         self.ds_off=np.insert(self.ds_len[:-1], 0, 0)
-
+        # get offset for each group of dataset
+        self.grp_len = []
+        off = 0
+        for paths in self.group_map_paths.values():
+            off += len(paths)
+            self.grp_len.append(self.ds_len[off-1])
+        self.grp_off=np.insert(self.grp_len[:-1], 0, 0)
         # check that all datasets have same image shape within each channel
         self.channel_image_shapes = [ds_l[0].shape[1:] for ds_l in self.ds_array]
         for c, ds_l in enumerate(self.ds_array):
@@ -141,10 +149,15 @@ class MultiChannelIterator(IndexArrayIterator):
     def _open_datasetIO(self):
         self.datasetIO = get_datasetIO(self.dataset, 'r')
         if self.paths is None:
-            # get all dataset paths
-            self.paths = self.datasetIO.get_dataset_paths(self.channel_keywords[0], self.group_keyword)
-            if (len(self.paths)==0):
-                raise ValueError('No datasets found ending by {} {}'.format(self.channel_keywords[0], "and containing {}".format(self.group_keyword) if self.group_keyword!=None else "" ))
+            self.group_map_paths = dict()
+            group_list = self.group_keyword if isinstance(self.group_keyword, (list, tuple)) else [self.group_keyword]
+            for k in group_list:
+                # get all dataset paths
+                paths = self.datasetIO.get_dataset_paths(self.channel_keywords[0], k)
+                if (len(paths)==0):
+                    raise ValueError('No datasets found ending by {} {}'.format(self.channel_keywords[0], "and containing {}".format(k) if k is not None else "" ))
+                self.group_map_paths[k] = paths
+            self.paths = flatten_list(self.group_map_paths.values())
         # get all matching dataset
         self.ds_array = [[self.datasetIO.get_dataset(self._get_dataset_path(c, ds_idx)) for ds_idx in range(len(self.paths))] for c in range(len(self.channel_keywords))]
         getAttribute = lambda a, def_val : def_val if a is None else (a[0] if isinstance(a, list) else a)
@@ -200,6 +213,11 @@ class MultiChannelIterator(IndexArrayIterator):
         ds_idx = np.searchsorted(self.ds_len, index_array, side='right')
         index_array -= self.ds_off[ds_idx] # remove ds offset to each index
         return ds_idx
+
+    def _get_grp_idx(self, index_array):
+        grp_idx = np.searchsorted(self.grp_len, index_array, side='right')
+        index_array -= self.grp_off[grp_idx] # remove ds offset to each index
+        return grp_idx
 
     def _get_batches_of_transformed_samples(self, index_array):
         """Gets a batch of transformed samples.
@@ -486,8 +504,8 @@ class MultiChannelIterator(IndexArrayIterator):
             pass
 
     def __len__(self):
-        if self.void_mask_max_proportion>=0 and not hasattr(self, "void_masks"):
-            self._set_index_array() # redefines n
+        if self.void_mask_max_proportion>=0 and not hasattr(self, "void_masks") or self.void_mask_max_proportion<0 and hasattr(self, "group_proportion"):
+            self._set_index_array() # redefines n in either cases
         return super().__len__()
 
     def _set_index_array(self):
@@ -513,6 +531,19 @@ class MultiChannelIterator(IndexArrayIterator):
             else:  # only void or only not void
                 #print("void mask bins: ", bins)
                 index_a = self.allowed_indexes
+        elif hasattr(self, "group_proportion"): # generate a batch with user-defined proportion in each group
+            grp_prop = ensure_multiplicity(len(self.group_map_paths), self.group_proportion)
+            # pick indices for each group
+            if self.allowed_indexes is None:
+                indices_per_group = [np.random.randint(low=self.grp_off[i], high=self.grp_len[i], size=int((self.grp_len[i] - self.grp_off[i])*grp_prop[i]+0.5) ) for i in range(len(self.group_map_paths))]
+                index_a = flatten_list(indices_per_group)
+            else:
+                index_array = np.copy(self.allowed_indexes) # index within group
+                index_grp = self._get_grp_idx(index_array) # group index
+                allowed_indexes_per_group = [self.allowed_indexes[index_grp==i] for i in range(len(self.group_map_paths))]
+                indexes_per_group = [ pick_from_array(allowed_indexes_per_group[i], grp_prop[i]) for i in range(len(self.group_map_paths)) ]
+                index_a = np.concatenate(indexes_per_group)
+            self.n = len(index_a)
         else:
             index_a = self.allowed_indexes
         if self.shuffle:
