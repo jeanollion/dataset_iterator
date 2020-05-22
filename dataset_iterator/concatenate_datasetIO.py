@@ -26,13 +26,13 @@ class ConcatenateDatasetIO(DatasetIO):
             dsio.close()
 
     def get_dataset_paths(self, channel_keyword, group_keyword):
+        paths_map_dsio=dict()
+        for dsio in self.dsio_list:
+            paths = dsio.get_dataset_paths(channel_keyword, group_keyword)
+            paths_map_dsio.update({p:dsio for p in paths})
         with self.__lock__: # store computed path for faster retrieving of datasetIO
-            for dsio in self.dsio_list:
-                paths = dsio.get_dataset_paths(channel_keyword, group_keyword)
-                for path in paths:
-                    if path not in self.path_map_dsio:
-                        self.path_map_dsio[path] = dsio
-        return list(self.path_map_dsio.keys())
+            self.path_map_dsio.update(paths_map_dsio)
+        return list(paths_map_dsio.keys())
 
     def get_dataset(self, path):
         return self._get_dsio(path).get_dataset(path)
