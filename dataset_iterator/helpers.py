@@ -35,7 +35,7 @@ def get_histogram(dataset, channel_keyword, bins, sum_to_one=False, batch_size=1
     return histogram, bins
 
 def get_percentile(histogram, bins, percentile):
-    cs = np.cumsum(histo)
+    cs = np.cumsum(histogram)
     bin_idx = np.searchsorted(cs, np.percentile(cs, percentile)) # TODO linear interpolation for more precision within bin
     bin_centers = ( bins[1:] + bins[:-1] ) / 2
     return bin_centers[bin_idx]
