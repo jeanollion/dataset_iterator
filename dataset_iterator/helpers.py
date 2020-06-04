@@ -1,8 +1,8 @@
 import numpy as np
 from .multichannel_iterator import MultiChannelIterator
 
-def open_channel(dataset, channel_keyword, size=None):
-    iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], input_channels=list(np.arange(len(channel_keyword))) if isinstance(channel_keyword, (list, tuple)) else [0], output_channels=[], batch_size=1 if size is None else size, shuffle=False)
+def open_channel(dataset, channel_keyword, group_keyword=None, size=None):
+    iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=list(np.arange(len(channel_keyword))) if isinstance(channel_keyword, (list, tuple)) else [0], output_channels=[], batch_size=1 if size is None else size, shuffle=False)
     if size is None:
         iterator.batch_size=len(iterator)
     return iterator[0]
@@ -36,9 +36,9 @@ def get_histogram(dataset, channel_keyword, bins, sum_to_one=False, batch_size=1
 
 def get_percentile(histogram, bins, percentile):
     cs = np.cumsum(histogram)
-    bin_idx = np.searchsorted(cs, np.percentile(cs, percentile)) # TODO linear interpolation for more precision within bin
+    percentile = percentile * cs[-1] / 100
     bin_centers = ( bins[1:] + bins[:-1] ) / 2
-    return bin_centers[bin_idx]
+    return np.interp(percentile, cs, bin_centers)
 
 def get_modal_value(histogram, bins):
     bin_centers = ( bins[1:] + bins[:-1] ) / 2
