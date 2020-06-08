@@ -18,6 +18,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 output_channels=[0],
                 weight_map_functions=None,
                 output_postprocessing_functions=None,
+                channels_postprocessing_function=None,
                 extract_tile_function=None,
                 mask_channels=[],
                 output_multiplicity = 1,
@@ -67,6 +68,7 @@ class MultiChannelIterator(IndexArrayIterator):
         if output_postprocessing_functions is not None:
             assert len(output_postprocessing_functions)==len(output_postprocessing_functions), "output postprocessing functions should have same length as output channels"
         self.output_postprocessing_functions = output_postprocessing_functions
+        self.channels_postprocessing_function=channels_postprocessing_function
         self.extract_tile_function=extract_tile_function
         self.paths=None
         self.group_map_paths=None
@@ -75,15 +77,16 @@ class MultiChannelIterator(IndexArrayIterator):
         indexes = np.array([ds.shape[0] for ds in self.ds_array[0]])
         if len(channel_keywords)>1:
             for c, ds_l in enumerate(self.ds_array):
-                singleton = c in self.singleton_channels
-                if len(self.ds_array[0])!=len(ds_l):
-                    raise ValueError('Channels {}({}) has #{} datasets whereas first channel has #{} datasets'.format(c, channel_keywords[c], len(ds_l), len(self.ds_array[0])))
-                for ds_idx, ds in enumerate(ds_l):
-                    if singleton:
-                        if ds.shape[0]!=1:
-                            raise ValueError("Channel {} is set as singleton but one dataset has more that one image".format(c))
-                    elif indexes[ds_idx] != ds.shape[0]:
-                        raise ValueError('Channel {}({}) has at least one dataset with number of elements that differ from Channel 0'.format(c, channel_keywords[c]))
+                if self.channel_keywords[c] is not None:
+                    singleton = c in self.singleton_channels
+                    if len(self.ds_array[0])!=len(ds_l):
+                        raise ValueError('Channels {}({}) has #{} datasets whereas first channel has #{} datasets'.format(c, channel_keywords[c], len(ds_l), len(self.ds_array[0])))
+                    for ds_idx, ds in enumerate(ds_l):
+                        if singleton:
+                            if ds.shape[0]!=1:
+                                raise ValueError("Channel {} is set as singleton but one dataset has more that one image".format(c))
+                        elif indexes[ds_idx] != ds.shape[0]:
+                            raise ValueError('Channel {}({}) has at least one dataset with number of elements that differ from Channel 0'.format(c, channel_keywords[c]))
 
         # get offset for each dataset
         for i in range(1, len(indexes)):
@@ -98,12 +101,12 @@ class MultiChannelIterator(IndexArrayIterator):
             self.grp_len.append(self.ds_len[off-1])
         self.grp_off=np.insert(self.grp_len[:-1], 0, 0)
         # check that all datasets have same image shape within each channel
-        self.channel_image_shapes = [ds_l[0].shape[1:] for ds_l in self.ds_array]
+        self.channel_image_shapes = [ds_l[0].shape[1:] if ds_l is not None else None for ds_l in self.ds_array]
         for c, ds_l in enumerate(self.ds_array):
-            for ds_idx, ds in enumerate(ds_l):
-                if ds.shape[1:] != self.channel_image_shapes[c]:
-                    raise ValueError('Dataset {dsi} with path {dspath} from channel {chan}({chank}) has shape {dsshape} that differs from first dataset with path {ds1path} with shape {ds1shape}'.format(dsi=ds_idx, dspath=self._get_dataset_path(c, ds_idx), chan=c, chank=self.channel_keywords[c], dsshape=ds.shape[1:], ds1path=self._get_dataset_path(c, 0), ds1shape=self.channel_image_shapes[c] ))
-
+            if self.channel_keywords[c] is not None:
+                for ds_idx, ds in enumerate(ds_l):
+                    if ds.shape[1:] != self.channel_image_shapes[c]:
+                        raise ValueError('Dataset {dsi} with path {dspath} from channel {chan}({chank}) has shape {dsshape} that differs from first dataset with path {ds1path} with shape {ds1shape}'.format(dsi=ds_idx, dspath=self._get_dataset_path(c, ds_idx), chan=c, chank=self.channel_keywords[c], dsshape=ds.shape[1:], ds1path=self._get_dataset_path(c, 0), ds1shape=self.channel_image_shapes[c] ))
         # labels
         try:
             self.labels = [self.datasetIO.get_dataset(path.replace(self.channel_keywords[0], '/labels')) for path in self.paths]
@@ -120,7 +123,7 @@ class MultiChannelIterator(IndexArrayIterator):
         if self.channel_scaling_param!=None:
             percentile_x = np.arange(0, 101)
             for c, scaling_info in enumerate(self.channel_scaling_param):
-                if scaling_info!=None:
+                if scaling_info is not None:
                     self.channel_scaling[c]=[None]*len(self.paths)
                     for ds_idx, path in enumerate(self.paths):
                         group = self.datasetIO.get_parent_path(path)
@@ -159,10 +162,10 @@ class MultiChannelIterator(IndexArrayIterator):
                 self.group_map_paths[k] = paths
             self.paths = flatten_list(self.group_map_paths.values())
         # get all matching dataset
-        self.ds_array = [[self.datasetIO.get_dataset(self._get_dataset_path(c, ds_idx)) for ds_idx in range(len(self.paths))] for c in range(len(self.channel_keywords))]
+        self.ds_array = [ [self.datasetIO.get_dataset(self._get_dataset_path(c, ds_idx)) for ds_idx in range(len(self.paths))] if self.channel_keywords[c] is not None else None for c in range(len(self.channel_keywords))]
         getAttribute = lambda a, def_val : def_val if a is None else (a[0] if isinstance(a, list) else a)
-        self.ds_scaling_center = [[getAttribute(self.datasetIO.get_attribute(self._get_dataset_path(c, ds_idx), "scaling_center"), 0) for ds_idx in range(len(self.paths))] for c in range(len(self.channel_keywords))]
-        self.ds_scaling_factor = [[getAttribute(self.datasetIO.get_attribute(self._get_dataset_path(c, ds_idx), "scaling_factor"), 1) for ds_idx in range(len(self.paths))] for c in range(len(self.channel_keywords))]
+        self.ds_scaling_center = [[getAttribute(self.datasetIO.get_attribute(self._get_dataset_path(c, ds_idx), "scaling_center"), 0) for ds_idx in range(len(self.paths))]  if self.channel_keywords[c] is not None else None for c in range(len(self.channel_keywords))]
+        self.ds_scaling_factor = [[getAttribute(self.datasetIO.get_attribute(self._get_dataset_path(c, ds_idx), "scaling_factor"), 1) for ds_idx in range(len(self.paths))]  if self.channel_keywords[c] is not None else None for c in range(len(self.channel_keywords))]
 
     def _close_datasetIO(self):
         if self.datasetIO is not None:
@@ -230,19 +233,25 @@ class MultiChannelIterator(IndexArrayIterator):
 
         if self.output_channels is None or len(self.output_channels)==0:
             input = self._get_input_batch(batch_by_channel, ref_chan_idx, aug_param_array)
-            return _apply_multiplicity(input, self.input_multiplicity)
+            return _apply_multiplicity(input, self.input_multiplicity) # removes None batches
         else:
             input = self._get_input_batch(batch_by_channel, ref_chan_idx, aug_param_array)
             output = self._get_output_batch(batch_by_channel, ref_chan_idx, aug_param_array)
             if isinstance(self.output_multiplicity, dict):
                 output_len = len(output) if isinstance(output, (list, tuple)) else 1
                 assert max(self.output_multiplicity.keys())<output_len, "invalid output_multiplicity : keys should be included in output_channels list range"
+                for ocidx in self.output_channels:
+                    if output[ocidx] is not None:
+                        assert ocidx in self.output_multiplicity, "output: #"+ocidx+" is not None and not in output_multiplicity"
             if isinstance(self.input_multiplicity, dict):
                 input_len = len(input) if isinstance(input, (list, tuple)) else 1
                 assert max(self.input_multiplicity.keys())<input_len, "invalid input_multiplicity : keys should be included in input_channels list range"
+                for icidx in self.input_channels:
+                    if output[icidx] is not None:
+                        assert icidx in self.input_multiplicity, "input: #"+icidx+" is not None and not in input_multiplicity"
 
-            input = _apply_multiplicity(input, self.input_multiplicity)
-            output = _apply_multiplicity(output, self.output_multiplicity)
+            input = _apply_multiplicity(input, self.input_multiplicity) # removes None batches
+            output = _apply_multiplicity(output, self.output_multiplicity) # removes None batches
             return (input, output)
 
     def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False):
@@ -252,7 +261,7 @@ class MultiChannelIterator(IndexArrayIterator):
         index_ds = self._get_ds_idx(index_array) # modifies index_array
 
         batch_by_channel = dict()
-        channels = self.input_channels if input_only else remove_duplicates(self.input_channels+self.output_channels)
+        channels = self.input_channels if input_only else [c_idx for c_idx, key in enumerate(self.channel_keywords) if key is not None] #remove_duplicates(self.input_channels+self.output_channels)
         if len(self.mask_channels)>0 and self.mask_channels[0] in channels: # put mask channel first so it can be used for determining some data augmentation parameters
             channels.insert(0, channels.pop(channels.index(self.mask_channels[0])))
         aug_param_array = [[dict()]*len(self.channel_keywords) for i in range(len(index_array))]
@@ -264,6 +273,9 @@ class MultiChannelIterator(IndexArrayIterator):
             for chan_idx in channels:
                 np.random.set_state(numpy_rand_state) # ensure same tile + aug if tile fun implies randomness
                 batch_by_channel[chan_idx] = self.extract_tile_function(batch_by_channel[chan_idx])
+
+        if self.channels_postprocessing_function is not None:
+            self.channels_postprocessing_function(batch_by_channel)
 
         return batch_by_channel, aug_param_array, channels[0]
 
@@ -286,7 +298,10 @@ class MultiChannelIterator(IndexArrayIterator):
 
     def _get_output_batch(self, batch_by_channel, ref_chan_idx, aug_param_array):
         if len(self.output_channels)==1:
-            return self._apply_postprocessing_and_concat_weight_map(batch_by_channel[self.output_channels[0]], 0)
+            if batch_by_channel[self.output_channels[0]] is None:
+                return
+            else:
+                return self._apply_postprocessing_and_concat_weight_map(batch_by_channel[self.output_channels[0]], 0)
         else:
             return [self._apply_postprocessing_and_concat_weight_map(batch_by_channel[chan_idx], i) for i, chan_idx in enumerate(self.output_channels)]
 
@@ -320,7 +335,7 @@ class MultiChannelIterator(IndexArrayIterator):
         for i in range(batch.shape[0]):
             if image_data_generator!=None:
                 params = self._get_data_augmentation_parameters(chan_idx, ref_chan_idx, batch, i, index_ds, index_array)
-                if aug_param_array is not None:
+                if aug_param_array is not None and params is not None:
                     if chan_idx!=ref_chan_idx:
                         transfer_aug_param_function(aug_param_array[i][ref_chan_idx], params)
                     for k,v in params.items():
@@ -345,7 +360,7 @@ class MultiChannelIterator(IndexArrayIterator):
         if self.image_data_generators is None or self.image_data_generators[chan_idx] is None:
             return None
         params = self.image_data_generators[chan_idx].get_random_transform(batch.shape[1:])
-        if  chan_idx==ref_chan_idx and chan_idx in self.mask_channels:
+        if  params is not None and chan_idx==ref_chan_idx and chan_idx in self.mask_channels:
             try:
                 self.image_data_generators[chan_idx].adjust_augmentation_param_from_mask(params, batch[idx,...,0])
             except AttributeError: # data generator does not have this method
@@ -602,6 +617,8 @@ class MultiChannelIterator(IndexArrayIterator):
 
 # class util methods
 def _apply_multiplicity(batch, multiplicity):
+    if batch is None:
+        return
     if multiplicity==1:
         return batch
     if isinstance(batch, tuple):
@@ -609,9 +626,10 @@ def _apply_multiplicity(batch, multiplicity):
     elif not isinstance(batch, list):
         batch = [batch]
     if isinstance(multiplicity, dict):
-        batch = [[batch[oidx]]*n for oidx, n in multiplicity.items()]
+        batch = [ [batch[oidx]]*n for oidx, n in multiplicity.items() if batch[oidx] is not None ]
         return flatten_list(batch)
     elif multiplicity>1:
+        batch = [b for b in batch if b is not None]
         return batch * multiplicity
 
 def copy_geom_tranform_parameters(aug_param_source, aug_param_dest): # TODO : parametrizable
