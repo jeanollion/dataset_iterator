@@ -2,10 +2,9 @@ import numpy as np
 from dataset_iterator import IndexArrayIterator
 from .utils import remove_duplicates, pick_from_array
 from sklearn.model_selection import train_test_split
-from math import ceil
 import time
 import copy
-from math import copysign
+from math import copysign, ceil
 from .datasetIO import DatasetIO, get_datasetIO
 from .utils import ensure_multiplicity, flatten_list
 from itertools import groupby
@@ -410,8 +409,8 @@ class MultiChannelIterator(IndexArrayIterator):
     def predict(self, output, model, output_keys, write_every_n_batches = 100, n_output_channels=1, output_image_shapes = None, prediction_function=None, apply_to_prediction=None, close_outputIO=True, **create_dataset_options):
         of = get_datasetIO(output, 'a')
         if output_image_shapes is None:
-            output_image_shapes = self.channel_image_shapes[0]
-        if not isinstance(output_keys, list):
+            output_image_shapes = self.channel_image_shapes[0][:-1]
+        if not isinstance(output_keys, (list, tuple)):
             output_keys = [output_keys]
         if not isinstance(output_image_shapes, list):
             output_image_shapes = [output_image_shapes]
@@ -423,8 +422,6 @@ class MultiChannelIterator(IndexArrayIterator):
         self.batch_index=0
         shuffle = self.shuffle
         self.shuffle=False
-        perform_aug = self.perform_data_augmentation
-        self.perform_data_augmentation=False
         self.reset()
         self._set_index_array() # if shuffle was true
 
@@ -447,14 +444,14 @@ class MultiChannelIterator(IndexArrayIterator):
             output_idx = 0
             start_pred = time.time()
             for i, index_array in enumerate(index_arrays):
-                batch_by_channel, aug_param_array, ref_chan_idx = self._get_batch_by_channel(index_array, False, input_only=True)
+                batch_by_channel, aug_param_array, ref_chan_idx = self._get_batch_by_channel(index_array, perform_augmentation=self.perform_data_augmentation, input_only=True)
                 input = self._get_input_batch(batch_by_channel, ref_chan_idx, aug_param_array)
                 cur_pred = pred_fun(model, input)
                 if apply_to_prediction is not None:
                     cur_pred = apply_to_prediction(cur_pred)
-                if not isinstance(cur_pred, list):
+                if not isinstance(cur_pred, (list, tuple)):
                     cur_pred = [cur_pred]
-                assert len(cur_pred)==len(output_keys), 'prediction should have as many output as output_keys argument'
+                assert len(cur_pred)==len(output_keys), 'prediction should have as many output as output_keys argument. # output keys: {} # predictions: {}'.format(len(output_keys), len(cur_pred))
                 for oidx in range(len(output_keys)):
                     assert cur_pred[oidx].shape[1:] == output_shapes[oidx], "prediction shape differs from output shape for output idx={} : prediction: {} target: {}".format(oidx, cur_pred[oidx].shape[1:], output_shapes[oidx])
                 #print("predicted: {}->{}".format(output_idx, cur_pred[0].shape[0]))
@@ -479,7 +476,6 @@ class MultiChannelIterator(IndexArrayIterator):
         # reset iterators parameters
         self.shuffle = shuffle
         self.batch_index = batch_index
-        self.perform_data_augmentation = perform_aug
 
     def _ensure_dataset(self, output_file, output_shapes, output_keys, ds_i, **create_dataset_options):
         if self.datasetIO is None:
@@ -491,10 +487,10 @@ class MultiChannelIterator(IndexArrayIterator):
         dim_path = self.paths[ds_i].replace(self.channel_keywords[0], '/originalDimensions')
         if dim_path not in output_file and dim_path in self.datasetIO:
             output_file.create_dataset(dim_path, data=self.datasetIO.get_dataset(dim_path))
-        for oidx, output_key in enumerate(output_keys):
+        for output_key, output_shape in enumerate(output_keys, output_shapes):
             ds_path = self.paths[ds_i].replace(self.channel_keywords[0], output_key)
             if ds_path not in output_file:
-                output_file.create_dataset(ds_path, shape=(self.ds_array[0][ds_i].shape[0],)+output_shapes[oidx], dtype=self.dtype, **create_dataset_options) #, compression="gzip" # no compression for compatibility with java driver
+                output_file.create_dataset(ds_path, shape=(self.ds_array[0][ds_i].shape[0],)+output_shape, dtype=self.dtype, **create_dataset_options) #, compression="gzip" # no compression for compatibility with java driver
 
     def _has_object_at_y_borders(self, mask_channel_idx, ds_idx, im_idx):
         ds = self.ds_array[mask_channel_idx][ds_idx]
