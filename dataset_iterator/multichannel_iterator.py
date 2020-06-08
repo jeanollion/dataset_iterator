@@ -487,10 +487,10 @@ class MultiChannelIterator(IndexArrayIterator):
         dim_path = self.paths[ds_i].replace(self.channel_keywords[0], '/originalDimensions')
         if dim_path not in output_file and dim_path in self.datasetIO:
             output_file.create_dataset(dim_path, data=self.datasetIO.get_dataset(dim_path))
-        for output_key, output_shape in zip(output_keys, output_shapes):
+        for ocidx, output_key in enumerate(output_keys):
             ds_path = self.paths[ds_i].replace(self.channel_keywords[0], output_key)
             if ds_path not in output_file:
-                output_file.create_dataset(ds_path, shape=(self.ds_array[0][ds_i].shape[0],)+output_shape, dtype=self.dtype, **create_dataset_options) #, compression="gzip" # no compression for compatibility with java driver
+                output_file.create_dataset(ds_path, shape=(self.ds_array[0][ds_i].shape[0],)+output_shapes[ocidx], dtype=self.dtype, **create_dataset_options) #, compression="gzip" # no compression for compatibility with java driver
 
     def _has_object_at_y_borders(self, mask_channel_idx, ds_idx, im_idx):
         ds = self.ds_array[mask_channel_idx][ds_idx]
