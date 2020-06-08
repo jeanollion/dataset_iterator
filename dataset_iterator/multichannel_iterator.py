@@ -487,7 +487,7 @@ class MultiChannelIterator(IndexArrayIterator):
         dim_path = self.paths[ds_i].replace(self.channel_keywords[0], '/originalDimensions')
         if dim_path not in output_file and dim_path in self.datasetIO:
             output_file.create_dataset(dim_path, data=self.datasetIO.get_dataset(dim_path))
-        for output_key, output_shape in enumerate(output_keys, output_shapes):
+        for output_key, output_shape in zip(output_keys, output_shapes):
             ds_path = self.paths[ds_i].replace(self.channel_keywords[0], output_key)
             if ds_path not in output_file:
                 output_file.create_dataset(ds_path, shape=(self.ds_array[0][ds_i].shape[0],)+output_shape, dtype=self.dtype, **create_dataset_options) #, compression="gzip" # no compression for compatibility with java driver
