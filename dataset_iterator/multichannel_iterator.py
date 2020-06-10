@@ -26,12 +26,14 @@ class MultiChannelIterator(IndexArrayIterator):
                 group_keyword=None,
                 image_data_generators=None,
                 singleton_channels=[],
+                n_spatial_dims=2,
                 batch_size=32,
                 shuffle=True,
                 perform_data_augmentation=True,
                 seed=None,
                 dtype='float32'):
         self.dataset = dataset
+        self.n_spatial_dims=n_spatial_dims
         self.group_keyword=group_keyword
         self.channel_keywords=channel_keywords
         self.channel_scaling_param = channel_scaling_param
@@ -99,8 +101,9 @@ class MultiChannelIterator(IndexArrayIterator):
             off += len(paths)
             self.grp_len.append(self.ds_len[off-1])
         self.grp_off=np.insert(self.grp_len[:-1], 0, 0)
-        # check that all datasets have same image shape within each channel
+        # check that all datasets have same image shape within each channel. shape should be n_spatial_dims (if n channel = 1 or spatial dims + 1)
         self.channel_image_shapes = [ds_l[0].shape[1:] if ds_l is not None else None for ds_l in self.ds_array]
+        assert np.all(len(s) == self.n_spatial_dims or len(s) == self.n_spatial_dims+1 for s in self.channel_image_shapes if s is not None), "invalid image rank, current spatial dims number is {}, image rank should be in [{}, {}]".format(self.n_spatial_dims, self.n_spatial_dims, self.n_spatial_dims+1)
         for c, ds_l in enumerate(self.ds_array):
             if self.channel_keywords[c] is not None:
                 for ds_idx, ds in enumerate(ds_l):
@@ -371,7 +374,7 @@ class MultiChannelIterator(IndexArrayIterator):
         if chan_idx in self.singleton_channels:
             im_idx=0
         im = ds[im_idx]
-        if len(self.channel_image_shapes[chan_idx])==2 and len(im.shape)==2:
+        if len(im.shape)==self.n_spatial_dims: # add channel axis
             im = np.expand_dims(im, -1)
         im = im.astype(self.dtype)
         # apply dataset-wise scaling if information is present in attributes
@@ -409,7 +412,7 @@ class MultiChannelIterator(IndexArrayIterator):
     def predict(self, output, model, output_keys, write_every_n_batches = 100, n_output_channels=1, output_image_shapes = None, prediction_function=None, apply_to_prediction=None, close_outputIO=True, **create_dataset_options):
         of = get_datasetIO(output, 'a')
         if output_image_shapes is None:
-            output_image_shapes = self.channel_image_shapes[0][:-1]
+            output_image_shapes = self.channel_image_shapes[0] if len(self.channel_image_shapes[0])==self.n_spatial_dims else self.channel_image_shapes[0][:-1]
         if not isinstance(output_keys, (list, tuple)):
             output_keys = [output_keys]
         if not isinstance(output_image_shapes, list):
