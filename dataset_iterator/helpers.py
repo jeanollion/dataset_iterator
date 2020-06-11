@@ -7,8 +7,8 @@ def open_channel(dataset, channel_keyword, group_keyword=None, size=None):
         iterator.batch_size=len(iterator)
     return iterator[0]
 
-def get_min_and_max(dataset, channel_keyword, batch_size=1):
-    iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], output_channels=[], batch_size=batch_size)
+def get_min_and_max(dataset, channel_keyword, group_keyword=None, batch_size=1):
+    iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, output_channels=[], batch_size=batch_size)
     vmin = float('inf')
     vmax = float('-inf')
     for i in range(len(iterator)):
@@ -17,10 +17,11 @@ def get_min_and_max(dataset, channel_keyword, batch_size=1):
         vmax = max(batch.max(), vmax)
     return vmin, vmax
 
-def get_histogram(dataset, channel_keyword, bins, sum_to_one=False, batch_size=1):
-    iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], output_channels=[], batch_size=batch_size)
+def get_histogram(dataset, channel_keyword, bins, sum_to_one=False, group_keyword=None, batch_size=1, return_min_and_bin_size=False):
+    iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, output_channels=[], batch_size=batch_size)
     if isinstance(bins, int):
         vmin, vmax = get_min_and_max(dataset, channel_keyword, batch_size=batch_size)
+        bin_size = (vmax - vmin)/(bins-1)
         bins = np.linspace(vmin, vmax + (vmax - vmin)/bins, num=bins+1)
     histogram = None
     for i in range(len(iterator)):
@@ -32,7 +33,10 @@ def get_histogram(dataset, channel_keyword, bins, sum_to_one=False, batch_size=1
             histogram += histo
     if sum_to_one:
         histogram=histogram/np.sum(histogram)
-    return histogram, bins
+    if return_min_and_bin_size:
+        return histogram, vmin, bin_size
+    else:
+        return histogram, bins
 
 def get_percentile(histogram, bins, percentile):
     cs = np.cumsum(histogram)
