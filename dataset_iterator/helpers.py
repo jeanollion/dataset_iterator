@@ -40,6 +40,8 @@ def get_histogram(dataset, channel_keyword, bins, sum_to_one=False, group_keywor
 
 def get_percentile(histogram, bins, percentile):
     cs = np.cumsum(histogram)
+    if isinstance(percentile, (list, tuple)):
+        percentile = np.array(percentile)
     percentile = percentile * cs[-1] / 100
     bin_centers = ( bins[1:] + bins[:-1] ) / 2
     return np.interp(percentile, cs, bin_centers)
@@ -48,9 +50,10 @@ def get_modal_value(histogram, bins):
     bin_centers = ( bins[1:] + bins[:-1] ) / 2
     return bin_centers[np.argmax(histogram)]
 
-def get_mean_sd(dataset, channel_keyword, per_channel): # TODO TEST
+def get_mean_sd(dataset, channel_keyword, group_keyword=None, per_channel=True): # TODO TEST
   params = dict(dataset=dataset,
               channel_keywords=[channel_keyword],
+              group_keyword=group_keyword,
               output_channels=[],
               perform_data_augmentation=False,
               batch_size=1,
@@ -61,7 +64,7 @@ def get_mean_sd(dataset, channel_keyword, per_channel): # TODO TEST
   n_channels = shape[-1]
   sum_im = np.zeros(shape=(ds_size, n_channels), dtype=np.float64)
   sum2_im = np.zeros(shape=(ds_size, n_channels), dtype=np.float64)
-  for i in range(range(ds_size)):
+  for i in range(ds_size):
     #print("computing mean / sd : image: {}/{}".format(i, DS_SIZE[dataset_idx]))
     image = it[i]
     for c in range(n_channels):
@@ -73,4 +76,14 @@ def get_mean_sd(dataset, channel_keyword, per_channel): # TODO TEST
   axis = 0 if per_channel else (0, 1)
   mean_ = np.sum(sum_im, axis=axis)
   sd_ = np.sqrt(np.sum(sum2_im, axis=axis) - mean_ * mean_)
-  return [mean_, sd_]
+  return mean_, sd_
+
+def distribution_summary(dataset, channel_keyword, bins, group_keyword=None, percentiles = [5, 50, 95]):
+    histogram, bins = get_histogram(dataset, channel_keyword, bins, group_keyword=group_keyword)
+    mode = get_modal_value(histogram, bins)
+    percentiles_values = get_percentile(histogram, bins, percentiles)
+    percentiles = {p:v for p,v in zip(percentiles, percentiles_values)}
+    mean, sd = get_mean_sd(dataset, channel_keyword, group_keyword)
+    vmin, vmax = get_min_and_max(dataset, channel_keyword, group_keyword)
+    print("range:[{:.5g}; {:.5g}] mode: {:.5g} mean: {}, sd: {}, percentiles: {}".format(vmin, vmax, mode,  "; ".join("{:.5g}".format(m) for m in mean), "; ".join("{:.5g}".format(s) for s in sd), "; ".join("{}%:{:.4g}".format(k,v) for k,v in percentiles.items())))
+    return vmin, vmax, mode, mean, sd, percentiles
