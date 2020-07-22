@@ -10,6 +10,120 @@ from .utils import ensure_multiplicity, flatten_list
 from itertools import groupby
 
 class MultiChannelIterator(IndexArrayIterator):
+    """Flexible Image iterator allowing on-the-fly pre-processing / augmentation of data of massive multichannel datasets.
+    Each element returned by the iterator is a tuple (input, output), where input and output represent one or several tensors.
+    Each tensor's first axis is the batch, and last axis is the channel.
+    Dataset is accessed through the class DatasetIO, that includes .h5 files and PILLOW-compatible images.
+    Datasets can contain several sub-datasets, that will be grouped according to their path (see channel_keywords and group_keyword descriptions)
+
+    Parameters
+    ----------
+    dataset : DatasetIO or string
+        if string : will be processed by the method DatasetIO.get_datasetIO. Currently it should be a .h5 file.
+    channel_keywords : list of strings
+        keywords defining each channel.
+        The path of each channel file within dataset should only differ by this keyword
+        This list defines the indices of all channels: e.g if channel_keywords = ["/raw", "/labels"] : all datasets containing "/raw" in their path will be associated to the channel of index 0 and all datasets which path contains "/labels" instead of "/raw" will be associated to the channel of index 1.
+    input_channels : list of ints
+        index of returned input channels within channel_keywords
+    output_channels : list of ints
+        index of returned output channels within channel_keywords
+    weight_map_functions : list of callable
+        should be None or of same length as output_channels.
+        For each output channel, if not None, the corresponding function is applied to the output batch of same index, and concatenated along the last axis
+        Applied before output_postprocessing_functions if any and after channels_postprocessing_function.
+    output_postprocessing_functions : list of callable
+        should be None or of same length as output_channels.
+        For each output channel, if not None, the corresponding function is applied to the output batch of same index.
+        Applied after channels_postprocessing_function.
+    channels_postprocessing_function : callable
+        input is a dict mapping channel index to batch
+        applied after image_data_generators and before weight_map_functions / output_postprocessing_functions if any.
+    extract_tile_function : callable
+        function that inputs a batch, splits it into tiles and concatenate along batch axis.
+        Applied before channels_postprocessing_function and after image_data_generators
+    mask_channels : list of ints
+        index of channels that contain binary (or labeled) images. Used to detect the presence/abscence of segmented objects at image borders
+    output_multiplicity : int
+        output = (output) * output_multiplicity
+    input_multiplicity : int
+        input = (input) * input_multiplicity
+    channel_scaling_param : list of dict
+        channel scaling parameter: each element should be as: {'level':1, 'qmin':5, 'qmax':95}, where:
+        qmin is the min percentile, qmax the max percentile, Level represent the hierachical level at which computing the percentile.
+        scaling is: I -> ( I - qmin ) / ( qmax - qmin )
+    group_keyword : string or list of strings
+        string contained in the path of all channels -> allows to limit iteration to a subset of the dataset.
+    image_data_generators : list of image ImageDataGenerator as defined in keras pre-processing, for data augmentation.
+        should be of same size as channel_keywords.
+        augmentation parameters are computed on the first channel, and applied on each channels using the ImageDataGenerator of corresponding index.
+        if a mask_channels is not empty, then the first mask channel is used as reference for parameters computation instead of the first channel.
+    singleton_channels : list of ints
+        list of channel that contains a single image.
+    n_spatial_dims : int (2 or 3)
+        number of spatial dimensions. if 2, 4D tensor are returned, if 3 5D tensor are returned.
+    batch_size : int
+        size of the batch (first axis of returned tensors)
+    shuffle : boolean
+        if true, image indices are shuffled
+    perform_data_augmentation : boolean
+        if false, image_data_generators are ignored
+    seed : int
+        random seed
+    dtype : numpy datatype
+
+    Attributes
+    ----------
+    paths : list of string
+        list of paths of all the reference channel sub-datasets
+    group_map_paths : dict
+        dict mapping each group_keyword to a list of paths
+    ds_array : list of list of sub-dataset
+        first axis is the channel, second the index of the sub-dataset (same length as paths)
+    ds_len : list of ints
+        cumulative index of the last element of each sub-dataset
+    ds_off : list of ints
+        cumulative index of the first element of each sub-dataset
+    grp_len : list of ints
+        cumulative index of the last element of each sub-dataset group
+    grp_off : list of ints
+        cumulative index of the first element of each sub-dataset group
+    channel_image_shapes : list of tuple
+        tensor shape of each sub-dataset without batch axis.
+    labels : list of string
+        list of label vector corresponding to each sub-dataset. initialized if the dataset contains sub-datasets corresponding to the channel keyword "/labels"
+        each element of labels is a vector of length equal to the batch axis of the corresponding sub-datasets
+        each label is in the format: <barcode>_fXXXXX where <barcode> is a unique identifier of a time-series withing the sub-dataset, and XXXXX an int that correspond to the time step of the imageself.
+        Labels are used to return the index of the previous/next time-step in the TrackingIterator. In that case sub-datasets should correpond one or several time-series (a time-series correspond to successive images)
+    void_mask_max_proportion : float
+        maximum proportion of void images in each batch
+        an image is considered as void when the corresponding image in the channel defined in void_mask_chan contains only zeros.
+    void_mask_chan : int
+        index of the mask channel used to determine whether and image is void or not.
+        see: void_mask_max_proportion
+    group_proportion : list of floats
+        should be of same length as group_keyword
+        proportion of image of each group in each batch
+    dataset
+    n_spatial_dims
+    group_keyword
+    channel_keywords
+    channel_scaling_param
+    dtype
+    perform_data_augmentation
+    singleton_channels
+    mask_channels
+    output_multiplicity
+    input_multiplicity
+    input_channels
+    output_channels
+    image_data_generators
+    weight_map_functions
+    output_postprocessing_functions
+    channels_postprocessing_function
+    extract_tile_function
+
+    """
     def __init__(self,
                 dataset,
                 channel_keywords=['/raw'],
@@ -22,7 +136,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 mask_channels=[],
                 output_multiplicity = 1,
                 input_multiplicity = 1,
-                channel_scaling_param=None, #[{'level':1, 'qmin':5, 'qmax':95}],
+                channel_scaling_param=None,
                 group_keyword=None,
                 image_data_generators=None,
                 singleton_channels=[],
@@ -101,7 +215,7 @@ class MultiChannelIterator(IndexArrayIterator):
             off += len(paths)
             self.grp_len.append(self.ds_len[off-1])
         self.grp_off=np.insert(self.grp_len[:-1], 0, 0)
-        # check that all datasets have same image shape within each channel. shape should be n_spatial_dims (if n channel = 1 or spatial dims + 1)
+        # check that all datasets have same image shape within each channel. rank should be n_spatial_dims (if n channel = 1 or spatial dims + 1)
         self.channel_image_shapes = [ds_l[0].shape[1:] if ds_l is not None else None for ds_l in self.ds_array]
         assert np.all(len(s) == self.n_spatial_dims or len(s) == self.n_spatial_dims+1 for s in self.channel_image_shapes if s is not None), "invalid image rank, current spatial dims number is {}, image rank should be in [{}, {}]".format(self.n_spatial_dims, self.n_spatial_dims, self.n_spatial_dims+1)
         for c, ds_l in enumerate(self.ds_array):
