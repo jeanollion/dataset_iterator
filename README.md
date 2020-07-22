@@ -46,3 +46,5 @@ test_it = MultiChannelIterator(dataset_file_path = file_path, channel_keywords =
 
 Such datasets can be generated directly from [BACMMAN software](https://github.com/jeanollion/bacmman).
 See [this tutorial](https://github.com/jeanollion/bacmman/wiki/FineTune-DistNet) for instance.
+
+See this notebook for a demo: [![](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1J-UPivwyNTpyLhOMfzhfG0pIl6gDD9I5)
