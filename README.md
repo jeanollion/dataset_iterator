@@ -43,8 +43,16 @@ There can be more folder level, for instance to have train and test sets in the 
 train_it = MultiChannelIterator(dataset_file_path = file_path, channel_keywords = ["/raw", "/labels"], group_keyword="train")
 test_it = MultiChannelIterator(dataset_file_path = file_path, channel_keywords = ["/raw", "/labels"], group_keyword="test")
 ```
+# Image formats
+- Those iterators are using an object of class `DatasetIO` to access the data. 
+- There is currently an implementation of DatasetIO for .h5 files (`H5pyIO`), as well as dataset composed of multiple images files supported by PILLOW (`MultipleFileIO`). 
+- one can also concatenate datasets from different files:
+  - if a dataset is split into several files that contain the same channels: use `ConcatenateDatasetIO`
+  - if a dataset contains channels in different files, use: `MultipleDatasetIO`
 
-Such datasets can be generated directly from [BACMMAN software](https://github.com/jeanollion/bacmman).
-See [this tutorial](https://github.com/jeanollion/bacmman/wiki/FineTune-DistNet) for instance.
-
+# Demo
 See this notebook for a demo: [![](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1J-UPivwyNTpyLhOMfzhfG0pIl6gDD9I5)
+
+# Generate Dataset with BACMMAN
+.h5 datasets can be generated directly from [BACMMAN software](https://github.com/jeanollion/bacmman).
+See [this tutorial](https://github.com/jeanollion/bacmman/wiki/FineTune-DistNet) for instance.
