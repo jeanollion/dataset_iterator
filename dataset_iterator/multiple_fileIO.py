@@ -13,7 +13,7 @@ except ImportError:
 
 
 class MultipleFileIO(DatasetIO):
-    """Allows to iterate an image dataset that contains several image files
+    """Allows to iterate an image dataset that contains several image files compatible with PILLOW
 
     Parameters
     ----------
