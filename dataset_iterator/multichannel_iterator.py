@@ -8,6 +8,7 @@ from math import copysign, ceil
 from .datasetIO import DatasetIO, get_datasetIO
 from .utils import ensure_multiplicity, flatten_list
 from itertools import groupby
+from .index_array_iterator import IMCOMPLETE_LAST_BATCH_MODE
 
 class MultiChannelIterator(IndexArrayIterator):
     """Flexible Image iterator allowing on-the-fly pre-processing / augmentation of data of massive multichannel datasets.
@@ -104,6 +105,11 @@ class MultiChannelIterator(IndexArrayIterator):
     group_proportion : list of floats
         should be of same length as group_keyword
         proportion of image of each group in each batch
+    incomplete_last_batch_mode : one of ["KEEP", "CONSTANT_SIZE", "REMOVE"]
+        behavior for last batch in case number of element is not a multiple of batch_size
+        "KEEP" : last batch will be smaller than other batches
+        "CONSTANT_SIZE" : last batch will have same size as other batches, some of his elements will overlap with previous batch
+        "REMOVE" : last batch is simply removed
     dataset
     n_spatial_dims
     group_keyword
@@ -145,7 +151,8 @@ class MultiChannelIterator(IndexArrayIterator):
                 shuffle=True,
                 perform_data_augmentation=True,
                 seed=None,
-                dtype='float32'):
+                dtype='float32',
+                incomplete_last_batch_mode=IMCOMPLETE_LAST_BATCH_MODE[0]):
         self.dataset = dataset
         self.n_spatial_dims=n_spatial_dims
         self.group_keyword=group_keyword
@@ -263,7 +270,7 @@ class MultiChannelIterator(IndexArrayIterator):
             self.void_mask_chan = mask_channels[0]
         else:
             self.void_mask_chan=-1
-        super().__init__(indexes[-1], batch_size, shuffle, seed)
+        super().__init__(indexes[-1], batch_size, shuffle, seed, incomplete_last_batch_mode)
 
     def _open_datasetIO(self):
         self.datasetIO = get_datasetIO(self.dataset, 'r')
