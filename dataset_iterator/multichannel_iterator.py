@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 from dataset_iterator import IndexArrayIterator
 from .utils import remove_duplicates, pick_from_array
@@ -227,11 +228,13 @@ class MultiChannelIterator(IndexArrayIterator):
         # check that all datasets have same image shape within each channel. rank should be n_spatial_dims (if n channel = 1 or spatial dims + 1)
         self.channel_image_shapes = [ds_l[0].shape[1:] if ds_l is not None else None for ds_l in self.ds_array]
         assert np.all(len(s) == self.n_spatial_dims or len(s) == self.n_spatial_dims+1 for s in self.channel_image_shapes if s is not None), "invalid image rank, current spatial dims number is {}, image rank should be in [{}, {}]".format(self.n_spatial_dims, self.n_spatial_dims, self.n_spatial_dims+1)
+        # check that all dataset have same image shape
         for c, ds_l in enumerate(self.ds_array):
             if self.channel_keywords[c] is not None:
                 for ds_idx, ds in enumerate(ds_l):
                     if ds.shape[1:] != self.channel_image_shapes[c]:
-                        raise ValueError('Dataset {dsi} with path {dspath} from channel {chan}({chank}) has shape {dsshape} that differs from first dataset with path {ds1path} with shape {ds1shape}'.format(dsi=ds_idx, dspath=self._get_dataset_path(c, ds_idx), chan=c, chank=self.channel_keywords[c], dsshape=ds.shape[1:], ds1path=self._get_dataset_path(c, 0), ds1shape=self.channel_image_shapes[c] ))
+                        warnings.warn('Dataset {dsi} with path {dspath} from channel {chan}({chank}) has shape {dsshape} that differs from first dataset with path {ds1path} with shape {ds1shape}. Batch size is set to 1'.format(dsi=ds_idx, dspath=self._get_dataset_path(c, ds_idx), chan=c, chank=self.channel_keywords[c], dsshape=ds.shape[1:], ds1path=self._get_dataset_path(c, 0), ds1shape=self.channel_image_shapes[c] ))
+                        self.batch_size=1
         # labels
         try:
             self.labels = [self.datasetIO.get_dataset(path.replace(self.channel_keywords[0], '/labels')) for path in self.paths]
