@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 import time
 import copy
 from math import copysign, ceil
-from .datasetIO import DatasetIO, get_datasetIO
+from .datasetIO import DatasetIO, get_datasetIO, MemoryIO
 from .utils import ensure_multiplicity, flatten_list
 from itertools import groupby
 from .index_array_iterator import IMCOMPLETE_LAST_BATCH_MODE
@@ -152,8 +152,10 @@ class MultiChannelIterator(IndexArrayIterator):
                 perform_data_augmentation=True,
                 seed=None,
                 dtype='float32',
+                memory_persistant=False,
                 incomplete_last_batch_mode=IMCOMPLETE_LAST_BATCH_MODE[0]):
         self.dataset = dataset
+        self.memory_persistant=memory_persistant
         self.n_spatial_dims=n_spatial_dims
         self.group_keyword=group_keyword
         self.channel_keywords=channel_keywords
@@ -263,8 +265,8 @@ class MultiChannelIterator(IndexArrayIterator):
                         # get IQR and median
                         minv, med, maxv = np.interp([scaling_info.get('qmin', 5), 50, scaling_info.get('qmax', 95)], percentile_x, percentiles)
                         self.channel_scaling[c][ds_idx] = [med, maxv-minv]
-
-        self._close_datasetIO()
+        if not memory_persistant:
+            self._close_datasetIO()
         self.void_mask_max_proportion = -1
         if len(mask_channels)>0:
             self.void_mask_chan = mask_channels[0]
@@ -274,6 +276,8 @@ class MultiChannelIterator(IndexArrayIterator):
 
     def _open_datasetIO(self):
         self.datasetIO = get_datasetIO(self.dataset, 'r')
+        if self.memory_persistant:
+            self.datasetIO = MemoryIO(self.datasetIO)
         if self.paths is None:
             self.group_map_paths = dict()
             group_list = self.group_keyword if isinstance(self.group_keyword, (list, tuple)) else [self.group_keyword]
@@ -497,7 +501,7 @@ class MultiChannelIterator(IndexArrayIterator):
         im = ds[im_idx]
         if len(im.shape)==self.n_spatial_dims: # add channel axis
             im = np.expand_dims(im, -1)
-        im = im.astype(self.dtype)
+        im = im.astype(self.dtype, copy=True) # copy
         # apply dataset-wise scaling if information is present in attributes
         off = self.ds_scaling_center[chan_idx][ds_idx]
         factor = self.ds_scaling_factor[chan_idx][ds_idx]
