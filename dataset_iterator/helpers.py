@@ -1,5 +1,6 @@
 import numpy as np
 from .multichannel_iterator import MultiChannelIterator
+from math import round
 
 def open_channel(dataset, channel_keyword, group_keyword=None, size=None):
     iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=list(np.arange(len(channel_keyword))) if isinstance(channel_keyword, (list, tuple)) else [0], output_channels=[], batch_size=1 if size is None else size, shuffle=False)
@@ -17,12 +18,18 @@ def get_min_and_max(dataset, channel_keyword, group_keyword=None, batch_size=1):
         vmax = max(batch.max(), vmax)
     return vmin, vmax
 
-def get_histogram(dataset, channel_keyword, bins, sum_to_one=False, group_keyword=None, batch_size=1, return_min_and_bin_size=False):
+def get_histogram(dataset, channel_keyword, bins, bin_size=None, sum_to_one=False, group_keyword=None, batch_size=1, return_min_and_bin_size=False):
     iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, output_channels=[], batch_size=batch_size)
+    if bins is None:
+        assert bin_size is not None
+        vmin, vmax = get_min_and_max(dataset, channel_keyword, batch_size=batch_size)
+        n_bins = round( (vmax - vmin) / bin_size )
+        bin_size = (vmax - vmin) / n_bins
+        bins = np.linspace(vmin, vmax, num=n_bins+1)
     if isinstance(bins, int):
         vmin, vmax = get_min_and_max(dataset, channel_keyword, batch_size=batch_size)
-        bin_size = (vmax - vmin)/(bins-1)
-        bins = np.linspace(vmin, vmax + (vmax - vmin)/bins, num=bins+1)
+        bin_size = (vmax - vmin)/bins
+        bins = np.linspace(vmin, vmax, num=bins+1)
     histogram = None
     for i in range(len(iterator)):
         batch = iterator[i]
