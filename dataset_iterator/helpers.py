@@ -1,6 +1,5 @@
 import numpy as np
 from .multichannel_iterator import MultiChannelIterator
-from math import round
 
 def open_channel(dataset, channel_keyword, group_keyword=None, size=None):
     iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=list(np.arange(len(channel_keyword))) if isinstance(channel_keyword, (list, tuple)) else [0], output_channels=[], batch_size=1 if size is None else size, shuffle=False)
