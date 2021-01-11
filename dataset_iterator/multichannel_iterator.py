@@ -481,7 +481,7 @@ class MultiChannelIterator(IndexArrayIterator):
         return img
 
     def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array):
-        # read all images
+        # read all images # TODO read all image per ds at once.
         images = [self._read_image(chan_idx, ds_idx, im_idx) for i, (ds_idx, im_idx) in enumerate(zip(index_ds, index_array))]
         batch = np.stack(images)
         return batch
@@ -504,7 +504,7 @@ class MultiChannelIterator(IndexArrayIterator):
         im = ds[im_idx]
         if len(im.shape)==self.n_spatial_dims: # add channel axis
             im = np.expand_dims(im, -1)
-        im = im.astype(self.dtype, copy=True) # copy
+        im = im.astype(self.dtype, copy=False) # copy
         # apply dataset-wise scaling if information is present in attributes
         off = self.ds_scaling_center[chan_idx][ds_idx]
         factor = self.ds_scaling_factor[chan_idx][ds_idx]
