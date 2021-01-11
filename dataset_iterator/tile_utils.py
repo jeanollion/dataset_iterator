@@ -6,9 +6,9 @@ from .utils import ensure_multiplicity
 
 OVERLAP_MODE = ["NO_OVERLAP", "ALLOW", "FORCE"]
 
-def extract_tile_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, random_stride=False, scaling_function=None, augmentation_rotate=True):
+def extract_tile_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, scaling_function=None, augmentation_rotate=True):
     def func(batch):
-        tiles = extract_tiles(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, random_stride=random_stride, return_coords=False)
+        tiles = extract_tiles(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, return_coords=False)
         if perform_augmentation:
             tiles = augment_tiles_inplace(tiles, rotate = augmentation_rotate and all([s==tile_shape[0] for s in tile_shape]), n_dims=len(tile_shape))
         if scaling_function is not None:
@@ -16,7 +16,7 @@ def extract_tile_function(tile_shape, perform_augmentation=True, overlap_mode=OV
         return tiles
     return func
 
-def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, random_stride=False, return_coords=False):
+def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, return_coords=False):
     """Extract tiles.
 
     Parameters
@@ -32,6 +32,8 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
         "FORCE"  maximum number of tiles that fit in the image while enforcing a minimum overlap defined by min_overlap. If min_overlap is less than zero, it enforces a distance between tiles
     min_overlap : integer or tuple
         min overlap along each spatial dimension. only used in mode "FORCE"
+    n_tiles : int
+        if provided overlap_mode and min_overlap are ignored
     random_stride : type
         whether tile coordinates should be randomized, within the gap / overlap zone
     return_coords : type
@@ -43,7 +45,10 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
         tiles concatenated along first axis, (tiles coordinates)
 
     """
-    tile_coords = _get_tile_coords(batch.shape[1:-1], tile_shape, overlap_mode, min_overlap, random_stride)
+    if n_tiles is None:
+        tile_coords = _get_tile_coords_overlap(batch.shape[1:-1], tile_shape, overlap_mode, min_overlap, random_stride)
+    else:
+        tile_coords = _get_tile_coords(batch.shape[1:-1], tile_shape, n_tiles, random_stride)
     if len(tile_shape)==2:
         tiles = np.concatenate([batch[:, tile_coords[0][i]:tile_coords[0][i] + tile_shape[0], tile_coords[1][i]:tile_coords[1][i] + tile_shape[1]] for i in range(len(tile_coords[0]))])
     else:
@@ -53,14 +58,20 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
     else:
         return tiles
 
-def _get_tile_coords(image_shape, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, random_stride=False):
+def _get_tile_coords(image_shape, tile_shape, n_tiles, random_stride=False):
+    n_dims = len(image_shape)
+    assert n_dims == len(tile_shape), "tile shape should be equal to image shape"
+    tile_coords_by_axis = [_get_tile_coords_axis(image_shape[i], tile_shape[i], n_tiles, random_stride) for i in range(n_dims)]
+    return [a.flatten() for a in np.meshgrid(*tile_coords_by_axis, sparse=False, indexing='ij')]
+
+def _get_tile_coords_overlap(image_shape, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, random_stride=False):
     n_dims = len(image_shape)
     min_overlap = ensure_multiplicity(n_dims, min_overlap)
     assert n_dims == len(tile_shape), "tile shape should be equal to image shape"
-    tile_coords_by_axis = [_get_tile_coords_axis(image_shape[i], tile_shape[i], overlap_mode, min_overlap[i], random_stride) for i in range(n_dims)]
+    tile_coords_by_axis = [_get_tile_coords_axis_overlap(image_shape[i], tile_shape[i], overlap_mode, min_overlap[i], random_stride) for i in range(n_dims)]
     return [a.flatten() for a in np.meshgrid(*tile_coords_by_axis, sparse=False, indexing='ij')]
 
-def _get_tile_coords_axis(size, tile_size, overlap_mode=OVERLAP_MODE[1], min_overlap=1, random_stride=False):
+def _get_tile_coords_axis_overlap(size, tile_size, overlap_mode=OVERLAP_MODE[1], min_overlap=1, random_stride=False):
     if tile_size==size:
         return [0]
     assert tile_size<size, "tile size must be inferior or equal to size"
@@ -76,15 +87,19 @@ def _get_tile_coords_axis(size, tile_size, overlap_mode=OVERLAP_MODE[1], min_ove
             n_tiles = 1 + ceil((size - tile_size)/(tile_size - min_overlap)) # size = tile_size + (n-1) * (tile_size - min_overlap)
         else:
             n_tiles = floor((size - min_overlap)/(tile_size - min_overlap)) # n-1 gaps and n tiles: size = n * tile_size + (n-1)*-min_overlap
+
+    return _get_tile_coords_axis(size, tile_size, n_tiles, overlap_mode, min_overlap, random_stride)
+
+def _get_tile_coords_axis(size, tile_size, n_tiles, overlap_mode=OVERLAP_MODE[1], min_overlap=1, random_stride=False):
+    o_mode = OVERLAP_MODE.index(overlap_mode)
     if n_tiles==1:
         coords = [(size - tile_size)//2]
         if random_stride and coords[0]>0:
             coords += randint(-coords[0], size-(coords[0]+tile_size), size=1)
         return coords
-    elif n_tiles==2:
+    if n_tiles==2:
         if (o_mode==2 and min_overlap>=0) or (o_mode==1 and not random_stride):
             return [0, size-tile_size]
-
     sum_stride = np.abs(n_tiles * tile_size - size)
     stride = np.array([0]+[sum_stride//(n_tiles-1)]*(n_tiles-1), dtype=int)
     remains = sum_stride%(n_tiles-1)
