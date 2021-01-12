@@ -46,7 +46,6 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
 
     """
     tile_shape = ensure_multiplicity(len(batch.shape[1:-1]), tile_shape)
-    print(tile_shape)
     if n_tiles is None:
         tile_coords = _get_tile_coords_overlap(batch.shape[1:-1], tile_shape, overlap_mode, min_overlap, random_stride)
     else:
