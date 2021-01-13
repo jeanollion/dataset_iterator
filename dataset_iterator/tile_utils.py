@@ -63,13 +63,13 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
 
 def get_stride_2d(image_shape, tile_shape, n_tiles):
     if n_tiles == 1:
-        return (0, 0), (1, 1)
+        return (image_shape[0], image_shape[1]), (1, 1)
     assert len(image_shape)==2, "only available for 2d images"
     tile_shape = ensure_multiplicity(2, tile_shape)
-    Sx = image_shape[0] - tile_shape[0]
-    Sy = image_shape[1] - tile_shape[1]
-    assert Sx>=0, "tile size is too high on first axis"
-    assert Sy>=0, "tile size is too high on second axis"
+    Sy = image_shape[0] - tile_shape[0]
+    Sx = image_shape[1] - tile_shape[1]
+    assert Sy>=0, "tile size is too high on first axis"
+    assert Sx>=0, "tile size is too high on second axis"
     a = - n_tiles + 1
     b = Sy + Sx
     c = Sx*Sy
@@ -88,9 +88,9 @@ def get_stride_2d(image_shape, tile_shape, n_tiles):
     else:
         n_tiles_y = n_tiles_y_i
         n_tiles_x = n_tiles // n_tiles_y
-    stride_x = Sx // (n_tiles_x - 1) if n_tiles_x > 1 else 0
-    stride_y = Sy // (n_tiles_y - 1) if n_tiles_y > 1 else 0
-    return (stride_x, stride_y), (n_tiles_y, n_tiles_x)
+    stride_x = Sx // (n_tiles_x - 1) if n_tiles_x > 1 else image_shape[1]
+    stride_y = Sy // (n_tiles_y - 1) if n_tiles_y > 1 else image_shape[0]
+    return (stride_y, stride_x), (n_tiles_y, n_tiles_x)
 
 def _get_tile_coords(image_shape, tile_shape, n_tiles, overlap_mode=OVERLAP_MODE[1], min_overlap=1, random_stride=False):
     n_dims = len(image_shape)
