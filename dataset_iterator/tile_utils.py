@@ -133,8 +133,15 @@ def _get_tile_coords_axis(size, tile_size, n_tiles, overlap_mode=OVERLAP_MODE[1]
             coords += randint(-coords[0], size-(coords[0]+tile_size), size=1)
         return coords
     if n_tiles==2:
-        if (o_mode==2 and min_overlap>=0) or (o_mode==1 and not random_stride):
-            return [0, size-tile_size]
+        coords = [0, size-tile_size]
+        if random_stride:
+            gap = size - 2 * tile_size
+            if gap>1:
+                delta = randint(0, gap//2, size=2)
+                coords[0] += delta[0]
+                coords[1] -= delta[1]
+        return coords
+
     sum_stride = np.abs(n_tiles * tile_size - size)
     stride = np.array([0]+[sum_stride//(n_tiles-1)]*(n_tiles-1), dtype=int)
     remains = sum_stride%(n_tiles-1)
@@ -152,6 +159,8 @@ def _get_tile_coords_axis(size, tile_size, n_tiles, overlap_mode=OVERLAP_MODE[1]
         coords += randint(-half_mean_gap, half_mean_gap+1, size=n_tiles)
         coords[0] = max(coords[0], 0)
         coords[-1] = min(coords[-1], size-tile_size)
+    print("after random: coords: {}".format(coords))
+
     return coords
 
 def augment_tiles(tiles, rotate, n_dims=2):
