@@ -96,7 +96,7 @@ def _get_tile_coords(image_shape, tile_shape, n_tiles, random_stride=False):
     n_dims = len(image_shape)
     assert n_dims == len(tile_shape), "tile rank should be equal to image rank"
     assert n_dims == len(n_tiles), "n_tiles should have same rank as image"
-    tile_coords_by_axis = [_get_tile_coords_axis(image_shape[i], tile_shape[i], n_tiles[i], overlap_mode=OVERLAP_MODE[1], min_overlap=0, random_stride=random_stride) for i in range(n_dims)]
+    tile_coords_by_axis = [_get_tile_coords_axis(image_shape[i], tile_shape[i], n_tiles[i], random_stride=random_stride) for i in range(n_dims)]
     return [a.flatten() for a in np.meshgrid(*tile_coords_by_axis, sparse=False, indexing='ij')]
 
 def _get_tile_coords_overlap(image_shape, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, random_stride=False):
@@ -123,10 +123,9 @@ def _get_tile_coords_axis_overlap(size, tile_size, overlap_mode=OVERLAP_MODE[1],
         else:
             n_tiles = floor((size - min_overlap)/(tile_size - min_overlap)) # n-1 gaps and n tiles: size = n * tile_size + (n-1)*-min_overlap
 
-    return _get_tile_coords_axis(size, tile_size, n_tiles, overlap_mode, min_overlap, random_stride)
+    return _get_tile_coords_axis(size, tile_size, n_tiles, min_overlap, random_stride)
 
-def _get_tile_coords_axis(size, tile_size, n_tiles, overlap_mode=OVERLAP_MODE[1], min_overlap=0, random_stride=False):
-    o_mode = OVERLAP_MODE.index(overlap_mode)
+def _get_tile_coords_axis(size, tile_size, n_tiles, min_overlap=0, random_stride=False):
     if n_tiles==1:
         coords = [(size - tile_size)//2]
         if random_stride and coords[0]>0:
@@ -146,10 +145,11 @@ def _get_tile_coords_axis(size, tile_size, n_tiles, overlap_mode=OVERLAP_MODE[1]
     stride = np.array([0]+[sum_stride//(n_tiles-1)]*(n_tiles-1), dtype=int)
     remains = sum_stride%(n_tiles-1)
     stride[1:remains+1] += 1
-    if o_mode!=0 and not (o_mode==2 and min_overlap<0):
+    if np.sign(n_tiles * tile_size - size)>0:
         stride=-stride
     stride = np.cumsum(stride)
     coords = np.array([tile_size*idx + stride[idx] for idx in range(n_tiles)])
+    # print("before random: n_tiles: {}, tile_size: {} size: {}, stride: {}, coords: {}".format(n_tiles, tile_size, size, stride, coords))
     if random_stride:
         if min_overlap>0:
             half_mean_gap = floor(0.5 * (tile_size - sum_stride/(n_tiles-1)))
@@ -158,7 +158,7 @@ def _get_tile_coords_axis(size, tile_size, n_tiles, overlap_mode=OVERLAP_MODE[1]
         coords += randint(-half_mean_gap, half_mean_gap+1, size=n_tiles)
         coords[0] = max(coords[0], 0)
         coords[-1] = min(coords[-1], size-tile_size)
-    
+    # print("after random: coords: {}".format(coords))
     return coords
 
 def augment_tiles(tiles, rotate, n_dims=2):
