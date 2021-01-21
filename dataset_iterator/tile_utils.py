@@ -122,10 +122,9 @@ def _get_tile_coords_axis_overlap(size, tile_size, overlap_mode=OVERLAP_MODE[1],
             n_tiles = 1 + ceil((size - tile_size)/(tile_size - min_overlap)) # size = tile_size + (n-1) * (tile_size - min_overlap)
         else:
             n_tiles = floor((size - min_overlap)/(tile_size - min_overlap)) # n-1 gaps and n tiles: size = n * tile_size + (n-1)*-min_overlap
-
     return _get_tile_coords_axis(size, tile_size, n_tiles, min_overlap, random_stride)
 
-def _get_tile_coords_axis(size, tile_size, n_tiles, min_overlap=0, random_stride=False):
+def _get_tile_coords_axis(size, tile_size, n_tiles, random_stride=False):
     if n_tiles==1:
         coords = [(size - tile_size)//2]
         if random_stride and coords[0]>0:
@@ -151,14 +150,15 @@ def _get_tile_coords_axis(size, tile_size, n_tiles, min_overlap=0, random_stride
     coords = np.array([tile_size*idx + stride[idx] for idx in range(n_tiles)])
     # print("before random: n_tiles: {}, tile_size: {} size: {}, stride: {}, coords: {}".format(n_tiles, tile_size, size, stride, coords))
     if random_stride:
-        if min_overlap>0:
-            half_mean_gap = floor(0.5 * (tile_size - sum_stride/(n_tiles-1)))
-        else:
-            half_mean_gap = ceil(0.5 * sum_stride/(n_tiles-1))
+        spacing = (size-tile_size)//(n_tiles-1)
+        if spacing >= tile_size: # no overlap
+            half_mean_gap = floor(0.5 * (spacing-tile_size) )
+        else: # overlap
+            half_mean_gap = ceil(0.5 * spacing )
         coords += randint(-half_mean_gap, half_mean_gap+1, size=n_tiles)
         coords[0] = max(coords[0], 0)
         coords[-1] = min(coords[-1], size-tile_size)
-    # print("after random: coords: {}".format(coords))
+        # print("after random: spacing: {}, gap: {}, coords: {}".format(spacing, half_mean_gap, coords))
     return coords
 
 def augment_tiles(tiles, rotate, n_dims=2):
