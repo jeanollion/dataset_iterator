@@ -122,7 +122,7 @@ def _get_tile_coords_axis_overlap(size, tile_size, overlap_mode=OVERLAP_MODE[1],
             n_tiles = 1 + ceil((size - tile_size)/(tile_size - min_overlap)) # size = tile_size + (n-1) * (tile_size - min_overlap)
         else:
             n_tiles = floor((size - min_overlap)/(tile_size - min_overlap)) # n-1 gaps and n tiles: size = n * tile_size + (n-1)*-min_overlap
-    return _get_tile_coords_axis(size, tile_size, n_tiles, min_overlap, random_stride)
+    return _get_tile_coords_axis(size, tile_size, n_tiles, random_stride)
 
 def _get_tile_coords_axis(size, tile_size, n_tiles, random_stride=False):
     if n_tiles==1:
