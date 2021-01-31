@@ -48,6 +48,24 @@ def get_histogram(dataset, channel_keyword, bins, bin_size=None, sum_to_one=Fals
     else:
         return histogram, bins
 
+def get_histogram_bins_IPR(histogram, bins, n_bins, percentiles=[25, 75], min_bin_size=1.):
+    if isinstance(percentiles, (list, tuple)):
+        assert len(percentiles)==2, "if list or tuple, percentiles should have length 2"
+        assert percentiles[0]<percentiles[1] and percentiles[1]<=100 and percentiles[0]>=0, "invalid percentile values"
+    else:
+        assert percentiles>=0 and percentiles<=100, "invalid percentile valud"
+        p2 = 100 - percentiles
+        percentiles = [min(p2, percentiles), max(p2, percentiles)]
+    pmin, pmax = get_percentile(histogram, bins, percentiles)
+    print(pmin, pmax)
+    bin_size = (pmax - pmin) / n_bins
+    if min_bin_size is not None and min_bin_size>0:
+        bin_size = max(min_bin_size, bin_size)
+    vmin, vmax = bins[0], bins[-1]
+    n_bins = round( (vmax - vmin) / bin_size )
+    print("histo IQR: percentiles: [{}%={}, {}%={}], binsize: {}, nbins: {}".format(percentiles[0], pmin, percentiles[1], pmax, bin_size, n_bins))
+    return np.linspace(vmin, vmax, n_bins+1)
+
 def get_percentile(histogram, bins, percentile):
     cs = np.cumsum(histogram)
     if isinstance(percentile, (list, tuple)):
