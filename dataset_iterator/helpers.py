@@ -48,7 +48,7 @@ def get_histogram(dataset, channel_keyword, bins, bin_size=None, sum_to_one=Fals
     else:
         return histogram, bins
 
-def get_histogram_bins_IPR(histogram, bins, n_bins, percentiles=[25, 75], min_bin_size=1.):
+def get_histogram_bins_IPR(histogram, bins, n_bins, percentiles=[25, 75], min_bin_size=None, bin_range_percentiles=[0, 100], verbose = False):
     if isinstance(percentiles, (list, tuple)):
         assert len(percentiles)==2, "if list or tuple, percentiles should have length 2"
         assert percentiles[0]<percentiles[1] and percentiles[1]<=100 and percentiles[0]>=0, "invalid percentile values"
@@ -56,17 +56,31 @@ def get_histogram_bins_IPR(histogram, bins, n_bins, percentiles=[25, 75], min_bi
         assert percentiles>=0 and percentiles<=100, "invalid percentile valud"
         p2 = 100 - percentiles
         percentiles = [min(p2, percentiles), max(p2, percentiles)]
+    if isinstance(bin_range_percentiles, (list, tuple)):
+        assert len(bin_range_percentiles)==2, "if list or tuple, bin_range_percentiles should have length 2"
+        assert bin_range_percentiles[0]<bin_range_percentiles[1] and bin_range_percentiles[1]<=100 and bin_range_percentiles[0]>=0, "invalid percentile values"
+    else:
+        assert bin_range_percentiles>=0 and bin_range_percentiles<=100, "invalid percentile valud"
+        p2 = 100 - bin_range_percentiles
+        bin_range_percentiles = [min(p2, bin_range_percentiles), max(p2, bin_range_percentiles)]
+
     pmin, pmax = get_percentile(histogram, bins, percentiles)
     print(pmin, pmax)
     bin_size = (pmax - pmin) / n_bins
     if min_bin_size is not None and min_bin_size>0:
         bin_size = max(min_bin_size, bin_size)
-    vmin, vmax = bins[0], bins[-1]
+    if bin_range_percentiles[0]==0 and bin_range_percentiles[1]==100:
+        bin_range_percentiles=[0, 100]
+        vmin, vmax = bins[0], bins[-1]
+    else:
+        vmin, vmax = get_percentile(histogram, bins, bin_range_percentiles)
     n_bins = round( (vmax - vmin) / bin_size )
-    print("histo IQR: percentiles: [{}%={}, {}%={}], binsize: {}, nbins: {}".format(percentiles[0], pmin, percentiles[1], pmax, bin_size, n_bins))
+    if verbose:
+        print("histo IPR: percentiles: [{}%={}, {}%={}], final range:[{}%={}, {}%={}], binsize: {}, nbins: {}".format(percentiles[0], pmin, percentiles[1], pmax, bin_range_percentiles[0], vmin, bin_range_percentiles[1], vmax, bin_size, n_bins))
     return np.linspace(vmin, vmax, n_bins+1)
 
 def get_percentile(histogram, bins, percentile):
+    assert np.shape(histogram)[0] == np.shape(bins)[0]-1, "invalid edges"
     cs = np.cumsum(histogram)
     if isinstance(percentile, (list, tuple)):
         percentile = np.array(percentile)
