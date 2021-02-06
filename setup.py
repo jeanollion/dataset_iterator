@@ -5,7 +5,6 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="dataset_iterator",
-    packages = ['dataset_iterator'],
     version="0.1",
     author="Jean Ollion",
     author_email="jean.ollion@polytechnique.org",
@@ -17,9 +16,13 @@ setuptools.setup(
     keywords = ['Iterator', 'Dataset', 'Image', 'Numpy'],
     packages=setuptools.find_packages(),
     classifiers=[
-        "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: GNU GPLv3",
-        "Operating System :: OS Independent",
+        'Development Status :: 4 - Beta',
+        'Intended Audience :: Science/Research',
+        'Topic :: Scientific/Engineering :: Artificial Intelligence',
+        'Topic :: Scientific/Engineering :: Image Processing',
+        'Topic :: Scientific/Engineering :: Artificial Intelligence',
+        'License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)',
+        'Programming Language :: Python :: 3',
     ],
     python_requires='>=3',
     install_requires=['h5py>=2.9', 'numpy', 'scipy', 'scikit-learn', 'tensorflow']
