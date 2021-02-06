@@ -63,9 +63,7 @@ def get_histogram_bins_IPR(histogram, bins, n_bins, percentiles=[25, 75], min_bi
         assert bin_range_percentiles>=0 and bin_range_percentiles<=100, "invalid percentile valud"
         p2 = 100 - bin_range_percentiles
         bin_range_percentiles = [min(p2, bin_range_percentiles), max(p2, bin_range_percentiles)]
-
     pmin, pmax = get_percentile(histogram, bins, percentiles)
-    print(pmin, pmax)
     bin_size = (pmax - pmin) / n_bins
     if min_bin_size is not None and min_bin_size>0:
         bin_size = max(min_bin_size, bin_size)
@@ -107,7 +105,6 @@ def get_mean_sd(dataset, channel_keyword, group_keyword=None, per_channel=True):
   sum_im = np.zeros(shape=(ds_size, n_channels), dtype=np.float64)
   sum2_im = np.zeros(shape=(ds_size, n_channels), dtype=np.float64)
   for i in range(ds_size):
-    #print("computing mean / sd : image: {}/{}".format(i, DS_SIZE[dataset_idx]))
     image = it[i]
     for c in range(n_channels):
       sum_im[i,c] = np.sum(image[...,c])
