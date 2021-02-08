@@ -15,7 +15,7 @@ setuptools.setup(
     download_url = 'https://github.com/jeanollion/dataset_iterator/archive/v_01.tar.gz',
     keywords = ['Iterator', 'Dataset', 'Image', 'Numpy'],
     packages=setuptools.find_packages(),
-    classifiers=[
+    classifiers=[ #https://pypi.org/classifiers/
         'Development Status :: 4 - Beta',
         'Intended Audience :: Science/Research',
         'Topic :: Scientific/Engineering :: Artificial Intelligence',
