@@ -1,5 +1,6 @@
 import numpy as np
 from .multichannel_iterator import MultiChannelIterator
+from scipy.ndimage import gaussian_filter
 
 def open_channel(dataset, channel_keyword, group_keyword=None, size=None):
     iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=list(np.arange(len(channel_keyword))) if isinstance(channel_keyword, (list, tuple)) else [0], output_channels=[], batch_size=1 if size is None else size, shuffle=False)
@@ -20,7 +21,7 @@ def get_min_and_max(dataset, channel_keyword, group_keyword=None, batch_size=1):
     iterator._close_datasetIO()
     return vmin, vmax
 
-def get_histogram(dataset, channel_keyword, bins, bin_size=None, sum_to_one=False, group_keyword=None, batch_size=1, return_min_and_bin_size=False):
+def get_histogram(dataset, channel_keyword, bins, bin_size=None, sum_to_one=False, group_keyword=None, batch_size=1, return_min_and_bin_size=False, smooth_scale = 0, smooth_scale_in_bin_unit=True):
     iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, output_channels=[], batch_size=batch_size)
     if bins is None:
         assert bin_size is not None
@@ -41,6 +42,10 @@ def get_histogram(dataset, channel_keyword, bins, bin_size=None, sum_to_one=Fals
         else:
             histogram += histo
     iterator._close_datasetIO()
+    if smooth_scale>0:
+        if not smooth_scale_in_bin_unit:
+            smooth_scale /= bin_size
+        gaussian_filter(histogram, sigma = smooth_scale, mode="nearest", output=histogram)
     if sum_to_one:
         histogram=histogram/np.sum(histogram)
     if return_min_and_bin_size:
@@ -86,9 +91,22 @@ def get_percentile(histogram, bins, percentile):
     bin_centers = ( bins[1:] + bins[:-1] ) / 2
     return np.interp(percentile, cs, bin_centers)
 
-def get_modal_value(histogram, bins):
+def get_percentile_from_value(histogram, bins, value):
+    assert np.shape(histogram)[0] == np.shape(bins)[0]-1, "invalid edges"
+    cs = np.cumsum(histogram)
+    cs = cs / cs[-1]
+    if isinstance(value, (list, tuple)):
+        value = np.array(value)
     bin_centers = ( bins[1:] + bins[:-1] ) / 2
-    return bin_centers[np.argmax(histogram)]
+    return np.interp(value, bin_centers, cs) * 100
+
+def get_modal_value(histogram, bins, return_bin = False):
+    bin_centers = ( bins[1:] + bins[:-1] ) / 2
+    bin = np.argmax(histogram)
+    if return_bin:
+        return bin_centers[bin], bin
+    else:
+        return bin_centers[bin]
 
 def get_mean_sd(dataset, channel_keyword, group_keyword=None, per_channel=True): # TODO TEST
   params = dict(dataset=dataset,
