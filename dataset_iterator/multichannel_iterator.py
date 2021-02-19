@@ -145,6 +145,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 input_multiplicity = 1,
                 channel_scaling_param=None,
                 group_keyword=None,
+                group_proportion=None,
                 image_data_generators=None,
                 singleton_channels=[],
                 n_spatial_dims=2,
@@ -159,6 +160,9 @@ class MultiChannelIterator(IndexArrayIterator):
         self.memory_persistant=memory_persistant
         self.n_spatial_dims=n_spatial_dims
         self.group_keyword=group_keyword
+        self.group_proportion=group_proportion
+        if group_proportion is not None:
+            assert group_keyword is not None and isinstance(group_keyword, (tuple, list)) and isinstance(group_proportion, (tuple, list)) and len(group_proportion)==len(group_keyword), "when group_proportion is not None, group_keyword should be a list/tuple group_proportion should be of same length as group_keyword"
         self.channel_keywords=channel_keywords
         self.channel_scaling_param = channel_scaling_param
         self.dtype = dtype
@@ -646,12 +650,12 @@ class MultiChannelIterator(IndexArrayIterator):
             pass
 
     def __len__(self):
-        if self.void_mask_max_proportion>=0 and not hasattr(self, "void_masks") or self.void_mask_max_proportion<0 and hasattr(self, "group_proportion"):
+        if self.void_mask_max_proportion>=0 and not hasattr(self, "void_masks") or self.void_mask_max_proportion<0 and group_proportion is not None:
             self._set_index_array() # redefines n in either cases
         return super().__len__()
 
     def _set_index_array(self):
-        if self.void_mask_max_proportion>=0: # in case there are too many void masks -> some are randomly removed
+        if self.void_mask_max_proportion>=0: # if void_mask_max_proportion is set. Use case: in case there are too many void masks -> some are randomly removed
             try:
                 void_masks = self.void_masks
             except AttributeError:
@@ -673,7 +677,7 @@ class MultiChannelIterator(IndexArrayIterator):
             else:  # only void or only not void
                 #print("void mask bins: ", bins)
                 index_a = self.allowed_indexes
-        elif hasattr(self, "group_proportion"): # generate a batch with user-defined proportion in each group
+        elif group_proportion is not None: # generate a batch with user-defined proportion in each group
             grp_prop = ensure_multiplicity(len(self.group_map_paths), self.group_proportion)
             # pick indices for each group
             if self.allowed_indexes is None:
