@@ -650,7 +650,7 @@ class MultiChannelIterator(IndexArrayIterator):
             pass
 
     def __len__(self):
-        if self.void_mask_max_proportion>=0 and not hasattr(self, "void_masks") or self.void_mask_max_proportion<0 and group_proportion is not None:
+        if self.void_mask_max_proportion>=0 and not hasattr(self, "void_masks") or self.void_mask_max_proportion<0 and self.group_proportion is not None:
             self._set_index_array() # redefines n in either cases
         return super().__len__()
 
@@ -677,17 +677,16 @@ class MultiChannelIterator(IndexArrayIterator):
             else:  # only void or only not void
                 #print("void mask bins: ", bins)
                 index_a = self.allowed_indexes
-        elif group_proportion is not None: # generate a batch with user-defined proportion in each group
-            grp_prop = ensure_multiplicity(len(self.group_map_paths), self.group_proportion)
+        elif self.group_proportion is not None: # generate a batch with user-defined proportion in each group
             # pick indices for each group
             if self.allowed_indexes is None:
-                indices_per_group = [np.random.randint(low=self.grp_off[i], high=self.grp_len[i], size=int((self.grp_len[i] - self.grp_off[i])*grp_prop[i]+0.5) ) for i in range(len(self.group_map_paths))]
+                indices_per_group = [np.random.randint(low=self.grp_off[i], high=self.grp_len[i], size=int((self.grp_len[i] - self.grp_off[i])*self.group_proportion[i]+0.5) ) for i in range(len(self.group_map_paths))]
                 index_a = flatten_list(indices_per_group)
             else:
                 index_array = np.copy(self.allowed_indexes) # index within group
                 index_grp = self._get_grp_idx(index_array) # group index
                 allowed_indexes_per_group = [self.allowed_indexes[index_grp==i] for i in range(len(self.group_map_paths))]
-                indexes_per_group = [ pick_from_array(allowed_indexes_per_group[i], grp_prop[i]) for i in range(len(self.group_map_paths)) ]
+                indexes_per_group = [ pick_from_array(allowed_indexes_per_group[i], self.group_proportion[i]) for i in range(len(self.group_map_paths)) ]
                 index_a = np.concatenate(indexes_per_group)
             self.n = len(index_a)
         else:
