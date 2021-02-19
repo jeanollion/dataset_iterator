@@ -2,6 +2,7 @@ import h5py
 from .atomic_file_handler import AtomicFileHandler
 from .datasetIO import DatasetIO
 import threading
+import re
 
 class H5pyIO(DatasetIO):
     def __init__(self, h5py_file_path, mode, atomic=False):
@@ -60,7 +61,19 @@ def h5py_dataset_iterator(g, prefix=''):
             yield from h5py_dataset_iterator(item, path)
 
 def get_dataset_paths(h5py_file, suffix, group_keyword=None):
-    return [path for (path, ds) in h5py_dataset_iterator(h5py_file) if path.endswith(suffix) and (group_keyword==None or group_keyword in path)]
+    if group_keyword is not None and '/.+/' in group_keyword: # common pattern
+        group_keyword = re.compile(group_keyword)
+    return [path for (path, ds) in h5py_dataset_iterator(h5py_file) if path.endswith(suffix) and _contains_group(path, group_keyword)]
 
 def get_datasets(h5py_file, suffix, group_keyword=None):
-    return [ds for (path, ds) in h5py_dataset_iterator(h5py_file) if path.endswith(suffix) and (group_keyword==None or group_keyword in path)]
+    if group_keyword is not None and '/.+/' in group_keyword: # common pattern
+        group_keyword = re.compile(group_keyword)
+    return [ds for (path, ds) in h5py_dataset_iterator(h5py_file) if path.endswith(suffix) and _contains_group(path, group_keyword)]
+
+def _contains_group(path, group_keyword):
+    if group_keyword is None:
+        return True
+    elif isinstance(group_keyword, re.Pattern):
+        return group_keyword.search(path) is not None
+    else:
+        return group_keyword in path
