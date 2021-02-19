@@ -73,7 +73,7 @@ def get_datasets(h5py_file, suffix, group_keyword=None):
 def _contains_group(path, group_keyword):
     if group_keyword is None:
         return True
-    elif isinstance(group_keyword, re.Pattern):
+    elif hasattr(group_keyword, "search"):
         return group_keyword.search(path) is not None
     else:
         return group_keyword in path
