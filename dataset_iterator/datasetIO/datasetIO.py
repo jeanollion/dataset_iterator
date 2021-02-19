@@ -1,5 +1,3 @@
-from .concatenate_datasetIO import ConcatenateDatasetIO
-
 class DatasetIO:
 
     def close(self):
@@ -35,5 +33,6 @@ def get_datasetIO(dataset, mode='r'):
             from .h5pyIO import H5pyIO
             return H5pyIO(dataset, mode)
     elif isinstance(dataset, (tuple, list)):
+        from .concatenate_datasetIO import ConcatenateDatasetIO
         return ConcatenateDatasetIO(dataset) if len(dataset)>1 else get_datasetIO(dataset[0])
     raise ValueError("File type not supported (yet)")
