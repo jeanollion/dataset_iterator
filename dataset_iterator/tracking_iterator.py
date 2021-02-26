@@ -8,12 +8,14 @@ import copy
 class TrackingIterator(MultiChannelIterator):
     def __init__(self,
                 dataset,
-                channel_keywords=['/raw', '/regionLabels', '/prevRegionLabels', '/edm'],
-                input_channels=[0, 1],
-                output_channels=[2],
-                channels_prev=[True, True, True, True],
-                channels_next=[False, False, False, False],
-                mask_channels=[1, 2, 3],
+                channel_keywords,
+                input_channels,
+                output_channels,
+                channels_prev,
+                channels_next,
+                mask_channels,
+                n_frames = 1,
+                aug_remove_prob = 0,
                 **kwargs):
 
         if len(channels_next)!=len(channel_keywords):
@@ -28,7 +30,8 @@ class TrackingIterator(MultiChannelIterator):
 
         self.channels_prev=channels_prev
         self.channels_next=channels_next
-        self.aug_remove_prob = 0.05 # set current image as prev / next
+        self.aug_remove_prob = aug_remove_prob # set current image as prev / next
+        self.n_frames=n_frames
         super().__init__(dataset=dataset,
                     channel_keywords=channel_keywords,
                     input_channels=input_channels,
@@ -108,36 +111,58 @@ class TrackingIterator(MultiChannelIterator):
 
     def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array):
         batch = super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array)
-        batch_prev = self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array) if self.channels_prev[chan_idx] else None
-        batch_next = self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, False, aug_param_array) if self.channels_next[chan_idx] else None
-        if batch_prev is not None and batch_next is not None:
-            return np.concatenate((batch_prev, batch, batch_next), axis=-1)
-        elif batch_prev is not None:
-            return np.concatenate((batch_prev, batch), axis=-1)
-        elif batch_next is not None:
-            return np.concatenate((batch, batch_next), axis=-1)
+        batch_list= []
+        if self.channels_prev[chan_idx]:
+            for increment in range(self.n_frames, 0, -1):
+                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment))
+        batch_list.append(batch)
+        if self.channels_next[chan_idx]:
+            for increment in range(1, self.n_frames+1):
+                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, False, aug_param_array, increment))
+        if len(batch_list)>1:
+            return np.concatenate(batch_list, axis=-1)
         else:
             return batch
 
-    def _read_image_batch_neigh(self, index_ds, index_array, chan_idx, ref_chan_idx, prev, aug_param_array):
-        no_neigh = 'no_prev' if prev else 'no_next'
-        inc = -1 if prev else 1
-        if chan_idx==ref_chan_idx: # flag that there is no neighbor in aug_param_array for further computation
-            for i, (ds_idx, im_idx) in enumerate(zip(index_ds, index_array)):
-                neigh_lab = get_neighbor_label(self.labels[ds_idx][im_idx], prev=prev)
-                bound_idx = 0 if prev else len(self.labels[ds_idx]) - 1
-                if im_idx==bound_idx or neigh_lab!=self.labels[ds_idx][im_idx+inc]: # no neighbor image + signal in order to erase displacement map in further steps
-                    aug_param_array[i][ref_chan_idx][no_neigh] = True
-                elif self.perform_data_augmentation and aug_param_array is not None and random() < self.aug_remove_prob: # neighbor image is replaced by current image as part of data augmentation + signal in order to set constant displacement map in further steps
-                    aug_param_array[i][ref_chan_idx][no_neigh] = True
+    def _get_max_increment(self, ds_idx, im_idx, c_idx, prev, increment):
+        oob=False
+        if prev:
+            if im_idx<increment:
+                increment = im_idx
+                oob=True
+        else:
+            if im_idx+increment>=len(self.ds_array[c_idx][ds_idx]):
+                increment = len(self.ds_array[c_idx][ds_idx]) - 1 - im_idx
+        if increment==0:
+            return 0,oob
+        if self.labels is not None: # in this case, actual frame number can be deduced from label, and we can allow non-consecutive frames in a single dataset
+            while increment>0:
+                inc = -increment if prev else increment
+                if get_neighbor_label(self.labels[ds_idx][im_idx], increment=inc)!=self.labels[ds_idx][im_idx+inc]:
+                    increment -= 1
+                    if prev:
+                        oob=True
                 else:
-                    aug_param_array[i][ref_chan_idx][no_neigh] = False
+                    return increment,oob
+        return increment,oob
 
+    def _read_image_batch_neigh(self, index_ds, index_array, chan_idx, ref_chan_idx, prev, aug_param_array, increment = 1):
+        inc_kw = ('prev_inc_{}' if prev else 'next_inc_{}').format(increment)
+        if chan_idx==ref_chan_idx: # record actual increment in aug_param_array so that same increment is used for all channels
+            for i, (ds_idx, im_idx) in enumerate(zip(index_ds, index_array)):
+                inc,oob = self._get_max_increment(ds_idx, im_idx, ref_chan_idx, prev, increment)
+                if self.perform_data_augmentation and self.n_frames==1 and inc==1 and random() < self.aug_remove_prob: # neighbor image is replaced by current image as part of data augmentation + signal in order to set constant displacement map in further steps
+                    aug_param_array[i][ref_chan_idx][inc_kw] = 0
+                else:
+                    aug_param_array[i][ref_chan_idx][inc_kw] = inc
+                if oob:
+                    aug_param_array[i][ref_chan_idx]['oob_inc'] = inc # flag out-of-bound 
         index_array = np.copy(index_array)
-        index_array += inc
-        for i in range(len(index_ds)): # missing images -> set current image instead.
-            if aug_param_array[i][ref_chan_idx][no_neigh]:
-                index_array[i] -= inc
+        inc_array = [aug_param_array[i][ref_chan_idx][inc_kw] for i in range(len(index_ds))]
+        if prev:
+            index_array -= inc_array
+        else:
+            index_array += inc_array
         return super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array)
 
     def train_test_split(self, **options):
@@ -161,18 +186,18 @@ class TrackingIterator(MultiChannelIterator):
         res = []
         inc = -1 if prev else 1
         for i, (ds_idx, im_idx) in enumerate(zip(ds_idx_array, index_array_local)):
-            neigh_lab = get_neighbor_label(self.labels[ds_idx][im_idx], prev=prev)
+            neigh_lab = get_neighbor_label(self.labels[ds_idx][im_idx], increment=inc)
             bound_idx = 0 if prev else len(self.labels[ds_idx])-1
             if im_idx!=bound_idx and neigh_lab==self.labels[ds_idx][im_idx+inc]:
                 res.append(index_array[i]+inc)
         return res
 
 # class util methods
-def get_neighbor_label(label, prev):
+def get_neighbor_label(label, increment):
     frame = int(label[-5:])
-    if prev and frame==0:
+    if increment<0 and frame<-increment:
         return None
-    return label[:-5]+str(frame+(-1 if prev else 1)).zfill(5)
+    return label[:-5]+str(frame+increment).zfill(5)
 
 def transfer_illumination_aug_parameters(source, dest): # TODO parametrizable
     if "vmin" in source and "vmax" in source:
