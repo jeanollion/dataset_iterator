@@ -54,11 +54,14 @@ class TrackingIterator(MultiChannelIterator):
 
     def _apply_augmentation(self, img, chan_idx, aug_params): # apply separately for prev / cur / next
         if "aug_params_prev" in aug_params and self.channels_prev[chan_idx]:
-            img[...,0:1] = super()._apply_augmentation(img[...,0:1], chan_idx, aug_params.get("aug_params_prev"))
+            for c in range(self.n_frames):
+                img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_params.get("aug_params_prev"))
         if "aug_params_next" in aug_params and self.channels_next[chan_idx]:
-            img[...,-1:] = super()._apply_augmentation(img[...,-1:], chan_idx, aug_params.get("aug_params_next"))
-        cur_chan_idx = 1 if self.channels_prev[chan_idx] else 0
-        img[...,cur_chan_idx:(cur_chan_idx+1)] = super()._apply_augmentation(img[...,cur_chan_idx:(cur_chan_idx+1)], chan_idx, aug_params)
+            start = self.n_frames+1 if self.channels_prev[chan_idx] else 1
+            for c in range(start, self.n_frames+start):
+                img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_params.get("aug_params_next"))
+        cur_chan_idx = self.n_frames if self.channels_prev[chan_idx] else 0
+        img[...,cur_chan_idx:cur_chan_idx+1] = super()._apply_augmentation(img[...,cur_chan_idx:cur_chan_idx+1], chan_idx, aug_params)
         return img
 
     def _get_data_augmentation_parameters(self, chan_idx, ref_chan_idx, batch, idx, index_ds, index_array):
@@ -156,7 +159,7 @@ class TrackingIterator(MultiChannelIterator):
                 else:
                     aug_param_array[i][ref_chan_idx][inc_kw] = inc
                 if oob:
-                    aug_param_array[i][ref_chan_idx]['oob_inc'] = inc # flag out-of-bound 
+                    aug_param_array[i][ref_chan_idx]['oob_inc'] = inc # flag out-of-bound
         index_array = np.copy(index_array)
         inc_array = [aug_param_array[i][ref_chan_idx][inc_kw] for i in range(len(index_ds))]
         if prev:
