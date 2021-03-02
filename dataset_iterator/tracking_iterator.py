@@ -15,6 +15,7 @@ class TrackingIterator(MultiChannelIterator):
                 channels_next,
                 mask_channels,
                 n_frames = 1,
+                aug_all_frames=True,
                 aug_remove_prob = 0,
                 **kwargs):
 
@@ -32,6 +33,7 @@ class TrackingIterator(MultiChannelIterator):
         self.channels_next=channels_next
         self.aug_remove_prob = aug_remove_prob # set current image as prev / next
         self.n_frames=n_frames
+        self.aug_all_frames=aug_all_frames
         super().__init__(dataset=dataset,
                     channel_keywords=channel_keywords,
                     input_channels=input_channels,
@@ -54,12 +56,19 @@ class TrackingIterator(MultiChannelIterator):
 
     def _apply_augmentation(self, img, chan_idx, aug_params): # apply separately for prev / cur / next
         if "aug_params_prev" in aug_params and self.channels_prev[chan_idx]:
-            for c in range(self.n_frames):
-                img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_params.get("aug_params_prev"))
+            if self.aug_all_frames:
+                for c in range(self.n_frames):
+                    img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_params.get("aug_params_prev"))
+            else:
+                img[...,0] = super()._apply_augmentation(img[...,0], chan_idx, aug_params.get("aug_params_prev"))
         if "aug_params_next" in aug_params and self.channels_next[chan_idx]:
             start = self.n_frames+1 if self.channels_prev[chan_idx] else 1
-            for c in range(start, self.n_frames+start):
-                img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_params.get("aug_params_next"))
+            if self.aug_all_frames:
+                for c in range(start, self.n_frames+start):
+                    img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_params.get("aug_params_next"))
+            else:
+                img[...,-1] = super()._apply_augmentation(img[...,-1], chan_idx, aug_params.get("aug_params_next"))
+
         cur_chan_idx = self.n_frames if self.channels_prev[chan_idx] else 0
         img[...,cur_chan_idx:cur_chan_idx+1] = super()._apply_augmentation(img[...,cur_chan_idx:cur_chan_idx+1], chan_idx, aug_params)
         return img
