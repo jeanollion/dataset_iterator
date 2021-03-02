@@ -60,14 +60,14 @@ class TrackingIterator(MultiChannelIterator):
                 for c in range(self.n_frames):
                     img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_params.get("aug_params_prev"))
             else:
-                img[...,0] = super()._apply_augmentation(img[...,0], chan_idx, aug_params.get("aug_params_prev"))
+                img[...,0:1] = super()._apply_augmentation(img[...,0:1], chan_idx, aug_params.get("aug_params_prev"))
         if "aug_params_next" in aug_params and self.channels_next[chan_idx]:
             start = self.n_frames+1 if self.channels_prev[chan_idx] else 1
             if self.aug_all_frames:
                 for c in range(start, self.n_frames+start):
                     img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_params.get("aug_params_next"))
             else:
-                img[...,-1] = super()._apply_augmentation(img[...,-1], chan_idx, aug_params.get("aug_params_next"))
+                img[...,-1:] = super()._apply_augmentation(img[...,-1:], chan_idx, aug_params.get("aug_params_next"))
 
         cur_chan_idx = self.n_frames if self.channels_prev[chan_idx] else 0
         img[...,cur_chan_idx:cur_chan_idx+1] = super()._apply_augmentation(img[...,cur_chan_idx:cur_chan_idx+1], chan_idx, aug_params)
