@@ -161,6 +161,7 @@ class MultiChannelIterator(IndexArrayIterator):
         self.n_spatial_dims=n_spatial_dims
         self.group_keyword=group_keyword
         self.group_proportion=group_proportion
+        self.group_proportion_init=False
         if group_proportion is not None:
             assert group_keyword is not None and isinstance(group_keyword, (tuple, list)) and isinstance(group_proportion, (tuple, list)) and len(group_proportion)==len(group_keyword), "when group_proportion is not None, group_keyword should be a list/tuple group_proportion should be of same length as group_keyword"
         self.channel_keywords=channel_keywords
@@ -279,7 +280,8 @@ class MultiChannelIterator(IndexArrayIterator):
             self.void_mask_chan = mask_channels[0]
         else:
             self.void_mask_chan=-1
-        super().__init__(indexes[-1], batch_size, shuffle, seed, incomplete_last_batch_mode)
+        self.total_n = indexes[-1]
+        super().__init__(self.total_n, batch_size, shuffle, seed, incomplete_last_batch_mode)
 
     def _open_datasetIO(self):
         self.datasetIO = get_datasetIO(self.dataset, 'r')
@@ -346,14 +348,14 @@ class MultiChannelIterator(IndexArrayIterator):
 
         return train_iterator, test_iterator
 
-    def _get_ds_idx(self, index_array):
+    def _get_ds_idx(self, index_array): # !! modifies index_array
         ds_idx = np.searchsorted(self.ds_len, index_array, side='right')
         index_array -= self.ds_off[ds_idx] # remove ds offset to each index
         return ds_idx
 
     def _get_grp_idx(self, index_array):
         grp_idx = np.searchsorted(self.grp_len, index_array, side='right')
-        index_array -= self.grp_off[grp_idx] # remove ds offset to each index
+        index_array -= self.grp_off[grp_idx] # remove grp offset to each index
         return grp_idx
 
     def _get_batches_of_transformed_samples(self, index_array):
@@ -643,14 +645,18 @@ class MultiChannelIterator(IndexArrayIterator):
         return void_masks
 
     def set_allowed_indexes(self, indexes):
-        super().set_allowed_indexes(indexes)
+        if indexes is None:
+            super().set_allowed_indexes(self.total_n) # reset allowed_indexes
+        else:
+            super().set_allowed_indexes(indexes)
         try: # reset void masks
             del self.void_masks
         except AttributeError:
             pass
+        self.group_proportion_init = False # reset group proportion init flag
 
     def __len__(self):
-        if self.void_mask_max_proportion>=0 and not hasattr(self, "void_masks") or self.void_mask_max_proportion<0 and self.group_proportion is not None:
+        if self.void_mask_max_proportion>=0 and not hasattr(self, "void_masks") or self.void_mask_max_proportion<0 and self.group_proportion is not None and not self.group_proportion_init:
             self._set_index_array() # redefines n in either cases
         return super().__len__()
 
@@ -689,6 +695,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 indexes_per_group = [ pick_from_array(allowed_indexes_per_group[i], self.group_proportion[i]) for i in range(len(self.group_map_paths)) ]
                 index_a = np.concatenate(indexes_per_group)
             self.n = len(index_a)
+            self.group_proportion_init = True
         else:
             index_a = self.allowed_indexes
         if self.shuffle:
@@ -696,29 +703,77 @@ class MultiChannelIterator(IndexArrayIterator):
         else:
             self.index_array = np.copy(index_a)
 
-    def evaluate(self, model, metrics, progress_callback=None):
+    def evaluate(self, model, metrics, perform_data_augmentation=True, reset_allowed_indices=False, progress_callback=None, return_metadata=False):
+        """Evaluates model on this iterator.
+
+        Parameters
+        ----------
+        model : object
+            object with function predict(x) that return output numpy arrays
+        metrics : list
+            list of length equal to model output number.
+            Each element of the list can be a list of metrics, a single metric, or none.
+            A metric is a callable that takes two arguments: y_true and y_pred; or a string with value in: mse / mae / msem (mse within y_true!=0) /maem (mse within y_true!=0)
+        perform_data_augmentation : bool
+            whether data_augmentation should be performed or not during evaluation
+        progress_callback : callable
+            callable that take no argument called after each step.
+        return_metadata: bool
+            whether path, labels, indices should be returned or not (see below)
+
+        Returns
+        -------
+        tuple (values, path, labels, frames)
+            values: ndarray of rank 2.
+                each row corresponds to an image
+                first column is the global index of image
+                other columns correspond to the metric value, in the order of the metrics
+            path: ndarray of rank 1 type string
+                dataset path for each image
+            labels: ndarray of rank 1 type string
+                label of each image or none
+            frames: ndarray of rank 1 type Integer
+                frame of each image or none if labels are none
+        if return_metadata is False only values are returned
+
+        """
         output_number = sum(self.output_multiplicity.values()) if isinstance(self.output_multiplicity, dict) else len(self.output_channels)*self.output_multiplicity
         if len(metrics) != output_number:
             raise ValueError("metrics should be an array of length equal to output number ({})".format(output_number))
         shuffle = self.shuffle
         perform_aug = self.perform_data_augmentation
         self.shuffle=False
-        self.perform_data_augmentation=False
+        self.perform_data_augmentation=perform_data_augmentation
+        if reset_allowed_indices:
+            self.set_allowed_indexes(None)
         self.reset()
         self._set_index_array() # in case shuffle was true.
 
-        metrics = [l if isinstance(l, list) else ([] if l is None else [l]) for l in metrics]
+        metrics = [l if isinstance(l, (tuple, list)) else ([] if l is None else [l]) for l in metrics]
         # count metrics
+        ax = lambda tensor:tuple(range(1, tensor.shape))
         count = 0
-        for m in metrics:
-            count+=len(m)
-        values = np.zeros(shape=(len(self.allowed_indexes), count+2))
+        for l in metrics:
+            count+=len(l)
+            for i, m in enumerate(l):
+                if not callable(m):
+                    if m=="mse":
+                        m = lambda yt, yp:np.mean( (yt - yp)**2, axis=ax(yt) )
+                    elif m=="mae":
+                        m = lambda yt, yp:np.mean( np.abs(yt - yp), axis=ax(yt) )
+                    elif m=="msem" :
+                        m = lambda yt, yp:np.mean( (yt[yt!=0] - yp[yt!=0])**2, axis=ax(yt) )
+                    elif m=="maem" :
+                        m = lambda yt, yp:np.mean( np.abs(yt[yt!=0] - yp[yt!=0]), axis=ax(yt) )
+                    else:
+                        raise ValueError("Unsupported metric")
+        values = np.zeros(shape=(len(self.allowed_indexes), count+1))
         i=0
         for step in range(len(self)):
             x, y = self.next()
-            y_pred = model.predict(x=x, verbose=0)
+            y_pred = model.predict(x)
             n = y_pred[0].shape[0]
-            j=2
+            j=1
             for oi, ms in enumerate(metrics):
                 for m in ms:
                     res = m(y[oi], y_pred[oi])
@@ -734,18 +789,20 @@ class MultiChannelIterator(IndexArrayIterator):
 
         self.shuffle = shuffle
         self.perform_data_augmentation = perform_aug
-        # also return dataset dir , index and labels (if availables)
 
-        idx = np.copy(self.index_array)
-        ds_idx = self._get_ds_idx(idx)
-        values[:,0] = idx
-        values[:,1] = ds_idx
-        path = [self.paths[i] for i in ds_idx]
-        labels = [self.labels[i][j] for i,j in zip(ds_idx, idx)] if self.labels is not None else None
-        indices = [str(int(s[1]))+"-"+s[0].split('-')[1] for s in [l.split("_f") for l in labels]] #caveat: s[0].split('-')[1] is not the parent idx but the parentTrackHead idx, same in most case but ...
-        return values, path, labels, indices
+        values[:,0] = self.index_array
+        if return_metadata: # also return dataset path , labels and frame (if availables)
+            idx = np.copy(self.index_array)
+            ds_idx = self._get_ds_idx(idx)
+            path = [self.paths[i] for i in ds_idx]
+            labels = [self.labels[i][j] for i,j in zip(ds_idx, idx)] if self.labels is not None else None
+            frames = [str(int(s[1]))+"-"+s[0].split('-')[1] for s in [l.split("_f") for l in labels]] if labels is not None else None
+            return values, path, labels, frames
+        else:
+            return values
 
 # class util methods
+
 def _apply_multiplicity(batch, multiplicity):
     if batch is None:
         return

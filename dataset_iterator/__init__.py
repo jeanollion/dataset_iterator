@@ -8,3 +8,4 @@ from .tile_utils import extract_tiles, augment_tiles, extract_tile_function, aug
 from .preprocessing_image_generator import PreProcessingImageGenerator
 
 from .datasetIO import DatasetIO, H5pyIO, MultipleFileIO, MultipleDatasetIO, ConcatenateDatasetIO, MemoryIO
+from .utils import enrich_with_hardest_indices
