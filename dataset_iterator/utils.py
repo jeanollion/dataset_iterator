@@ -41,7 +41,7 @@ def pick_from_array(array, proportion):
         rep = int(proportion)
         return np.concatenate( [array]*rep + [pick_from_array(array, proportion - rep) ]).astype(np.int, copy=False)
 
-def enrich_with_hardest_indices(evaluation_result, metrics_weights, hardest_example_percentage:float, enrichment_factor:flat, minimize_metric=True):
+def enrich_with_hardest_indices(evaluation_result, metrics_weights, hardest_example_percentage:float, enrichment_factor:float, minimize_metric=True):
     """Generates an array of indices that contains enriched hard examples (for active learning).
 
     Parameters
