@@ -20,7 +20,7 @@ class DeltaIterator(TrackingIterator):
 
     def _get_input_batch(self, batch_by_channel, ref_chan_idx, aug_param_array):
         # current frame: remove all cells but no_next
-        # previous cells.
+        # previous cells
         rawIms = batch_by_channel[0] # nothing to do
         labels = batch_by_channel[1] # channel 0 -> choose one label and mark it in data_augmentation, channel 1 : binarize
         return_labels = np.copy(labels)
