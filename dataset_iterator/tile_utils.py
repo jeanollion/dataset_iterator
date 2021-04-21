@@ -3,6 +3,7 @@ from math import ceil, floor
 import numpy as np
 from numpy.random import randint
 from .utils import ensure_multiplicity
+from scipy.ndimage import zoom
 
 OVERLAP_MODE = ["NO_OVERLAP", "ALLOW", "FORCE"]
 
@@ -34,9 +35,9 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
         min overlap along each spatial dimension. only used in mode "FORCE"
     n_tiles : int
         if provided overlap_mode and min_overlap are ignored
-    random_stride : type
+    random_stride : bool
         whether tile coordinates should be randomized, within the gap / overlap zone
-    return_coords : type
+    return_coords : bool
         whether tile coodinates should be returned
 
     Returns
@@ -60,6 +61,66 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
         return tiles, tile_coords
     else:
         return tiles
+
+def extract_tile_random_zoom_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, scaling_function=None, augmentation_rotate=True, zoom_range=[0.8, 1.25], interpolation_order=1):
+    def func(batch):
+        tiles = extract_tiles_random_zoom(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, zoom_range=zoom_range, interpolation_order=interpolation_order)
+        if perform_augmentation:
+            tiles = augment_tiles_inplace(tiles, rotate = augmentation_rotate and all([s==tile_shape[0] for s in tile_shape]), n_dims=len(tile_shape))
+        if scaling_function is not None:
+            tiles = scaling_function(tiles)
+        return tiles
+    return func
+
+def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, zoom_range=[0.8, 1.25], interpolation_order=1):
+    """Extract tiles with random zoom.
+
+    Parameters
+    ----------
+    batch : numpy array
+        dimensions BYXC or BZYXC (B = batch)
+    tile_shape : tuple
+        tile shape, dimensions YX or ZYX. Z,Y,X,must be inferior or equal to batch dimensions
+    overlap_mode : string
+        one of ["NO_OVERLAP", "ALLOW", "FORCE"]
+        "NO_OVERLAP" maximum number of tiles so that they do not overlap
+        "ALLOW" maximum number of tiles that fit in the image, allowing overlap
+        "FORCE"  maximum number of tiles that fit in the image while enforcing a minimum overlap defined by min_overlap. If min_overlap is less than zero, it enforces a distance between tiles
+    min_overlap : integer or tuple
+        min overlap along each spatial dimension. only used in mode "FORCE"
+    n_tiles : int
+        if provided overlap_mode and min_overlap are ignored
+    random_stride : bool
+        whether tile coordinates should be randomized, within the gap / overlap zone
+    zoom_range : list
+        [min zoom ratio, max zoom ratio]
+    interpolation_order : int
+        The order of the spline interpolation passed to scipy.ndimage.zoom
+    Returns
+    -------
+    numpy array
+        tiles concatenated along first axis
+
+    """
+    tile_shape = ensure_multiplicity(len(batch.shape[1:-1]), tile_shape)
+    if n_tiles is None:
+        tile_coords = _get_tile_coords_overlap(batch.shape[1:-1], tile_shape, overlap_mode, min_overlap, random_stride)
+    else:
+        assert len(batch.shape[1:-1])==2, "only 2d images supported when specifying n_tiles"
+        _, n_tiles_yx = get_stride_2d(batch.shape[1:-1], tile_shape, n_tiles)
+        tile_coords = _get_tile_coords(batch.shape[1:-1], tile_shape, n_tiles_yx, random_stride)
+    tile_size_fun = lambda ax : randint(round(tile_shape[ax] * zoom_range[0]), int(tile_shape[ax] * zoom_range[1] + 1), size=tile_coords[0].shape[0])
+    r_tile_shape = [tile_size_fun(ax) for ax in range(len(batch.shape[1:-1]))]
+    print(r_tile_shape)
+    if len(batch.shape[1:-1])==2:
+        tiles = np.concatenate([_zoom(batch[:, tile_coords[0][i]:tile_coords[0][i] + r_tile_shape[0][i], tile_coords[1][i]:tile_coords[1][i] + r_tile_shape[1][i]], tile_shape, interpolation_order) for i in range(len(tile_coords[0]))])
+    else:
+        tiles = np.concatenate([_zoom(batch[:, tile_coords[0][i]:tile_coords[0][i] + r_tile_shape[0][i], tile_coords[1][i]:tile_coords[1][i] + r_tile_shape[1][i], tile_coords[2][i]:tile_coords[2][i] + r_tile_shape[2][i]], tile_shape, interpolation_order) for i in range(len(tile_coords[0]))])
+    return tiles
+
+def _zoom(batch, target_shape, order):
+    ratio = [i / j for i, j in zip(target_shape, batch.shape[1:-1])]
+    return zoom(batch, zoom = [1] + ratio + [1], order=order)
 
 def get_stride_2d(image_shape, tile_shape, n_tiles):
     if n_tiles == 1:
