@@ -10,6 +10,10 @@ from .datasetIO import DatasetIO, get_datasetIO, MemoryIO
 from .utils import ensure_multiplicity, flatten_list
 from itertools import groupby
 from .index_array_iterator import IMCOMPLETE_LAST_BATCH_MODE
+try:
+    import elasticdeform as ed
+except ImportError:
+    ed = None
 
 class MultiChannelIterator(IndexArrayIterator):
     """Flexible Image iterator allowing on-the-fly pre-processing / augmentation of data of massive multichannel datasets.
@@ -70,6 +74,8 @@ class MultiChannelIterator(IndexArrayIterator):
         if true, image indices are shuffled
     perform_data_augmentation : boolean
         if false, image_data_generators are ignored
+    elasticdeform_parameters : dict
+        parameters passed to elasticdeform function. mainly "sigma" and "points". "axis" should not be provided. default "order" is 1 and automatically set to 0 for mask channels
     seed : int
         random seed
     dtype : numpy datatype
@@ -152,6 +158,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 batch_size=32,
                 shuffle=True,
                 perform_data_augmentation=True,
+                elasticdeform_parameters=None,
                 seed=None,
                 dtype='float32',
                 memory_persistant=False,
@@ -168,6 +175,10 @@ class MultiChannelIterator(IndexArrayIterator):
         self.channel_scaling_param = channel_scaling_param
         self.dtype = dtype
         self.perform_data_augmentation=perform_data_augmentation
+        if elasticdeform_parameters is not None:
+            assert isinstance(elasticdeform_parameters, dict)
+            assert ed is not None, "elasticdeform package is not installed but parameters are specified"
+        self.elasticdeform_parameters=elasticdeform_parameters
         self.singleton_channels=[] if singleton_channels is None else singleton_channels
         assert isinstance(self.singleton_channels, list), "singleton_channels must be a list"
         if len(self.singleton_channels)>0:
@@ -404,12 +415,25 @@ class MultiChannelIterator(IndexArrayIterator):
         for chan_idx in channels:
             batch_by_channel[chan_idx] = self._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, channels[0], aug_param_array, perform_augmentation=perform_augmentation)
 
+        if self.elasticdeform_parameters is not None:
+            order = self.elasticdeform_parameters.pop("order", 1)
+            order = ensure_multiplicity(len(channels), order)
+            if len(self.mask_channels)>0:
+                for i, chan_idx in enumerate(channels):
+                    if chan_idx in self.mask_channels:
+                        order[i]=0
+            axis = tuple([i+1 for i in range(self.n_spatial_dims)])
+            # print("order: {}, axis: {}".format(order, axis))
+            channel_images = [batch_by_channel[chan_idx] for chan_idx in channels]
+            channel_images = ed.deform_random_grid(channel_images, order = order, axis=axis, **self.elasticdeform_parameters)
+            for i, chan_idx in enumerate(channels):
+                batch_by_channel[chan_idx] = channel_images[i]
+
         if self.extract_tile_function is not None:
             numpy_rand_state = np.random.get_state()
             for chan_idx in channels:
                 np.random.set_state(numpy_rand_state) # ensure same tile + aug if tile fun implies randomness
                 batch_by_channel[chan_idx] = self.extract_tile_function(batch_by_channel[chan_idx])
-
         if self.channels_postprocessing_function is not None:
             self.channels_postprocessing_function(batch_by_channel)
 
