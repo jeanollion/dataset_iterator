@@ -432,7 +432,6 @@ class MultiChannelIterator(IndexArrayIterator):
             grid_spacing = ensure_multiplicity(len(image_shape), self.elasticdeform_parameters.pop('grid_spacing', 15))
             points = self.elasticdeform_parameters.pop('points', [max(3, s//gs) for s, gs in zip(image_shape, grid_spacing)])
             sigma = self.elasticdeform_parameters.pop('sigma', np.min([s/p for s, p in zip(image_shape, points)]))
-            print("points: {}, sigma: {}".format(points, sigma))
             batches = [batch_by_channel[chan_idx] for chan_idx in channels]
             batches = ed.deform_random_grid(batches, order = order, sigma=sigma, mode=mode, axis=axis, **self.elasticdeform_parameters)
             for i, chan_idx in enumerate(channels):
