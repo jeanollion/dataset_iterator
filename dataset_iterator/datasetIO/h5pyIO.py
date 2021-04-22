@@ -30,7 +30,10 @@ class H5pyIO(DatasetIO):
         return get_dataset_paths(self._get_file(), channel_keyword, group_keyword)
 
     def get_dataset(self, path):
-        return self._get_file()[path]
+        try:
+            return self._get_file()[path]
+        except KeyError:
+            print("path: {} not found in file: {}".format(path, self.path))
 
     def get_attribute(self, path, attribute_name):
         return self._get_file()[path].attrs.get(attribute_name)

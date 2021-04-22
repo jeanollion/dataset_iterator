@@ -7,7 +7,7 @@ import time
 import copy
 from math import copysign, ceil
 from .datasetIO import DatasetIO, get_datasetIO, MemoryIO
-from .utils import ensure_multiplicity, flatten_list
+from .utils import ensure_multiplicity, flatten_list, replace_last
 from itertools import groupby
 from .index_array_iterator import IMCOMPLETE_LAST_BATCH_MODE
 try:
@@ -46,7 +46,8 @@ class MultiChannelIterator(IndexArrayIterator):
         input is a dict mapping channel index to batch
         applied after image_data_generators and before weight_map_functions / output_postprocessing_functions if any.
     extract_tile_function : callable
-        function that inputs a batch, splits it into tiles and concatenate along batch axis.
+        function that inputs a batch and a bool (that is true if the batch is a mask), splits it into tiles and concatenate along batch axis.
+        when the iterator has several channels, the function must handle a list of batches (and a list of bool) to tile them simultaneously.
         Applied before channels_postprocessing_function and after image_data_generators
     mask_channels : list of ints
         index of channels that contain binary (or labeled) images. Used to detect the presence/abscence of segmented objects at image borders
@@ -75,7 +76,10 @@ class MultiChannelIterator(IndexArrayIterator):
     perform_data_augmentation : boolean
         if false, image_data_generators are ignored
     elasticdeform_parameters : dict
-        parameters passed to elasticdeform function. mainly "sigma" and "points". "axis" should not be provided. default "order" is 1 and automatically set to 0 for mask channels
+        parameters passed to elasticdeform function. see: https://github.com/gvtulder/elasticdeform/blob/master/elasticdeform/deform_grid.py
+        main parameters are: "sigma" and "points". alternatively "grid_spacing" can be passed and points will be infered (size//grid_spacing) as well as sigma (min(size/points)).
+        "axis" should not be provided. default "order" is 1 and automatically set to 0 for mask channels.
+        Applied before channels_postprocessing_function and extract_tile and after image_data_generators
     seed : int
         random seed
     dtype : numpy datatype
@@ -253,7 +257,7 @@ class MultiChannelIterator(IndexArrayIterator):
                         self.batch_size=1
         # labels
         try:
-            self.labels = [self.datasetIO.get_dataset(path.replace(self.channel_keywords[0], '/labels')) for path in self.paths]
+            self.labels = [self.datasetIO.get_dataset(replace_last(path, self.channel_keywords[0], '/labels')) for path in self.paths]
             for i, ds in enumerate(self.labels):
                 self.labels[i] = np.char.asarray(ds[()].astype('unicode')) # todo: check if necessary to convert to char array ? unicode is necessary
             if len(self.labels)!=len(self.ds_array[0]):
@@ -423,17 +427,24 @@ class MultiChannelIterator(IndexArrayIterator):
                     if chan_idx in self.mask_channels:
                         order[i]=0
             axis = tuple([i+1 for i in range(self.n_spatial_dims)])
-            # print("order: {}, axis: {}".format(order, axis))
-            channel_images = [batch_by_channel[chan_idx] for chan_idx in channels]
-            channel_images = ed.deform_random_grid(channel_images, order = order, axis=axis, **self.elasticdeform_parameters)
+            mode = self.elasticdeform_parameters.pop('mode', 'mirror')
+            image_shape = batch_by_channel[channels[0]].shape[1:-1]
+            grid_spacing = ensure_multiplicity(len(image_shape), self.elasticdeform_parameters.pop('grid_spacing', 15))
+            points = self.elasticdeform_parameters.pop('points', [max(3, s//gs) for s, gs in zip(image_shape, grid_spacing)])
+            sigma = self.elasticdeform_parameters.pop('sigma', np.min([s/p for s, p in zip(image_shape, points)]))
+            print("points: {}, sigma: {}".format(points, sigma))
+            batches = [batch_by_channel[chan_idx] for chan_idx in channels]
+            batches = ed.deform_random_grid(batches, order = order, sigma=sigma, mode=mode, axis=axis, **self.elasticdeform_parameters)
             for i, chan_idx in enumerate(channels):
-                batch_by_channel[chan_idx] = channel_images[i]
+                batch_by_channel[chan_idx] = batches[i]
 
         if self.extract_tile_function is not None:
-            numpy_rand_state = np.random.get_state()
-            for chan_idx in channels:
-                np.random.set_state(numpy_rand_state) # ensure same tile + aug if tile fun implies randomness
-                batch_by_channel[chan_idx] = self.extract_tile_function(batch_by_channel[chan_idx])
+            batches = [batch_by_channel[chan_idx] for chan_idx in channels]
+            is_mask = [chan_idx in self.mask_channels for chan_idx in channels]
+            batches = self.extract_tile_function(batches, is_mask)
+            for i, chan_idx in enumerate(channels):
+                batch_by_channel[chan_idx] = batches[i]
+
         if self.channels_postprocessing_function is not None:
             self.channels_postprocessing_function(batch_by_channel)
 
@@ -559,7 +570,7 @@ class MultiChannelIterator(IndexArrayIterator):
         if channel_idx==0:
             return self.paths[ds_idx]
         else:
-            return self.paths[ds_idx].replace(self.channel_keywords[0], self.channel_keywords[channel_idx])
+            return replace_last(self.paths[ds_idx], self.channel_keywords[0], self.channel_keywords[channel_idx])
 
     def inspect_indices(self, index_array):
         a = np.array(index_array, dtype=np.int)
@@ -597,7 +608,7 @@ class MultiChannelIterator(IndexArrayIterator):
 
         for ds_i, ds_i_i, ds_i_len in zip(*np.unique(self._get_ds_idx(self.index_array), return_index=True, return_counts=True)):
             self._ensure_dataset(of, output_shapes, output_keys, ds_i, **create_dataset_options)
-            paths = [self.paths[ds_i].replace(self.channel_keywords[0], output_key) for output_key in output_keys]
+            paths = [replace_last(self.paths[ds_i], self.channel_keywords[0], output_key) for output_key in output_keys]
             index_arrays = np.array_split(self.index_array[ds_i_i:(ds_i_i+ds_i_len)], ceil(ds_i_len/self.batch_size))
             print("predictions for dataset:", self.paths[ds_i])
             unsaved_batches = 0
@@ -642,14 +653,14 @@ class MultiChannelIterator(IndexArrayIterator):
         if self.datasetIO is None:
             self._open_datasetIO()
         if self.labels is not None:
-            label_path = self.paths[ds_i].replace(self.channel_keywords[0], '/labels')
+            label_path = replace_last(self.paths[ds_i], self.channel_keywords[0], '/labels')
             if label_path not in output_file:
                 output_file.create_dataset(label_path, data=np.asarray(self.labels[ds_i], dtype=np.string_))
-        dim_path = self.paths[ds_i].replace(self.channel_keywords[0], '/originalDimensions')
+        dim_path = replace_last(self.paths[ds_i], self.channel_keywords[0], '/originalDimensions')
         if dim_path not in output_file and dim_path in self.datasetIO:
             output_file.create_dataset(dim_path, data=self.datasetIO.get_dataset(dim_path))
         for ocidx, output_key in enumerate(output_keys):
-            ds_path = self.paths[ds_i].replace(self.channel_keywords[0], output_key)
+            ds_path = replace_last(self.paths[ds_i], self.channel_keywords[0], output_key)
             if ds_path not in output_file:
                 output_file.create_dataset(ds_path, shape=(self.ds_array[0][ds_i].shape[0],)+output_shapes[ocidx], dtype=self.dtype, **create_dataset_options) #, compression="gzip" # no compression for compatibility with java driver
 

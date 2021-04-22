@@ -1,5 +1,9 @@
 import numpy as np
 
+def replace_last(s, old, new):
+    # return (s[::-1].replace(old[::-1], new[::-1], 1))[::-1]
+    return new.join(s.rsplit(old, 1))
+
 def remove_duplicates(seq):
     seen = set()
     seen_add = seen.add
