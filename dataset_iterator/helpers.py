@@ -128,7 +128,7 @@ def get_mean_sd(dataset, channel_keyword, group_keyword=None, per_channel=True):
       sum_im[i,c] = np.sum(image[...,c])
       sum2_im[i,c] = np.sum(image[...,c]*image[...,c])
   it._close_datasetIO()
-  size = np.prod(shape[1:-1]) * ds_size
+  size = np.prod(shape[1:-1]) * ds_size * (1 if per_channel else shape[-1])
   sum_im /= size
   sum2_im /= size
   axis = 0 if per_channel else (0, 1)
