@@ -68,7 +68,7 @@ class MultiChannelIterator(IndexArrayIterator):
     singleton_channels : list of ints
         list of channel that contains a single image.
     channel_slicing_channels : None or dictionary
-        dict that map channel index to a slice applied to the last axis of the corresponding dataset
+        dict that map channel index to a slice (or a callable that inputs the number of channels and returns a slice), that will be applied to the last axis of the corresponding dataset
     n_spatial_dims : int (2 or 3)
         number of spatial dimensions. if 2, 4D tensor are returned, if 3 5D tensor are returned.
     batch_size : int
@@ -550,7 +550,7 @@ class MultiChannelIterator(IndexArrayIterator):
             im = np.expand_dims(im, -1)
         elif chan_idx in self.channel_slicing_channels:
             chan_slice = self.channel_slicing_channels[chan_idx]
-            im = im[...,chan_slice()] if callable(chan_slice) else im[...,chan_slice]
+            im = im[...,chan_slice(im.shape[-1])] if callable(chan_slice) else im[...,chan_slice]
         im = im.astype(self.dtype, copy=False)
 
         # apply dataset-wise scaling if information is present in attributes
