@@ -67,6 +67,8 @@ class MultiChannelIterator(IndexArrayIterator):
         if a mask_channels is not empty, then the first mask channel is used as reference for parameters computation instead of the first channel.
     singleton_channels : list of ints
         list of channel that contains a single image.
+    channel_slicing_channels : None or dictionary
+        dict that map channel index to a slice applied to the last axis of the corresponding dataset
     n_spatial_dims : int (2 or 3)
         number of spatial dimensions. if 2, 4D tensor are returned, if 3 5D tensor are returned.
     batch_size : int
@@ -158,6 +160,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 group_proportion=None,
                 image_data_generators=None,
                 singleton_channels=[],
+                channel_slicing_channels=None,
                 n_spatial_dims=2,
                 batch_size=32,
                 shuffle=True,
@@ -179,6 +182,7 @@ class MultiChannelIterator(IndexArrayIterator):
         self.channel_scaling_param = channel_scaling_param
         self.dtype = dtype
         self.perform_data_augmentation=perform_data_augmentation
+        self.channel_slicing_channels=channel_slicing_channels
         if elasticdeform_parameters is not None:
             assert isinstance(elasticdeform_parameters, dict)
             assert ed is not None, "elasticdeform package is not installed but parameters are specified"
@@ -544,7 +548,11 @@ class MultiChannelIterator(IndexArrayIterator):
         im = ds[im_idx]
         if len(im.shape)==self.n_spatial_dims: # add channel axis
             im = np.expand_dims(im, -1)
-        im = im.astype(self.dtype, copy=False) # copy
+        elif chan_idx in self.channel_slicing_channels:
+            chan_slice = self.channel_slicing_channels[chan_idx]
+            im = im[...,chan_slice()] if callable(chan_slice) else chan_slice im[...,chan_slice]
+        im = im.astype(self.dtype, copy=False)
+
         # apply dataset-wise scaling if information is present in attributes
         off = self.ds_scaling_center[chan_idx][ds_idx]
         factor = self.ds_scaling_factor[chan_idx][ds_idx]
