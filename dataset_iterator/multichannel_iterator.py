@@ -550,7 +550,7 @@ class MultiChannelIterator(IndexArrayIterator):
             im = np.expand_dims(im, -1)
         elif chan_idx in self.channel_slicing_channels:
             chan_slice = self.channel_slicing_channels[chan_idx]
-            im = im[...,chan_slice()] if callable(chan_slice) else chan_slice im[...,chan_slice]
+            im = im[...,chan_slice()] if callable(chan_slice) else im[...,chan_slice]
         im = im.astype(self.dtype, copy=False)
 
         # apply dataset-wise scaling if information is present in attributes
