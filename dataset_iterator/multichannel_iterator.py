@@ -182,7 +182,7 @@ class MultiChannelIterator(IndexArrayIterator):
         self.channel_scaling_param = channel_scaling_param
         self.dtype = dtype
         self.perform_data_augmentation=perform_data_augmentation
-        self.channel_slicing_channels=channel_slicing_channels
+        self.channel_slicing_channels = channel_slicing_channels if channel_slicing_channels is not None else {}
         if elasticdeform_parameters is not None:
             assert isinstance(elasticdeform_parameters, dict)
             assert ed is not None, "elasticdeform package is not installed but parameters are specified"
