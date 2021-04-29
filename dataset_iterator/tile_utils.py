@@ -1,7 +1,7 @@
 import itertools
 from math import ceil, floor
 import numpy as np
-from numpy.random import randint
+from numpy.random import randint, random
 from .utils import ensure_multiplicity
 from scipy.ndimage import zoom
 
@@ -65,18 +65,18 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
     else:
         return tiles
 
-def extract_tile_random_zoom_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, augmentation_rotate=True, zoom_range=[0.6, 1.6], interpolation_order=1):
+def extract_tile_random_zoom_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, augmentation_rotate=True, zoom_range=[0.6, 1.6], aspect_ratio_range=[0.6, 1.6], interpolation_order=1):
     def func(batch, is_mask):
         if isinstance(batch, (list, tuple)):
             is_mask = ensure_multiplicity(len(batch), is_mask)
             order = [0 if m else interpolation_order for m in is_mask]
-        tiles = extract_tiles_random_zoom(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, zoom_range=zoom_range, interpolation_order=order)
+        tiles = extract_tiles_random_zoom(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, zoom_range=zoom_range, aspect_ratio_range=aspect_ratio_range, interpolation_order=order)
         if perform_augmentation:
             tiles = augment_tiles_inplace(tiles, rotate = augmentation_rotate and all([s==tile_shape[0] for s in tile_shape]), n_dims=len(tile_shape))
         return tiles
     return func
 
-def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, zoom_range=[0.6, 1.6], interpolation_order=1):
+def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, zoom_range=[0.6, 1.6], aspect_ratio_range=[0.6, 1.6], interpolation_order=1):
     """Extract tiles with random zoom.
 
     Parameters
@@ -98,6 +98,9 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
         whether tile coordinates should be randomized, within the gap / overlap zone
     zoom_range : list
         [min zoom ratio, max zoom ratio]
+    aspect_ratio_range : list
+        aspect ratio relative to the first axis. 
+        [min aspect ratio, max aspect ratio]
     interpolation_order : int
         The order of the spline interpolation passed to scipy.ndimage.zoom
     Returns
@@ -107,6 +110,13 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
 
     """
     image_shape = batch[0].shape[1:-1] if isinstance(batch, (list, tuple)) else batch.shape[1:-1]
+    rank = len(image_shape)
+    assert rank in [2, 3], "only 2D or 3D images are supported"
+    aspect_ratio_range = ensure_multiplicity(2, aspect_ratio_range)
+    assert aspect_ratio_range[0]<=aspect_ratio_range[1], "invalid aspect_ratio_range"
+    aspect_ratio_range = [1./aspect_ratio_range[1], 1./aspect_ratio_range[0]]
+    zoom_range = ensure_multiplicity(2, zoom_range)
+    assert zoom_range[0]<=zoom_range[1], "invalid zoom range"
     tile_shape = ensure_multiplicity(len(image_shape), tile_shape)
     if n_tiles is None:
         tile_coords = _get_tile_coords_overlap(image_shape, tile_shape, overlap_mode, min_overlap, random_stride)
@@ -114,14 +124,16 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
         assert len(image_shape)==2, "only 2d images supported when specifying n_tiles"
         _, n_tiles_yx = get_stride_2d(image_shape, tile_shape, n_tiles)
         tile_coords = _get_tile_coords(image_shape, tile_shape, n_tiles_yx, random_stride)
-    tile_size_fun = lambda ax : randint(round(tile_shape[ax] * zoom_range[0]), int(tile_shape[ax] * zoom_range[1] + 1), size=tile_coords[0].shape[0])
+    zoom = random(tile_coords[0].shape[0]) * (zoom_range[1] - zoom_range[0]) + zoom_range[0]
+    aspect_ratio = [random(tile_coords[0].shape[0]) * (aspect_ratio_range[1] - aspect_ratio_range[0]) + aspect_ratio_range[0] for ax in range(1, len(image_shape)) ]
+    tile_size_fun = lambda ax : np.rint(zoom * tile_shape[ax]).astype(int) if ax==0 else np.rint(zoom * aspect_ratio[ax-1] * tile_shape[ax]).astype(int)
     r_tile_shape = [tile_size_fun(ax) for ax in range(len(image_shape))]
 
-    if len(image_shape)==2:
+    if rank==2:
         tile_fun = lambda b,o : np.concatenate([_zoom(b[:, tile_coords[0][i]:tile_coords[0][i] + r_tile_shape[0][i], tile_coords[1][i]:tile_coords[1][i] + r_tile_shape[1][i]], tile_shape, o) for i in range(len(tile_coords[0]))])
     else:
         tile_fun = lambda b,o : np.concatenate([_zoom(b[:, tile_coords[0][i]:tile_coords[0][i] + r_tile_shape[0][i], tile_coords[1][i]:tile_coords[1][i] + r_tile_shape[1][i], tile_coords[2][i]:tile_coords[2][i] + r_tile_shape[2][i]], tile_shape, o) for i in range(len(tile_coords[0]))])
-    if isinstance(batch, (list, tuple)):
+    if isinstance(batch, (list, tuple)): # multi-channel case
         interpolation_order= ensure_multiplicity(len(batch), interpolation_order)
         return [tile_fun(b, interpolation_order[i]) for i, b in enumerate(batch)]
     else:
