@@ -55,10 +55,6 @@ class MultiChannelIterator(IndexArrayIterator):
         output = (output) * output_multiplicity
     input_multiplicity : int
         input = (input) * input_multiplicity
-    channel_scaling_param : list of dict
-        channel scaling parameter: each element should be as: {'level':1, 'qmin':5, 'qmax':95}, where:
-        qmin is the min percentile, qmax the max percentile, Level represent the hierachical level at which computing the percentile.
-        scaling is: I -> ( I - qmin ) / ( qmax - qmin )
     group_keyword : string or list of strings
         string contained in the path of all channels -> allows to limit iteration to a subset of the dataset.
     image_data_generators : list of image ImageDataGenerator as defined in keras pre-processing, for data augmentation.
@@ -127,7 +123,6 @@ class MultiChannelIterator(IndexArrayIterator):
     n_spatial_dims
     group_keyword
     channel_keywords
-    channel_scaling_param
     dtype
     perform_data_augmentation
     singleton_channels
@@ -155,9 +150,9 @@ class MultiChannelIterator(IndexArrayIterator):
                 mask_channels=[],
                 output_multiplicity = 1,
                 input_multiplicity = 1,
-                channel_scaling_param=None,
                 group_keyword=None,
                 group_proportion=None,
+                group_scaling=None,
                 image_data_generators=None,
                 singleton_channels=[],
                 channel_slicing_channels=None,
@@ -175,11 +170,11 @@ class MultiChannelIterator(IndexArrayIterator):
         self.n_spatial_dims=n_spatial_dims
         self.group_keyword=group_keyword
         self.group_proportion=group_proportion
+        self.group_scaling = group_scaling
         self.group_proportion_init=False
         if group_proportion is not None:
             assert group_keyword is not None and isinstance(group_keyword, (tuple, list)) and isinstance(group_proportion, (tuple, list)) and len(group_proportion)==len(group_keyword), "when group_proportion is not None, group_keyword should be a list/tuple group_proportion should be of same length as group_keyword"
         self.channel_keywords=channel_keywords
-        self.channel_scaling_param = channel_scaling_param
         self.dtype = dtype
         self.perform_data_augmentation=perform_data_augmentation
         self.channel_slicing_channels = channel_slicing_channels if channel_slicing_channels is not None else {}
@@ -270,28 +265,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 raise ValueError('Invalid input file: at least one dataset has element numbers that differ from corresponding label array')
         except:
             self.labels = None
-        # set scaling information for each dataset
-        self.channel_scaling = [None]*len(channel_keywords)
-        if self.channel_scaling_param!=None:
-            percentile_x = np.arange(0, 101)
-            for c, scaling_info in enumerate(self.channel_scaling_param):
-                if scaling_info is not None:
-                    self.channel_scaling[c]=[None]*len(self.paths)
-                    for ds_idx, path in enumerate(self.paths):
-                        group = self.datasetIO.get_parent_path(path)
-                        for i in range(scaling_info.get('level', 1)):
-                            group = self.datasetIO.get_parent_path(group)
-                            if group==None:
-                                raise ValueError("scaling group level too high for channel {}({}) group path: {}".format(c, channel_keywords[c]), self.datasetIO.get_parent_path(path))
-                        # percentiles are located in attributes of group
-                        # TODO test if this raise an error when not present
-                        percentiles = self.datasetIO.get_attribute(group, channel_keywords[c].replace('/', '')+'_percentiles')
-                        if percentiles is None:
-                            raise ValueError("No percentile array found in group {} for channel: {}({})".format(group, c, channel_keywords[c]))
 
-                        # get IQR and median
-                        minv, med, maxv = np.interp([scaling_info.get('qmin', 5), 50, scaling_info.get('qmax', 95)], percentile_x, percentiles)
-                        self.channel_scaling[c][ds_idx] = [med, maxv-minv]
         if not memory_persistant:
             self._close_datasetIO()
         self.void_mask_max_proportion = -1
@@ -560,18 +534,9 @@ class MultiChannelIterator(IndexArrayIterator):
             im = (im - off)/factor
 
         # apply group-wise scaling
-        off, factor = self._get_scaling(chan_idx, ds_idx)
-        if off!=0 or factor!=1:
-            im = (im - off) / factor
         if chan_idx in self.mask_channels:
             im[np.abs(im) < 1e-10] = 0
         return im
-
-    def _get_scaling(self, chan_idx, ds_idx):
-        if self.channel_scaling==None or self.channel_scaling[chan_idx]==None:
-            return (0, 1)
-        else:
-            return self.channel_scaling[chan_idx][ds_idx]
 
     def _get_dataset_path(self, channel_idx, ds_idx):
         if channel_idx==0:
