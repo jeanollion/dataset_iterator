@@ -510,7 +510,6 @@ class MultiChannelIterator(IndexArrayIterator):
         # read all images # TODO read all image per ds at once.
         # in case of group scaling : group index is retrieved:
         grp_idx = self._get_grp_idx(index_array + self.ds_off[index_ds]) if self.group_scaling is not None else [0]*len(index_array)
-        print("idx: {}, ds: {}, grp: {}".format(index_array, index_ds, grp_idx))
         images = [self._read_image(chan_idx, ds_idx, im_idx, grp_idx) for i, (ds_idx, im_idx, grp_idx) in enumerate(zip(index_ds, index_array, grp_idx))]
         batch = np.stack(images)
         return batch
