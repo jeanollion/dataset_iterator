@@ -57,6 +57,10 @@ class MultiChannelIterator(IndexArrayIterator):
         input = (input) * input_multiplicity
     group_keyword : string or list of strings
         string contained in the path of all channels -> allows to limit iteration to a subset of the dataset.
+    group_scaling: list of list
+        group-wise+channel-wise scaling
+        should be of same length as group number, each sub-list should be either None either a list of same length as channel number.
+        each element should be either a callable, that is called on a single image and return the scaled image, either [center, scale] (scaled image will be I -> ( I - center) / scale )
     image_data_generators : list of image ImageDataGenerator as defined in keras pre-processing, for data augmentation.
         should be of same size as channel_keywords.
         augmentation parameters are computed on the first channel, and applied on each channels using the ImageDataGenerator of corresponding index.
@@ -174,6 +178,11 @@ class MultiChannelIterator(IndexArrayIterator):
         self.group_proportion_init=False
         if group_proportion is not None:
             assert group_keyword is not None and isinstance(group_keyword, (tuple, list)) and isinstance(group_proportion, (tuple, list)) and len(group_proportion)==len(group_keyword), "when group_proportion is not None, group_keyword should be a list/tuple group_proportion should be of same length as group_keyword"
+        if self.group_scaling is not None:
+            n_grps = len(group_keyword) if isinstance(group_keyword, (tuple, list)) else 1
+            assert isinstance(group_scaling, (tuple, list)) and len(group_scaling) == n_grps, "group_scaling is not None, and should be of same length as group number"
+            for grp_idx, grp in enumerate(group_scaling):
+                assert grp is None or (isinstance(grp, (tuple, list)) and len(grp) == len(channel_keywords)), "scaling parameters for group {} should be either None either of same length as channel numbers".format(grp_idx)
         self.channel_keywords=channel_keywords
         self.dtype = dtype
         self.perform_data_augmentation=perform_data_augmentation
@@ -348,7 +357,6 @@ class MultiChannelIterator(IndexArrayIterator):
 
     def _get_grp_idx(self, index_array):
         grp_idx = np.searchsorted(self.grp_len, index_array, side='right')
-        index_array -= self.grp_off[grp_idx] # remove grp offset to each index
         return grp_idx
 
     def _get_batches_of_transformed_samples(self, index_array):
@@ -500,7 +508,10 @@ class MultiChannelIterator(IndexArrayIterator):
 
     def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array):
         # read all images # TODO read all image per ds at once.
-        images = [self._read_image(chan_idx, ds_idx, im_idx) for i, (ds_idx, im_idx) in enumerate(zip(index_ds, index_array))]
+        # in case of group scaling : group index is retrieved:
+        grp_idx = self._get_grp_idx(index_array + self.ds_off[index_ds]) if self.group_scaling is not None else [0]*len(index_array)
+        print("idx: {}, ds: {}, grp: {}".format(index_array, index_ds, grp_idx))
+        images = [self._read_image(chan_idx, ds_idx, im_idx, grp_idx) for i, (ds_idx, im_idx, grp_idx) in enumerate(zip(index_ds, index_array, grp_idx))]
         batch = np.stack(images)
         return batch
 
@@ -515,7 +526,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 pass
         return params
 
-    def _read_image(self, chan_idx, ds_idx, im_idx):
+    def _read_image(self, chan_idx, ds_idx, im_idx, grp_idx=0):
         ds = self.ds_array[chan_idx][ds_idx]
         if chan_idx in self.singleton_channels:
             im_idx=0
@@ -534,6 +545,14 @@ class MultiChannelIterator(IndexArrayIterator):
             im = (im - off)/factor
 
         # apply group-wise scaling
+        if self.group_scaling is not None and self.group_scaling[grp_idx] is not None and self.group_scaling[grp_idx][chan_idx] is not None:
+            scaling = self.group_scaling[grp_idx][chan_idx]
+            if callable(scaling):
+                im = scaling(im)
+            else:
+                im = ( im - scaling[0] ) / scaling[1]
+
+        # in case of lossy compression: mask must be 0 outside
         if chan_idx in self.mask_channels:
             im[np.abs(im) < 1e-10] = 0
         return im
