@@ -265,7 +265,8 @@ class MultiChannelIterator(IndexArrayIterator):
                         self.batch_size=1
         # labels
         try:
-            self.labels = [self.datasetIO.get_dataset(replace_last(path, self.channel_keywords[0], '/labels')) for path in self.paths]
+            label_path = [replace_last(path, self.channel_keywords[0], '/labels') for path in self.paths]
+            self.labels = [self.datasetIO.get_dataset(path) if path in self.datasetIO else None for path in label_path]
             for i, ds in enumerate(self.labels):
                 self.labels[i] = np.char.asarray(ds[()].astype('unicode')) # todo: check if necessary to convert to char array ? unicode is necessary
             if len(self.labels)!=len(self.ds_array[0]):
