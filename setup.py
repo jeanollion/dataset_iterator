@@ -5,14 +5,14 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="dataset_iterator",
-    version="0.2.1",
+    version="0.2.2",
     author="Jean Ollion",
     author_email="jean.ollion@polytechnique.org",
     description="data iterator for images contained in dataset files such as hdf5 or PIL readable files. Images can be contained in several files. Based on tensorflow.keras.preprocessing.image.Iterator",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/jeanollion/dataset_iterator.git",
-    download_url = 'https://github.com/jeanollion/dataset_iterator/archive/v_01.tar.gz',
+    download_url = 'https://github.com/jeanollion/dataset_iterator/archive/v0.2.2.tar.gz',
     keywords = ['Iterator', 'Dataset', 'Image', 'Numpy'],
     packages=setuptools.find_packages(),
     classifiers=[ #https://pypi.org/classifiers/
