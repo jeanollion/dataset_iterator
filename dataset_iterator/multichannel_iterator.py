@@ -56,7 +56,7 @@ class MultiChannelIterator(IndexArrayIterator):
     input_multiplicity : int
         input = (input) * input_multiplicity
     group_keyword : string or list of strings
-        string contained in the path of all channels -> allows to limit iteration to a subset of the dataset.
+        string contained in the path of all channels -> allows to limit iteration to a subset of the dataset. If dataset is h5: group_keywords can contain .* regular expression
     group_scaling: list of list
         group-wise+channel-wise scaling
         should be of same length as group number, each sub-list should be either None either a list of same length as channel number.
@@ -81,6 +81,7 @@ class MultiChannelIterator(IndexArrayIterator):
         parameters passed to elasticdeform function. see: https://github.com/gvtulder/elasticdeform/blob/master/elasticdeform/deform_grid.py
         main parameters are: "sigma" and "points". alternatively "grid_spacing" can be passed and points will be infered (size//grid_spacing) as well as sigma (min(size/points)).
         "axis" should not be provided. default "order" is 1 and automatically set to 0 for mask channels.
+        mode: out-of-bound strategy
         Applied before channels_postprocessing_function and extract_tile and after image_data_generators
     seed : int
         random seed

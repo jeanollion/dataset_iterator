@@ -67,6 +67,7 @@ class MultipleFileIO(DatasetIO):
         pass
 
     def get_dataset_paths(self, channel_keyword, group_keyword):
+        assert group_keyword is None, "groups not supported yet for MultipleFileIO"
         # currently no group supported
         if self.n_image_per_file==1:
             return [join(self.path, channel_keyword)]

@@ -64,12 +64,12 @@ def h5py_dataset_iterator(g, prefix=''):
             yield from h5py_dataset_iterator(item, path)
 
 def get_dataset_paths(h5py_file, suffix, group_keyword=None):
-    if group_keyword is not None and '/.+/' in group_keyword: # common pattern
+    if group_keyword is not None and '.*' in group_keyword: # common pattern
         group_keyword = re.compile(group_keyword)
     return [path for (path, ds) in h5py_dataset_iterator(h5py_file) if path.endswith(suffix) and _contains_group(path, group_keyword)]
 
 def get_datasets(h5py_file, suffix, group_keyword=None):
-    if group_keyword is not None and '/.+/' in group_keyword: # common pattern
+    if group_keyword is not None and '.*' in group_keyword: # common pattern
         group_keyword = re.compile(group_keyword)
     return [ds for (path, ds) in h5py_dataset_iterator(h5py_file) if path.endswith(suffix) and _contains_group(path, group_keyword)]
 
