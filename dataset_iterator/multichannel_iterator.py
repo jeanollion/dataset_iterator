@@ -60,7 +60,7 @@ class MultiChannelIterator(IndexArrayIterator):
     group_scaling: list of list
         group-wise+channel-wise scaling
         should be of same length as group number, each sub-list should be either None either a list of same length as channel number.
-        each element should be either a callable, that is called on a single image and return the scaled image, either [center, scale] (scaled image will be I -> ( I - center) / scale )
+        each element should be either None, a callable, that is called on a single image and return the scaled image, either [center, scale] (scaled image will be I -> ( I - center) / scale )
     image_data_generators : list of image ImageDataGenerator as defined in keras pre-processing, for data augmentation.
         should be of same size as channel_keywords.
         augmentation parameters are computed on the first channel, and applied on each channels using the ImageDataGenerator of corresponding index.
