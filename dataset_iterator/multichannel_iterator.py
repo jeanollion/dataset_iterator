@@ -393,7 +393,7 @@ class MultiChannelIterator(IndexArrayIterator):
             output = _apply_multiplicity(output, self.output_multiplicity) # removes None batches
             return (input, output)
 
-    def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False):
+    def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False, perform_elasticdeform=True, perform_tiling=True):
         if self.datasetIO is None: # for concurency issues: file is open lazyly by each worker
             self._open_datasetIO()
         index_array = np.copy(index_array) # so that main index array is not modified
@@ -407,7 +407,19 @@ class MultiChannelIterator(IndexArrayIterator):
         for chan_idx in channels:
             batch_by_channel[chan_idx] = self._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, channels[0], aug_param_array, perform_augmentation=perform_augmentation)
 
+        if perform_elasticdeform:
+            self._apply_elasticdeform(batch_by_channel)
+        if perform_tiling:
+            self._apply_tiling(batch_by_channel)
+
+        if self.channels_postprocessing_function is not None:
+            self.channels_postprocessing_function(batch_by_channel)
+
+        return batch_by_channel, aug_param_array, channels[0]
+
+    def _apply_elasticdeform(self, batch_by_channel):
         if self.elasticdeform_parameters is not None:
+            channels = [c for c in batch_by_channel.keys() if c>=0]
             order = self.elasticdeform_parameters.pop("order", 1)
             order = ensure_multiplicity(len(channels), order)
             if len(self.mask_channels)>0:
@@ -425,17 +437,14 @@ class MultiChannelIterator(IndexArrayIterator):
             for i, chan_idx in enumerate(channels):
                 batch_by_channel[chan_idx] = batches[i]
 
+    def _apply_tiling(self, batch_by_channel):
         if self.extract_tile_function is not None:
+            channels = [c for c in batch_by_channel.keys() if c>=0]
             batches = [batch_by_channel[chan_idx] for chan_idx in channels]
             is_mask = [chan_idx in self.mask_channels for chan_idx in channels]
             batches = self.extract_tile_function(batches, is_mask)
             for i, chan_idx in enumerate(channels):
                 batch_by_channel[chan_idx] = batches[i]
-
-        if self.channels_postprocessing_function is not None:
-            self.channels_postprocessing_function(batch_by_channel)
-
-        return batch_by_channel, aug_param_array, channels[0]
 
     def _get_input_batch(self, batch_by_channel, ref_chan_idx, aug_param_array):
         if len(self.input_channels)==1:
