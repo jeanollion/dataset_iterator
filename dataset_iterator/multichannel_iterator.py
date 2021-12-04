@@ -168,6 +168,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 elasticdeform_parameters=None,
                 seed=None,
                 dtype='float32',
+                convert_masks_to_dtype=True,
                 memory_persistant=False,
                 incomplete_last_batch_mode=IMCOMPLETE_LAST_BATCH_MODE[0]):
         self.dataset = dataset
@@ -186,6 +187,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 assert grp is None or (isinstance(grp, (tuple, list)) and len(grp) == len(channel_keywords)), "scaling parameters for group {} should be either None either of same length as channel numbers".format(grp_idx)
         self.channel_keywords=channel_keywords
         self.dtype = dtype
+        self.convert_masks_to_dtype=convert_masks_to_dtype
         self.perform_data_augmentation=perform_data_augmentation
         self.channel_slicing_channels = channel_slicing_channels if channel_slicing_channels is not None else {}
         if elasticdeform_parameters is not None:
@@ -546,7 +548,8 @@ class MultiChannelIterator(IndexArrayIterator):
         elif chan_idx in self.channel_slicing_channels:
             chan_slice = self.channel_slicing_channels[chan_idx]
             im = im[...,chan_slice(im.shape[-1])] if callable(chan_slice) else im[...,chan_slice]
-        im = im.astype(self.dtype, copy=False)
+        if self.convert_masks_to_dtype or chan_idx not in self.mask_channels:
+            im = im.astype(self.dtype, copy=False)
 
         # apply dataset-wise scaling if information is present in attributes
         off = self.ds_scaling_center[chan_idx][ds_idx]
@@ -563,7 +566,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 im = ( im - scaling[0] ) / scaling[1]
 
         # in case of lossy compression: mask must be 0 outside
-        if chan_idx in self.mask_channels:
+        if chan_idx in self.mask_channels and not issubclass(im.dtype.type, np.integer):
             im[np.abs(im) < 1e-10] = 0
         return im
 
