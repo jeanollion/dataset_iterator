@@ -65,23 +65,23 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
     else:
         return tiles
 
-def extract_tile_random_zoom_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, augmentation_rotate=True, zoom_range=[0.6, 1.6], aspect_ratio_range=[0.6, 1.6], interpolation_order=1):
+def extract_tile_random_zoom_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, augmentation_rotate=True, zoom_range=[0.6, 1.6], aspect_ratio_range=[0.6, 1.6], interpolation_order=1, random_channel_jitter_shape=None):
     def func(batch, is_mask):
         if isinstance(batch, (list, tuple)):
             is_mask = ensure_multiplicity(len(batch), is_mask)
             order = [0 if m else interpolation_order for m in is_mask]
-        tiles = extract_tiles_random_zoom(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, zoom_range=zoom_range, aspect_ratio_range=aspect_ratio_range, interpolation_order=order)
+        tiles = extract_tiles_random_zoom(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, zoom_range=zoom_range, aspect_ratio_range=aspect_ratio_range, interpolation_order=order, random_channel_jitter_shape=random_channel_jitter_shape)
         if perform_augmentation:
             tiles = augment_tiles_inplace(tiles, rotate = augmentation_rotate and all([s==tile_shape[0] for s in tile_shape]), n_dims=len(tile_shape))
         return tiles
     return func
 
-def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, zoom_range=[0.6, 1.6], aspect_ratio_range=[0.6, 1.6], interpolation_order=1):
+def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, zoom_range=[0.6, 1.6], aspect_ratio_range=[0.6, 1.6], interpolation_order=1, random_channel_jitter_shape=None):
     """Extract tiles with random zoom.
 
     Parameters
     ----------
-    batch : numpy array
+    batch : numpy array or list of numpy arrays
         dimensions BYXC or BZYXC (B = batch)
     tile_shape : tuple
         tile shape, dimensions YX or ZYX. Z,Y,X,must be inferior or equal to batch dimensions
@@ -99,10 +99,12 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
     zoom_range : list
         [min zoom ratio, max zoom ratio]
     aspect_ratio_range : list
-        aspect ratio relative to the first axis. 
+        aspect ratio relative to the first axis.
         [min aspect ratio, max aspect ratio]
     interpolation_order : int
         The order of the spline interpolation passed to scipy.ndimage.zoom
+    random_channel_jitter_range : list / tuple of ints or int
+        if not None: tile coordinates are translated of a random value in this range. The range can be either the same for all dimensions (random_channel_jitter_range should be an integer) or distinct (random_channel_jitter_range should be a list or tuple of ints of length equal to the number of spatial dimensions of the batch)
     Returns
     -------
     numpy array
@@ -111,6 +113,7 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
     """
     image_shape = batch[0].shape[1:-1] if isinstance(batch, (list, tuple)) else batch.shape[1:-1]
     rank = len(image_shape)
+    nchan = np.max([b.shape[-1] for b in batch]) if isinstance(batch, (list, tuple)) else batch.shape[-1]
     assert rank in [2, 3], "only 2D or 3D images are supported"
     aspect_ratio_range = ensure_multiplicity(2, aspect_ratio_range)
     assert aspect_ratio_range[0]<=aspect_ratio_range[1], "invalid aspect_ratio_range"
@@ -124,20 +127,46 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
         assert len(image_shape)==2, "only 2d images supported when specifying n_tiles"
         _, n_tiles_yx = get_stride_2d(image_shape, tile_shape, n_tiles)
         tile_coords = _get_tile_coords(image_shape, tile_shape, n_tiles_yx, random_stride)
-    zoom = random(tile_coords[0].shape[0]) * (zoom_range[1] - zoom_range[0]) + zoom_range[0]
-    aspect_ratio = [random(tile_coords[0].shape[0]) * (aspect_ratio_range[1] - aspect_ratio_range[0]) + aspect_ratio_range[0] for ax in range(1, len(image_shape)) ]
+    n_t = tile_coords[0].shape[0]
+    zoom_range_corrected = [zoom_range[0], np.min([ min(zoom_range[1], float(image_shape[ax]-1)/float(tile_shape[ax])) for ax in range(rank) ])]
+    zoom = random(n_t) * (zoom_range_corrected[1] - zoom_range_corrected[0]) + zoom_range_corrected[0]
+    aspect_ratio_fun = lambda ax : random(n_t) * (np.minimum(image_shape[ax] / (zoom * tile_shape[ax]), aspect_ratio_range[1]) - aspect_ratio_range[0]) + aspect_ratio_range[0]
+    aspect_ratio = [ aspect_ratio_fun(ax) for ax in range(1, rank) ]
     tile_size_fun = lambda ax : np.rint(zoom * tile_shape[ax]).astype(int) if ax==0 else np.rint(zoom * aspect_ratio[ax-1] * tile_shape[ax]).astype(int)
-    r_tile_shape = [tile_size_fun(ax) for ax in range(len(image_shape))]
+    r_tile_shape = [tile_size_fun(ax) for ax in range(rank)]
+    for i in range(n_t): # translate coords if necesary so that tile is valid
+        for ax in range(rank):
+            delta = tile_coords[ax][i] + r_tile_shape[ax][i] - image_shape[ax]
+            if delta>0:
+                tile_coords[ax][i] -= delta
 
-    if rank==2:
-        tile_fun = lambda b,o : np.concatenate([_zoom(b[:, tile_coords[0][i]:tile_coords[0][i] + r_tile_shape[0][i], tile_coords[1][i]:tile_coords[1][i] + r_tile_shape[1][i]], tile_shape, o) for i in range(len(tile_coords[0]))])
+    if random_channel_jitter_shape is not None and nchan>1:
+        random_channel_jitter_shape = ensure_multiplicity(rank, random_channel_jitter_shape)
+        def r_channel_jitter_fun(ax):
+            min_a = np.maximum(0, tile_coords[ax] -random_channel_jitter_shape[ax] )
+            max_a = np.minimum(tile_coords[ax] + random_channel_jitter_shape[ax], image_shape[ax]-r_tile_shape[ax])
+            size=random(n_t) * (max_a - min_a) + min_a
+            return size.astype(int)
+        tile_coords_c = [ [r_channel_jitter_fun(ax) for ax in range(rank)] for c in range(nchan) ]
+        tile_fun = lambda b,o : np.concatenate([_zoom(_subset_by_channel(b, [[tile_coords_c[c][ax][i] for ax in range(rank)] for c in range(nchan)], [r_tile_shape[ax][i] for ax in range(rank)]), tile_shape, o) for i in range(n_t)])
     else:
-        tile_fun = lambda b,o : np.concatenate([_zoom(b[:, tile_coords[0][i]:tile_coords[0][i] + r_tile_shape[0][i], tile_coords[1][i]:tile_coords[1][i] + r_tile_shape[1][i], tile_coords[2][i]:tile_coords[2][i] + r_tile_shape[2][i]], tile_shape, o) for i in range(len(tile_coords[0]))])
-    if isinstance(batch, (list, tuple)): # multi-channel case
+        tile_fun = lambda b,o : np.concatenate([_zoom(_subset(b, [tile_coords[ax][i] for ax in range(rank)], [r_tile_shape[ax][i] for ax in range(rank)]), tile_shape, o) for i in range(n_t)])
+    if isinstance(batch, (list, tuple)): # multi-array case (batch is actually an array of batches)
         interpolation_order= ensure_multiplicity(len(batch), interpolation_order)
         return [tile_fun(b, interpolation_order[i]) for i, b in enumerate(batch)]
     else:
         return tile_fun(batch, interpolation_order)
+
+def _subset(batch, tile_coords, tile_shape):
+    if len(tile_coords)==2:
+        return batch[:, tile_coords[0]:tile_coords[0] + tile_shape[0], tile_coords[1]:tile_coords[1] + tile_shape[1]]
+    else:
+        return batch[:, tile_coords[0]:tile_coords[0] + tile_shape[0], tile_coords[1]:tile_coords[1] + tile_shape[1], tile_coords[2]:tile_coords[2] + tile_shape[2]]
+
+def _subset_by_channel(batch, tile_coords_by_channel, tile_shape):
+    nchan = batch.shape[-1]
+    subsets = [_subset(batch[..., c:c+1], tile_coords_by_channel[c], tile_shape) for c in range(nchan)]
+    return np.concatenate(subsets, axis=-1)
 
 def _zoom(batch, target_shape, order):
     ratio = [i / j for i, j in zip(target_shape, batch.shape[1:-1])]
