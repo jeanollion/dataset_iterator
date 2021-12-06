@@ -1,3 +1,5 @@
+import os
+
 class DatasetIO:
 
     def close(self):
@@ -32,6 +34,9 @@ def get_datasetIO(dataset, mode='r'):
         if dataset.endswith(".h5") or dataset.endswith(".hdf5"):
             from .h5pyIO import H5pyIO
             return H5pyIO(dataset, mode)
+        elif os.path.isdir(dataset):
+            from .multiple_fileIO import MultipleFileIO
+            return MultipleFileIO(dataset, 1) # consider that directory contains files, each file corresponds to a single image with same dimensions
     elif isinstance(dataset, (tuple, list)):
         from .concatenate_datasetIO import ConcatenateDatasetIO
         return ConcatenateDatasetIO(dataset) if len(dataset)>1 else get_datasetIO(dataset[0])
