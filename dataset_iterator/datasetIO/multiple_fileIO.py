@@ -31,7 +31,7 @@ class MultipleFileIO(DatasetIO):
           If PIL version 1.1.3 or newer is installed, "lanczos" is also
           supported. If PIL version 3.4.0 or newer is installed, "box" and
           "hamming" are also supported.
-          if None: no resampling is performed else target_shape must be provided. if not none, an iterpolation for each channel that will be used must be provided
+          if None: crop to target_shape is performed. If not none, an iterpolation for each channel that will be used must be provided
     data_format : type
         one of `channels_first`, `channels_last`.
     data_type : string
@@ -55,13 +55,16 @@ class MultipleFileIO(DatasetIO):
         self.path = directory
         if pil_image is None:
             raise ImportError('Could not import PIL.Image. The use of `MultipleFilesIO` requires PIL.')
+        if channel_map_interpolation is not None:
+            assert target_shape is not None, "target_shape must be provided if channel_map_interpolation is provided"
         self.n_image_per_file = n_image_per_file
         self.image_shape = target_shape
         self.supported_image_fun = supported_image_fun
         self.channel_map_interpolation = {c:get_interpolation_function(target_shape, i) for c,i in channel_map_interpolation.items()} if channel_map_interpolation is not None else None
-        self.channel_map_nn_interpolation = {c:i=='nearest' for c,i in channel_map_interpolation.items() } if channel_map_interpolation is not None else None
+        self.channel_map_nn_interpolation = {c:i=='nearest' for c,i in channel_map_interpolation.items() } if channel_map_interpolation is not None else None # flag channels that have nearest neighbor interpolation to avoid converting them to float
         self.data_format = data_format
         self.dtype = data_type
+        self.crop_function = get_crop_function(target_shape) if target_shape is not None else None
 
     def close(self):
         pass
@@ -104,10 +107,20 @@ class MultipleFileIO(DatasetIO):
         raise NotImplementedError("Not implemented yet")
 
     def get_images(self, path):
-        return [join(path, f) for f in listdir(path) if self.supported_image_fun(f)]
+        return [join(path, f) for f in listdir(path) if self.supported_image_fun(f.lower())]
 
     def get_parent_path(self, path):
         return os.path.dirname(os.path.normpath(path))
+
+def get_crop_function(target_shape):
+    target_size = target_shape[::-1]
+    width, height = target_size
+    def fun(img):
+        if img.size != target_size:
+            return img.crop((0, 0, width, height))
+        else:
+            return img
+    return fun
 
 # adapted from keras_preprocessing
 def get_interpolation_function(target_shape, interpolation):
@@ -134,6 +147,8 @@ class ImageWrapper():
             self.shape = (mfileIO.n_image_per_file,)+mfileIO.image_shape
         self.image = None
         self.interpolator = self.mfileIO.channel_map_interpolation[channel_keyword] if self.mfileIO.channel_map_interpolation is not None else None
+        if self.interpolator is None and self.mfileIO.crop_function is not None:
+            self.interpolator = self.mfileIO.crop_function
         self.convert = not self.mfileIO.channel_map_nn_interpolation[channel_keyword] if self.mfileIO.channel_map_nn_interpolation is not None else False
         self.__lock__ = threading.Lock()
 
@@ -164,6 +179,8 @@ class ImageListWrapper():
         else:
             self.shape = (len(self.image_paths),) + mfileIO.image_shape
         self.interpolator = self.mfileIO.channel_map_interpolation[channel_keyword] if self.mfileIO.channel_map_interpolation is not None else None
+        if self.interpolator is None and self.mfileIO.crop_function is not None:
+            self.interpolator = self.mfileIO.crop_function
         self.convert = not self.mfileIO.channel_map_nn_interpolation[channel_keyword] if self.mfileIO.channel_map_nn_interpolation is not None else False
 
     def __getitem__(self, idx):
