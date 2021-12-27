@@ -70,12 +70,11 @@ class MultipleFileIO(DatasetIO):
         pass
 
     def get_dataset_paths(self, channel_keyword, group_keyword):
-        assert group_keyword is None, "groups not supported yet for MultipleFileIO"
-        # currently no group supported
         if self.n_image_per_file==1:
+            assert group_keyword is None, "groups not supported yet for MultipleFileIO in mode single image per file"
             return [join(self.path, channel_keyword)]
         else:
-            return self.get_images(join(self.path, channel_keyword))
+            return self.get_images(join(self.path, channel_keyword), group_keyword)
 
     def get_dataset(self, path):
         if self.n_image_per_file==1:
@@ -106,8 +105,8 @@ class MultipleFileIO(DatasetIO):
     def write_direct(self, path, data, source_sel, dest_sel):
         raise NotImplementedError("Not implemented yet")
 
-    def get_images(self, path):
-        return [join(path, f) for f in listdir(path) if self.supported_image_fun(f.lower())]
+    def get_images(self, path, group_keyword):
+        return [join(path, f) for f in listdir(path) if self.supported_image_fun(f.lower()) and (group_keyword is None or group_keyword in f)]
 
     def get_parent_path(self, path):
         return os.path.dirname(os.path.normpath(path))
@@ -140,7 +139,7 @@ class ImageWrapper():
     def __init__(self, path, mfileIO, channel_keyword):
         self.path = path
         self.mfileIO=mfileIO
-        if mfileIO.n_image_per_file==0 or mfileIO.image_shape is None:
+        if mfileIO.n_image_per_file==0 or mfileIO.image_shape is None: # get shape from image file
             self.image = pil_image.open(self.path)
             self.shape = (self.image.n_frames,) + (mfileIO.image_shape if mfileIO.image_shape is not None else self.image.size[::-1])
         else:
