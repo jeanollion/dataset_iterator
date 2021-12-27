@@ -12,6 +12,8 @@ from itertools import groupby
 from .index_array_iterator import IMCOMPLETE_LAST_BATCH_MODE
 try:
     import elasticdeform as ed
+    from elasticdeform.deform_grid import _normalize_axis_list
+    from elasticdeform.deform_grid import _normalize_inputs
 except ImportError:
     ed = None
 
@@ -432,10 +434,25 @@ class MultiChannelIterator(IndexArrayIterator):
             mode = self.elasticdeform_parameters.pop('mode', 'mirror')
             image_shape = batch_by_channel[channels[0]].shape[1:-1]
             grid_spacing = ensure_multiplicity(len(image_shape), self.elasticdeform_parameters.pop('grid_spacing', 15))
-            points = self.elasticdeform_parameters.pop('points', [max(3, s//gs) for s, gs in zip(image_shape, grid_spacing)])
-            sigma = self.elasticdeform_parameters.pop('sigma', np.min([s/p for s, p in zip(image_shape, points)]))
+            points = self.elasticdeform_parameters.pop('points', [max(5, 1+s//gs) for s, gs in zip(image_shape, grid_spacing)])
+            sigma_factor = self.elasticdeform_parameters.pop('sigma_factor', 1./8)
+            sigma = self.elasticdeform_parameters.pop('sigma', np.min([sigma_factor*s/(p-1) for s, p in zip(image_shape, points)]))
             batches = [batch_by_channel[chan_idx] for chan_idx in channels]
-            batches = ed.deform_random_grid(batches, order = order, sigma=sigma, mode=mode, axis=axis, **self.elasticdeform_parameters)
+
+
+            Xs = _normalize_inputs(batches)
+            axis, deform_shape = _normalize_axis_list(axis, Xs)
+
+            if not isinstance(points, (list, tuple)):
+                points = [points] * len(deform_shape)
+
+            displacement = np.random.randn(len(deform_shape), *points) * sigma
+            # set zero displacement at edges to avoid out-of-bounds artifacts
+            displacement[:, [0,-1], :] = 0
+            displacement[:, :, [0,-1]] = 0
+
+            batches = ed.deform_grid(batches, displacement, order=order, mode=mode, axis=axis, **self.elasticdeform_parameters)
+
             for i, chan_idx in enumerate(channels):
                 batch_by_channel[chan_idx] = batches[i]
 
