@@ -411,10 +411,22 @@ class MultiChannelIterator(IndexArrayIterator):
         for chan_idx in channels:
             batch_by_channel[chan_idx] = self._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, channels[0], aug_param_array, perform_augmentation=perform_augmentation)
 
+        if perform_elasticdeform or perform_tiling: ## elastic deform do not support float16 type -> temporarily convert to float32
+            channels = [c for c in batch_by_channel.keys() if c>=0]
+            converted_from_float16=[]
+            for c in channels:
+                if batch_by_channel[c].dtype == np.float16:
+                    batch_by_channel[c] = batch_by_channel[c].astype('float32')
+                    converted_from_float16.append(c)
+
         if perform_elasticdeform:
             self._apply_elasticdeform(batch_by_channel)
         if perform_tiling:
             self._apply_tiling(batch_by_channel)
+
+        if perform_elasticdeform or perform_tiling:
+            for c in converted_from_float16:
+                batch_by_channel[c] = batch_by_channel[c].astype('float16')
 
         if self.channels_postprocessing_function is not None:
             self.channels_postprocessing_function(batch_by_channel)
@@ -438,11 +450,7 @@ class MultiChannelIterator(IndexArrayIterator):
             sigma_factor = self.elasticdeform_parameters.pop('sigma_factor', 1./8)
             sigma = self.elasticdeform_parameters.pop('sigma', np.min([sigma_factor*s/(p-1) for s, p in zip(image_shape, points)]))
             batches = [batch_by_channel[chan_idx] for chan_idx in channels]
-            converted_from_float16=[]
-            for i, b in enumerate(batches):
-                if b.dtype == np.float16:
-                    batches[i] = b.astype('float32', copy=False)
-                    converted_from_float16.append(i)
+
             Xs = _normalize_inputs(batches)
             axis, deform_shape = _normalize_axis_list(axis, Xs)
 
@@ -455,8 +463,6 @@ class MultiChannelIterator(IndexArrayIterator):
             displacement[:, :, [0,-1]] = 0
 
             batches = ed.deform_grid(batches, displacement, order=order, mode=mode, axis=axis, **self.elasticdeform_parameters)
-            for i in converted_from_float16:
-                batches[i] = batches[i].astype('float16', copy=False)
 
             for i, chan_idx in enumerate(channels):
                 batch_by_channel[chan_idx] = batches[i]
