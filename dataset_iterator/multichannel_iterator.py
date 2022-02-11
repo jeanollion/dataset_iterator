@@ -438,8 +438,11 @@ class MultiChannelIterator(IndexArrayIterator):
             sigma_factor = self.elasticdeform_parameters.pop('sigma_factor', 1./8)
             sigma = self.elasticdeform_parameters.pop('sigma', np.min([sigma_factor*s/(p-1) for s, p in zip(image_shape, points)]))
             batches = [batch_by_channel[chan_idx] for chan_idx in channels]
-
-
+            converted_from_float16=[]
+            for i, b in enumerate(batches):
+                if b.dtype == np.float16:
+                    batches[i] = b.astype('float32', copy=False)
+                    converted_from_float16.append(i)
             Xs = _normalize_inputs(batches)
             axis, deform_shape = _normalize_axis_list(axis, Xs)
 
@@ -452,6 +455,8 @@ class MultiChannelIterator(IndexArrayIterator):
             displacement[:, :, [0,-1]] = 0
 
             batches = ed.deform_grid(batches, displacement, order=order, mode=mode, axis=axis, **self.elasticdeform_parameters)
+            for i in converted_from_float16:
+                batches[i] = batches[i].astype('float16', copy=False)
 
             for i, chan_idx in enumerate(channels):
                 batch_by_channel[chan_idx] = batches[i]
