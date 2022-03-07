@@ -55,21 +55,22 @@ class TrackingIterator(MultiChannelIterator):
         return super()._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, perform_augmentation, transfer_aug_param_function=transfer_aug_param_function)
 
     def _apply_augmentation(self, img, chan_idx, aug_params): # apply separately for prev / cur / next
+        n_frames = self.n_frames if self.n_frames>0 else 1
         if "aug_params_prev" in aug_params and self.channels_prev[chan_idx]:
             if self.aug_all_frames:
-                for c in range(self.n_frames):
+                for c in range(n_frames):
                     img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_params.get("aug_params_prev"))
             else:
                 img[...,0:1] = super()._apply_augmentation(img[...,0:1], chan_idx, aug_params.get("aug_params_prev"))
         if "aug_params_next" in aug_params and self.channels_next[chan_idx]:
-            start = self.n_frames+1 if self.channels_prev[chan_idx] else 1
+            start = n_frames+1 if self.channels_prev[chan_idx] else 1
             if self.aug_all_frames:
-                for c in range(start, self.n_frames+start):
+                for c in range(start, n_frames+start):
                     img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_params.get("aug_params_next"))
             else:
                 img[...,-1:] = super()._apply_augmentation(img[...,-1:], chan_idx, aug_params.get("aug_params_next"))
 
-        cur_chan_idx = self.n_frames if self.channels_prev[chan_idx] else 0
+        cur_chan_idx = n_frames if self.channels_prev[chan_idx] else 0
         img[...,cur_chan_idx:cur_chan_idx+1] = super()._apply_augmentation(img[...,cur_chan_idx:cur_chan_idx+1], chan_idx, aug_params)
         return img
 
@@ -124,13 +125,15 @@ class TrackingIterator(MultiChannelIterator):
     def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array):
         batch = super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array)
         batch_list= []
+        n_frames = self.n_frames if self.n_frames>0 else 1
+        aug_remove = True if self.n_frames<=0 else self.n_frames == 1 and random() < self.aug_remove_prob
         if self.channels_prev[chan_idx]:
             for increment in range(self.n_frames, 0, -1):
-                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment))
+                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment, aug_remove))
         batch_list.append(batch)
         if self.channels_next[chan_idx]:
             for increment in range(1, self.n_frames+1):
-                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, False, aug_param_array, increment))
+                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, False, aug_param_array, increment, aug_remove))
         if len(batch_list)>1:
             return np.concatenate(batch_list, axis=-1)
         else:
@@ -158,12 +161,12 @@ class TrackingIterator(MultiChannelIterator):
                     return increment,oob
         return increment,oob
 
-    def _read_image_batch_neigh(self, index_ds, index_array, chan_idx, ref_chan_idx, prev, aug_param_array, increment = 1):
+    def _read_image_batch_neigh(self, index_ds, index_array, chan_idx, ref_chan_idx, prev, aug_param_array, increment = 1, aug_remove = False):
         inc_kw = ('prev_inc_{}' if prev else 'next_inc_{}').format(increment)
         if chan_idx==ref_chan_idx: # record actual increment in aug_param_array so that same increment is used for all channels
             for i, (ds_idx, im_idx) in enumerate(zip(index_ds, index_array)):
                 inc,oob = self._get_max_increment(ds_idx, im_idx, ref_chan_idx, prev, increment)
-                if self.perform_data_augmentation and self.n_frames==1 and inc==1 and random() < self.aug_remove_prob: # neighbor image is replaced by current image as part of data augmentation + signal in order to set constant displacement map in further steps
+                if self.perform_data_augmentation and aug_remove: # neighbor image is replaced by current image as part of data augmentation + signal in order to set constant displacement map in further steps
                     aug_param_array[i][ref_chan_idx][inc_kw] = 0
                 else:
                     aug_param_array[i][ref_chan_idx][inc_kw] = inc
