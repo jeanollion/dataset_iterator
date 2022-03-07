@@ -22,7 +22,7 @@ class ConcatIterator(IndexArrayIterator):
             it_len[i]=it_len[i-1]+it_len[i]
         self.it_cumlen=it_len
         self.it_off=np.insert(self.it_cumlen[:-1], 0, 0)
-        super().__init__(self.it_cumlen[-1], batch_size, shuffle, seed, incomplete_last_batch_mode)
+        super().__init__(-1, batch_size, shuffle, seed, incomplete_last_batch_mode)
 
     def _set_index_array(self):
         indices_per_iterator = [np.random.randint(low=self.it_off[i], high=self.it_cumlen[i], size=int((self.it_cumlen[i] - self.it_off[i])*self.proportion[i]+0.5) ) for i in range(len(self.iterators))]
@@ -31,11 +31,17 @@ class ConcatIterator(IndexArrayIterator):
             self.index_array = np.random.permutation(index_a)
         else:
             self.index_array = index_a
+        self.n = len(index_a)
+
+    def __len__(self):
+        if self.n<0:
+            self._set_index_array() # also set self.n
+        return super().__len__()
 
     def _get_batches_of_transformed_samples(self, index_array):
         index_array = np.copy(index_array) # so that main index array is not modified
         index_it = self._get_it_idx(index_array) # modifies index_array
-        
+
         batches = [self.iterators[it][i] for i, it in zip(index_array, index_it)]
         for i in range(1, len(batches)):
             assert len(batches[i])==len(batches[0]), f"Iterators have different outputs: batch from iterator {index_it[0]} has length {len(batches[0])} whereas batch from iterator {index_it[i]} has length {batches[i]}"
