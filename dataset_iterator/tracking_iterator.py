@@ -128,11 +128,11 @@ class TrackingIterator(MultiChannelIterator):
         n_frames = self.n_frames if self.n_frames>0 else 1
         aug_remove = True if self.n_frames<=0 else self.n_frames == 1 and random() < self.aug_remove_prob
         if self.channels_prev[chan_idx]:
-            for increment in range(self.n_frames, 0, -1):
+            for increment in range(n_frames, 0, -1):
                 batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment, aug_remove))
         batch_list.append(batch)
         if self.channels_next[chan_idx]:
-            for increment in range(1, self.n_frames+1):
+            for increment in range(1, n_frames+1):
                 batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, False, aug_param_array, increment, aug_remove))
         if len(batch_list)>1:
             return np.concatenate(batch_list, axis=-1)
