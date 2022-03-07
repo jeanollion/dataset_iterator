@@ -754,7 +754,7 @@ class MultiChannelIterator(IndexArrayIterator):
             # pick indices for each group
             if self.allowed_indexes is None:
                 indices_per_group = [np.random.randint(low=self.grp_off[i], high=self.grp_len[i], size=int((self.grp_len[i] - self.grp_off[i])*self.group_proportion[i]+0.5) ) for i in range(len(self.group_map_paths))]
-                index_a = flatten_list(indices_per_group)
+                index_a = np.concatenate(indices_per_group)
             else:
                 index_array = np.copy(self.allowed_indexes) # index within group
                 index_grp = self._get_grp_idx(index_array) # group index

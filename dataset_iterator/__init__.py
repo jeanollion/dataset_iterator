@@ -8,3 +8,4 @@ from .preprocessing_image_generator import PreProcessingImageGenerator
 
 from .datasetIO import DatasetIO, H5pyIO, MultipleFileIO, MultipleDatasetIO, ConcatenateDatasetIO, MemoryIO
 from .utils import enrich_with_hardest_indices
+from .concat_iterator import ConcatIterator
