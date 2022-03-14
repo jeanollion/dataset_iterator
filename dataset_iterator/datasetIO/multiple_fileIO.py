@@ -105,7 +105,7 @@ class MultipleFileIO(DatasetIO):
     def write_direct(self, path, data, source_sel, dest_sel):
         raise NotImplementedError("Not implemented yet")
 
-    def get_images(self, path, group_keyword):
+    def get_images(self, path, group_keyword=None):
         return [join(path, f) for f in listdir(path) if self.supported_image_fun(f.lower()) and (group_keyword is None or group_keyword in f)]
 
     def get_parent_path(self, path):
@@ -166,10 +166,10 @@ class ImageWrapper():
 
 # several files with one single image
 class ImageListWrapper():
-    def __init__(self, directory, mfileIO, channel_keyword):
+    def __init__(self, directory, mfileIO, channel_keyword, group_keyword=None):
         self.path = directory
         self.mfileIO=mfileIO
-        self.image_paths = mfileIO.get_images(directory)
+        self.image_paths = mfileIO.get_images(directory, group_keyword)
         if len(self.image_paths)==0:
             raise ValueError("No supported image found in dir: {}".format(directory))
         if mfileIO.image_shape is None:
