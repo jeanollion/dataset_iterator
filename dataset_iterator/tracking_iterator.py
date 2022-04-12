@@ -1,6 +1,6 @@
 import numpy as np
 from dataset_iterator import MultiChannelIterator
-from random import random
+from random import random, randint
 from sklearn.model_selection import train_test_split
 from .multichannel_iterator import copy_geom_tranform_parameters
 import copy
@@ -17,23 +17,34 @@ class TrackingIterator(MultiChannelIterator):
                 n_frames = 1,
                 aug_all_frames=True,
                 aug_remove_prob = 0,
+                frame_subsampling = 1, # either integer -> constant subsampling, callable (called at each mini batch and returns the subsampling), or interval with breaks included
                 **kwargs):
 
         if len(channels_next)!=len(channel_keywords):
             raise ValueError("length of channels_next differs from channel_keywords")
         if len(channels_prev)!=len(channel_keywords):
             raise ValueError("length of channels_prev differs from channel_keywords")
-
-        if any(channels_prev) and not channels_prev[mask_channels[0]]:
-            raise ValueError("Previous time point of first mask channel should be returned if previous time point from another channel is returned")
-        if any(channels_next) and not channels_next[mask_channels[0]]:
-            raise ValueError("Next time point of first mask channel should be returned if next time point from another channel is returned")
+        if mask_channels is not None and len(mask_channels)>0:
+            if any(channels_prev) and not channels_prev[mask_channels[0]]:
+                raise ValueError("Previous time point of first mask channel should be returned if previous time point from another channel is returned")
+            if any(channels_next) and not channels_next[mask_channels[0]]:
+                raise ValueError("Next time point of first mask channel should be returned if next time point from another channel is returned")
 
         self.channels_prev=channels_prev
         self.channels_next=channels_next
         self.aug_remove_prob = aug_remove_prob # set current image as prev / next
         self.n_frames=n_frames
         self.aug_all_frames=aug_all_frames
+        if callable(frame_subsampling):
+            self.frame_subsampling = frame_subsampling
+        elif isinstance(frame_subsampling, (list, tuple)):
+            assert len(frame_subsampling) == 2, "if tuple/list frame_subsampling should be of length 2"
+            assert frame_subsampling[0]<=frame_subsampling[1] and frame_subsampling[0]>=0, "invalid interval for frame_subsampling"
+            self.frame_subsampling = lambda:randint(frame_subsampling[0], frame_subsampling[1])
+        elif frame_subsampling is None or frame_subsampling<=1:
+            self.frame_subsampling = lambda:1
+        else:
+            self.frame_subsampling = lambda:frame_subsampling
         super().__init__(dataset=dataset,
                     channel_keywords=channel_keywords,
                     input_channels=input_channels,
@@ -126,14 +137,16 @@ class TrackingIterator(MultiChannelIterator):
         batch = super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array)
         batch_list= []
         n_frames = self.n_frames if self.n_frames>0 else 1
+        subsampling = self.frame_subsampling()
+        print(f"frame subsampling: {subsampling}")
         aug_remove = True if self.n_frames<=0 else self.n_frames == 1 and random() < self.aug_remove_prob
         if self.channels_prev[chan_idx]:
             for increment in range(n_frames, 0, -1):
-                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment, aug_remove))
+                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment * subsampling, aug_remove))
         batch_list.append(batch)
         if self.channels_next[chan_idx]:
             for increment in range(1, n_frames+1):
-                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, False, aug_param_array, increment, aug_remove))
+                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, False, aug_param_array, increment * subsampling, aug_remove))
         if len(batch_list)>1:
             return np.concatenate(batch_list, axis=-1)
         else:
