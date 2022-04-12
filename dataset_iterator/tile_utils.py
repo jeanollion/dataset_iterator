@@ -145,8 +145,7 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
         def r_channel_jitter_fun(ax):
             min_a = np.maximum(0, tile_coords[ax] -random_channel_jitter_shape[ax] )
             max_a = np.minimum(tile_coords[ax] + random_channel_jitter_shape[ax], image_shape[ax]-r_tile_shape[ax])
-            size=random(n_t) * (max_a - min_a) + min_a
-            return size.astype(int)
+            return randint(min_a, max_a, size=n_t)
         tile_coords_c = [ [r_channel_jitter_fun(ax) for ax in range(rank)] for c in range(nchan) ]
         tile_fun = lambda b,o : np.concatenate([_zoom(_subset_by_channel(b, [[tile_coords_c[c][ax][i] for ax in range(rank)] for c in range(nchan)], [r_tile_shape[ax][i] for ax in range(rank)]), tile_shape, o) for i in range(n_t)])
     else:
@@ -287,9 +286,9 @@ AUG_FUN_2D = [
     lambda img : np.flip(img, axis=1),
     lambda img : np.flip(img, axis=(0, 1)),
     lambda img : np.rot90(img, k=1, axes=(0,1)),
-    lambda img : np.rot90(img, k=3, axes=(0,1)), # rot + flip0
+    lambda img : np.rot90(img, k=3, axes=(0,1)), # rot + flip01
     lambda img : np.rot90(np.flip(img, axis=1), k=1, axes=(0,1)),
-    lambda img : np.rot90(np.flip(img, axis=(0, 1)), k=1, axes=(0,1))
+    lambda img : np.rot90(np.flip(img, axis=0), k=3, axes=(0,1))
 ]
 AUG_FUN_3D = [
     lambda img : img,
@@ -297,9 +296,9 @@ AUG_FUN_3D = [
     lambda img : np.flip(img, axis=2),
     lambda img : np.flip(img, axis=(1, 2)),
     lambda img : np.rot90(img, k=1, axes=(1,2)),
-    lambda img : np.rot90(img, k=3, axes=(1,2)), # rot + flip0
+    lambda img : np.rot90(img, k=3, axes=(1,2)), # rot + flip01
     lambda img : np.rot90(np.flip(img, axis=2), k=1, axes=(1,2)),
-    lambda img : np.rot90(np.flip(img, axis=(1, 2)), k=1, axes=(1,2))
+    lambda img : np.rot90(np.flip(img, axis=1), k=1, axes=(1,2))
 ]
 
 def augment_tiles_inplace(tiles, rotate, n_dims=2):
