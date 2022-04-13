@@ -138,7 +138,6 @@ class TrackingIterator(MultiChannelIterator):
         batch_list= []
         n_frames = self.n_frames if self.n_frames>0 else 1
         subsampling = self.frame_subsampling()
-        print(f"frame subsampling: {subsampling}")
         aug_remove = True if self.n_frames<=0 else self.n_frames == 1 and random() < self.aug_remove_prob
         if self.channels_prev[chan_idx]:
             for increment in range(n_frames, 0, -1):
