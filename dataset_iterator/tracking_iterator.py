@@ -13,7 +13,7 @@ class TrackingIterator(MultiChannelIterator):
                 output_channels,
                 channels_prev,
                 channels_next,
-                mask_channels,
+                mask_channels=[],
                 n_frames = 1,
                 aug_all_frames=True,
                 aug_remove_prob = 0,
@@ -67,13 +67,13 @@ class TrackingIterator(MultiChannelIterator):
 
     def _apply_augmentation(self, img, chan_idx, aug_params): # apply separately for prev / cur / next
         n_frames = self.n_frames if self.n_frames>0 else 1
-        if "aug_params_prev" in aug_params and self.channels_prev[chan_idx]:
+        if self.channels_prev[chan_idx] and aug_params is not None and "aug_params_prev" in aug_params:
             if self.aug_all_frames:
                 for c in range(n_frames):
                     img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_params.get("aug_params_prev"))
             else:
                 img[...,0:1] = super()._apply_augmentation(img[...,0:1], chan_idx, aug_params.get("aug_params_prev"))
-        if "aug_params_next" in aug_params and self.channels_next[chan_idx]:
+        if self.channels_next[chan_idx] and aug_params is not None and "aug_params_next" in aug_params:
             start = n_frames+1 if self.channels_prev[chan_idx] else 1
             if self.aug_all_frames:
                 for c in range(start, n_frames+start):
@@ -99,7 +99,7 @@ class TrackingIterator(MultiChannelIterator):
                     self.image_data_generators[chan_idx].adjust_augmentation_param_from_neighbor_mask(params, batch[idx,...,-1])
                 except AttributeError: # data generator does not have this method
                     pass
-        if self.channels_prev[chan_idx]:
+        if self.channels_prev[chan_idx] and params is not None:
             params_prev = super()._get_data_augmentation_parameters(chan_idx, ref_chan_idx, batch[...,0:1], idx, index_ds, index_array)
             self._transfer_illumination_aug_param(params, params_prev)
             self._transfer_geom_aug_param_neighbor(params, params_prev)
@@ -108,7 +108,7 @@ class TrackingIterator(MultiChannelIterator):
             #except AttributeError: # data generator does not have this method
             #    pass
             params["aug_params_prev"] = params_prev
-        if self.channels_next[chan_idx]:
+        if self.channels_next[chan_idx] and params is not None:
             params_next = super()._get_data_augmentation_parameters(chan_idx, ref_chan_idx, batch[...,-1:], idx, index_ds, index_array)
             self._transfer_illumination_aug_param(params, params_next)
             self._transfer_geom_aug_param_neighbor(params, params_next)
