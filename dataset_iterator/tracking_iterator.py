@@ -67,19 +67,21 @@ class TrackingIterator(MultiChannelIterator):
 
     def _apply_augmentation(self, img, chan_idx, aug_params): # apply separately for prev / cur / next
         n_frames = self.n_frames if self.n_frames>0 else 1
-        if self.channels_prev[chan_idx] and aug_params is not None and "aug_params_prev" in aug_params:
+        if self.channels_prev[chan_idx]:
+            aug_param_prev = None if aug_params is None else aug_params.get("aug_params_prev")
             if self.aug_all_frames:
                 for c in range(n_frames):
-                    img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_params.get("aug_params_prev"))
+                    img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_param_prev)
             else:
-                img[...,0:1] = super()._apply_augmentation(img[...,0:1], chan_idx, aug_params.get("aug_params_prev"))
-        if self.channels_next[chan_idx] and aug_params is not None and "aug_params_next" in aug_params:
+                img[...,0:1] = super()._apply_augmentation(img[...,0:1], chan_idx, aug_param_prev)
+        if self.channels_next[chan_idx]:
+            aug_param_next = None if aug_params is None else aug_params.get("aug_params_next")
             start = n_frames+1 if self.channels_prev[chan_idx] else 1
             if self.aug_all_frames:
                 for c in range(start, n_frames+start):
-                    img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_params.get("aug_params_next"))
+                    img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_param_next)
             else:
-                img[...,-1:] = super()._apply_augmentation(img[...,-1:], chan_idx, aug_params.get("aug_params_next"))
+                img[...,-1:] = super()._apply_augmentation(img[...,-1:], chan_idx, aug_param_next)
 
         cur_chan_idx = n_frames if self.channels_prev[chan_idx] else 0
         img[...,cur_chan_idx:cur_chan_idx+1] = super()._apply_augmentation(img[...,cur_chan_idx:cur_chan_idx+1], chan_idx, aug_params)
