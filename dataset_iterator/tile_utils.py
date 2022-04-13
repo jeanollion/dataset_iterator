@@ -128,7 +128,7 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
         _, n_tiles_yx = get_stride_2d(image_shape, tile_shape, n_tiles)
         tile_coords = _get_tile_coords(image_shape, tile_shape, n_tiles_yx, random_stride)
     n_t = tile_coords[0].shape[0]
-    zoom_range_corrected = [1./np.max(zoom_range), np.min([ min(1./np.min(zoom_range), float(image_shape[ax]-1)/float(tile_shape[ax])) for ax in range(rank) ])]
+    zoom_range_corrected = [1./np.max(zoom_range), np.min([ min(1./np.min(zoom_range), float(image_shape[ax])/float(tile_shape[ax])) for ax in range(rank) ])]
     zoom = random(n_t) * (zoom_range_corrected[1] - zoom_range_corrected[0]) + zoom_range_corrected[0]
     aspect_ratio_fun = lambda ax : random(n_t) * (np.minimum(image_shape[ax] / (zoom * tile_shape[ax]), aspect_ratio_range[1]) - aspect_ratio_range[0]) + aspect_ratio_range[0]
     aspect_ratio = [ aspect_ratio_fun(ax) for ax in range(1, rank) ]
@@ -143,9 +143,11 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
     if random_channel_jitter_shape is not None and nchan>1:
         random_channel_jitter_shape = ensure_multiplicity(rank, random_channel_jitter_shape)
         def r_channel_jitter_fun(ax):
-            min_a = np.maximum(0, tile_coords[ax] -random_channel_jitter_shape[ax] )
+            min_a = np.maximum(0, tile_coords[ax]-random_channel_jitter_shape[ax] )
             max_a = np.minimum(tile_coords[ax] + random_channel_jitter_shape[ax], image_shape[ax]-r_tile_shape[ax])
-            return randint(min_a, max_a, size=n_t)
+            if max_a<=0:
+                return np.zeros(shape=n_t, dtype=np.int)
+            return randint(min_a, max_a+1, size=n_t)
         tile_coords_c = [ [r_channel_jitter_fun(ax) for ax in range(rank)] for c in range(nchan) ]
         tile_fun = lambda b,o : np.concatenate([_zoom(_subset_by_channel(b, [[tile_coords_c[c][ax][i] for ax in range(rank)] for c in range(nchan)], [r_tile_shape[ax][i] for ax in range(rank)]), tile_shape, o) for i in range(n_t)])
     else:
@@ -169,7 +171,10 @@ def _subset_by_channel(batch, tile_coords_by_channel, tile_shape):
 
 def _zoom(batch, target_shape, order):
     ratio = [i / j for i, j in zip(target_shape, batch.shape[1:-1])]
-    return zoom(batch, zoom = [1] + ratio + [1], order=order)
+    if np.all(ratio == 1):
+        return batch
+    else:
+        return zoom(batch, zoom = [1] + ratio + [1], order=order)
 
 def get_stride_2d(image_shape, tile_shape, n_tiles):
     if n_tiles == 1:
