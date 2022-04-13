@@ -145,8 +145,6 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
         def r_channel_jitter_fun(ax):
             min_a = np.maximum(0, tile_coords[ax]-random_channel_jitter_shape[ax] )
             max_a = np.minimum(tile_coords[ax] + random_channel_jitter_shape[ax], image_shape[ax]-r_tile_shape[ax])
-            if max_a<=0:
-                return np.zeros(shape=n_t, dtype=np.int)
             return randint(min_a, max_a+1, size=n_t)
         tile_coords_c = [ [r_channel_jitter_fun(ax) for ax in range(rank)] for c in range(nchan) ]
         tile_fun = lambda b,o : np.concatenate([_zoom(_subset_by_channel(b, [[tile_coords_c[c][ax][i] for ax in range(rank)] for c in range(nchan)], [r_tile_shape[ax][i] for ax in range(rank)]), tile_shape, o) for i in range(n_t)])
