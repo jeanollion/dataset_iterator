@@ -164,6 +164,9 @@ class ImageWrapper():
                 pil_img = self.image
             return image.img_to_array(pil_img, data_format=self.mfileIO.data_format, dtype=self.mfileIO.dtype)
 
+    def __len__(self):
+        return self.shape[0]
+
 # several files with one single image
 class ImageListWrapper():
     def __init__(self, directory, mfileIO, channel_keyword, group_keyword=None):
@@ -190,3 +193,6 @@ class ImageListWrapper():
                 pil_img = pil_img.convert("F")
             pil_img = self.interpolator(pil_img)
         return image.img_to_array(pil_img, data_format=self.mfileIO.data_format, dtype=self.mfileIO.dtype)
+
+    def __len__(self):
+        return len(self.image_paths)
