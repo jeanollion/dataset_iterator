@@ -18,7 +18,7 @@ class MultipleFileIO(DatasetIO):
     Parameters
     ----------
     directory : string
-        Each subdirectory in this directory will be considered to contain images from one channel.
+        Each subdirectory in this directory will be considered to contain images from one channel with the name of the channel corresponding to the name of the subdirectory
     n_image_per_file : int
         how many images contains each file. set zero if each file contains several images but this number is unknown
     target_shape : tuple
