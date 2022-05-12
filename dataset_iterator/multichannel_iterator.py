@@ -81,7 +81,7 @@ class MultiChannelIterator(IndexArrayIterator):
         if false, image_data_generators are ignored
     elasticdeform_parameters : dict
         parameters passed to elasticdeform function. see: https://github.com/gvtulder/elasticdeform/blob/master/elasticdeform/deform_grid.py
-        main parameters are: "sigma" and "points". alternatively "grid_spacing" can be passed and points will be infered (size//grid_spacing) as well as sigma (min(size/points)).
+        main parameters are: "sigma" and "points". alternatively "grid_spacing" can be passed and points will be infered (size//grid_spacing) as well as sigma (min(sigma_factor*size/points)) with sigma_factor defaults to 1./6 (increase this factor to increase deformation)
         "axis" should not be provided. default "order" is 1 and automatically set to 0 for mask channels.
         mode: out-of-bound strategy
         Applied before channels_postprocessing_function and extract_tile and after image_data_generators
@@ -447,6 +447,7 @@ class MultiChannelIterator(IndexArrayIterator):
             image_shape = batch_by_channel[channels[0]].shape[1:-1]
             grid_spacing = ensure_multiplicity(len(image_shape), self.elasticdeform_parameters.pop('grid_spacing', 15))
             points = self.elasticdeform_parameters.pop('points', [max(5, 1+s//gs) for s, gs in zip(image_shape, grid_spacing)])
+            grid_spacing = [s/float(n-1) for s, n in zip(image_shape, points)] # actual grid spacing
             sigma_factor = self.elasticdeform_parameters.pop('sigma_factor', 1./8)
             sigma = self.elasticdeform_parameters.pop('sigma', np.min([sigma_factor*s/(p-1) for s, p in zip(image_shape, points)]))
             batches = [batch_by_channel[chan_idx] for chan_idx in channels]
@@ -461,7 +462,9 @@ class MultiChannelIterator(IndexArrayIterator):
             # set zero displacement at edges to avoid out-of-bounds artifacts
             displacement[:, [0,-1], :] = 0
             displacement[:, :, [0,-1]] = 0
-
+            # limit displacement to half of grid spacing to avoid "spirals" (crossing points)
+            displacement[0] = np.minimum(np.abs(displacement[0]), grid_spacing[0]/4) * np.sign(displacement[0])
+            displacement[1] = np.minimum(np.abs(displacement[1]), grid_spacing[1]/4) * np.sign(displacement[1])
             batches = ed.deform_grid(batches, displacement, order=order, mode=mode, axis=axis, **self.elasticdeform_parameters)
 
             for i, chan_idx in enumerate(channels):
