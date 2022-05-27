@@ -397,7 +397,7 @@ class MultiChannelIterator(IndexArrayIterator):
             output = _apply_multiplicity(output, self.output_multiplicity) # removes None batches
             return (input, output)
 
-    def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False, perform_elasticdeform=True, perform_tiling=True):
+    def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False, perform_elasticdeform=True, perform_tiling=True, **kwargs):
         if self.datasetIO is None: # for concurency issues: file is open lazyly by each worker
             self._open_datasetIO()
         index_array = np.copy(index_array) # so that main index array is not modified
@@ -409,7 +409,7 @@ class MultiChannelIterator(IndexArrayIterator):
             channels.insert(0, channels.pop(channels.index(self.mask_channels[0])))
         aug_param_array = [[dict()]*len(self.channel_keywords) for i in range(len(index_array))]
         for chan_idx in channels:
-            batch_by_channel[chan_idx] = self._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, channels[0], aug_param_array, perform_augmentation=perform_augmentation)
+            batch_by_channel[chan_idx] = self._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, channels[0], aug_param_array, perform_augmentation=perform_augmentation, **kwargs)
 
         if perform_elasticdeform or perform_tiling: ## elastic deform do not support float16 type -> temporarily convert to float32
             channels = [c for c in batch_by_channel.keys() if c>=0]
@@ -505,7 +505,7 @@ class MultiChannelIterator(IndexArrayIterator):
         else:
             return [self._apply_postprocessing_and_concat_weight_map(batch_by_channel[chan_idx], i) for i, chan_idx in enumerate(self.output_channels)]
 
-    def _get_batches_of_transformed_samples_by_channel(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array=None, perform_augmentation=True, transfer_aug_param_function=lambda source, dest:copy_geom_tranform_parameters(source, dest)):
+    def _get_batches_of_transformed_samples_by_channel(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array=None, perform_augmentation=True, transfer_aug_param_function=lambda source, dest:copy_geom_tranform_parameters(source, dest), **kwargs):
         """Generate a batch of transformed sample for a given channel
 
         Parameters
@@ -529,7 +529,7 @@ class MultiChannelIterator(IndexArrayIterator):
 
         """
 
-        batch = self._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array)
+        batch = self._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, **kwargs)
         # apply augmentation
         image_data_generator = self.image_data_generators[chan_idx] if self.perform_data_augmentation and perform_augmentation and self.image_data_generators!=None else None
         for i in range(batch.shape[0]):
@@ -540,17 +540,17 @@ class MultiChannelIterator(IndexArrayIterator):
                         transfer_aug_param_function(aug_param_array[i][ref_chan_idx], params)
                     for k,v in params.items():
                         aug_param_array[i][chan_idx][k]=v
-                batch[i] = self._apply_augmentation(batch[i], chan_idx, params)
+                batch[i] = self._apply_augmentation(batch[i], chan_idx, params, **kwargs)
         return batch
 
-    def _apply_augmentation(self, img, chan_idx, aug_params):
+    def _apply_augmentation(self, img, chan_idx, aug_params, **kwargs):
         image_data_generator = self.image_data_generators[chan_idx]
         if image_data_generator is not None:
             img = image_data_generator.apply_transform(img, aug_params)
             img = image_data_generator.standardize(img)
         return img
 
-    def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array):
+    def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, **kwargs):
         # read all images # TODO read all image per ds at once.
         # in case of group scaling : group index is retrieved:
         grp_idx = self._get_grp_idx(index_array + self.ds_off[index_ds]) if self.group_scaling is not None else [0]*len(index_array)

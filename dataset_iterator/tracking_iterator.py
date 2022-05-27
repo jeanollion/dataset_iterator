@@ -52,7 +52,7 @@ class TrackingIterator(MultiChannelIterator):
                     mask_channels=mask_channels,
                     **kwargs)
 
-    def _get_batches_of_transformed_samples_by_channel(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array=None, perform_augmentation=True):
+    def _get_batches_of_transformed_samples_by_channel(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array=None, perform_augmentation=True, **kwargs):
         def transfer_aug_param_function(source, dest): # also copies prev/next
             copy_geom_tranform_parameters(source, dest)
             if "aug_params_prev" in source:
@@ -63,28 +63,28 @@ class TrackingIterator(MultiChannelIterator):
                 if "aug_params_next" not in dest:
                     dest["aug_params_next"] = dict()
                 copy_geom_tranform_parameters(source["aug_params_next"], dest["aug_params_next"])
-        return super()._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, perform_augmentation, transfer_aug_param_function=transfer_aug_param_function)
+        return super()._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, perform_augmentation, transfer_aug_param_function=transfer_aug_param_function, **kwargs)
 
-    def _apply_augmentation(self, img, chan_idx, aug_params): # apply separately for prev / cur / next
-        n_frames = self.n_frames if self.n_frames>0 else 1
+    def _apply_augmentation(self, img, chan_idx, aug_params, **kwargs): # apply separately for prev / cur / next
+        n_frames = kwargs.get("n_frames", self.n_frames if self.n_frames>0 else 1)
         if self.channels_prev[chan_idx]:
             aug_param_prev = None if aug_params is None else aug_params.get("aug_params_prev")
             if self.aug_all_frames:
                 for c in range(n_frames):
-                    img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_param_prev)
+                    img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_param_prev, **kwargs)
             else:
-                img[...,0:1] = super()._apply_augmentation(img[...,0:1], chan_idx, aug_param_prev)
+                img[...,0:1] = super()._apply_augmentation(img[...,0:1], chan_idx, aug_param_prev, **kwargs)
         if self.channels_next[chan_idx]:
             aug_param_next = None if aug_params is None else aug_params.get("aug_params_next")
             start = n_frames+1 if self.channels_prev[chan_idx] else 1
             if self.aug_all_frames:
                 for c in range(start, n_frames+start):
-                    img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_param_next)
+                    img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_param_next, **kwargs)
             else:
-                img[...,-1:] = super()._apply_augmentation(img[...,-1:], chan_idx, aug_param_next)
+                img[...,-1:] = super()._apply_augmentation(img[...,-1:], chan_idx, aug_param_next, **kwargs)
 
         cur_chan_idx = n_frames if self.channels_prev[chan_idx] else 0
-        img[...,cur_chan_idx:cur_chan_idx+1] = super()._apply_augmentation(img[...,cur_chan_idx:cur_chan_idx+1], chan_idx, aug_params)
+        img[...,cur_chan_idx:cur_chan_idx+1] = super()._apply_augmentation(img[...,cur_chan_idx:cur_chan_idx+1], chan_idx, aug_params, **kwargs)
         return img
 
     def _get_data_augmentation_parameters(self, chan_idx, ref_chan_idx, batch, idx, index_ds, index_array):
@@ -135,19 +135,21 @@ class TrackingIterator(MultiChannelIterator):
         elif 'brightness' in dest:
             del dest['brightness']
 
-    def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array):
-        batch = super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array)
+    def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, **kwargs):
+        batch = super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, **kwargs)
         batch_list= []
-        n_frames = self.n_frames if self.n_frames>0 else 1
+        n_frames = kwargs.get("n_frames", self.n_frames if self.n_frames>0 else 1)
         subsampling = self.frame_subsampling()
-        aug_remove = True if self.n_frames<=0 else self.n_frames == 1 and random() < self.aug_remove_prob
+        aug_remove = True if n_frames<=0 else n_frames == 1 and random() < self.aug_remove_prob
+        if n_frames<=0:
+            n_frames = 1
         if self.channels_prev[chan_idx]:
             for increment in range(n_frames, 0, -1):
-                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment * subsampling, aug_remove))
+                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment * subsampling, aug_remove, **kwargs))
         batch_list.append(batch)
         if self.channels_next[chan_idx]:
             for increment in range(1, n_frames+1):
-                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, False, aug_param_array, increment * subsampling, aug_remove))
+                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, False, aug_param_array, increment * subsampling, aug_remove, **kwargs))
         if len(batch_list)>1:
             return np.concatenate(batch_list, axis=-1)
         else:
@@ -175,7 +177,7 @@ class TrackingIterator(MultiChannelIterator):
                     return increment,oob
         return increment,oob
 
-    def _read_image_batch_neigh(self, index_ds, index_array, chan_idx, ref_chan_idx, prev, aug_param_array, increment = 1, aug_remove = False):
+    def _read_image_batch_neigh(self, index_ds, index_array, chan_idx, ref_chan_idx, prev, aug_param_array, increment = 1, aug_remove = False, **kwargs):
         inc_kw = ('prev_inc_{}' if prev else 'next_inc_{}').format(increment)
         if chan_idx==ref_chan_idx: # record actual increment in aug_param_array so that same increment is used for all channels
             for i, (ds_idx, im_idx) in enumerate(zip(index_ds, index_array)):
@@ -192,7 +194,7 @@ class TrackingIterator(MultiChannelIterator):
             index_array -= inc_array
         else:
             index_array += inc_array
-        return super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array)
+        return super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, **kwargs)
 
     def train_test_split(self, **options):
         train_iterator, test_iterator = super().train_test_split(**options)
