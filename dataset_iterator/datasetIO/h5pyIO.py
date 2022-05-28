@@ -1,15 +1,13 @@
 import h5py
-from .atomic_file_handler import AtomicFileHandler
 from .datasetIO import DatasetIO
 import threading
 import re
 
 class H5pyIO(DatasetIO):
-    def __init__(self, h5py_file_path, mode, atomic=False):
+    def __init__(self, h5py_file_path, mode):
         super().__init__()
         self.path = h5py_file_path
         self.mode = mode
-        self.atomic = atomic
         self.__lock__ = threading.Lock()
         self.h5py_file=None
 
@@ -17,8 +15,7 @@ class H5pyIO(DatasetIO):
         if self.h5py_file is None:
             with self.__lock__:
                 if self.h5py_file is None:
-                    file = AtomicFileHandler(self.path) if self.atomic else self.path # this does work with version 1.14 and 2.9 of h5py but not with version 2.8
-                    self.h5py_file = h5py.File(file, self.mode)
+                    self.h5py_file = h5py.File(self.path, self.mode, libver='latest', swmr=True) # use https://docs.h5py.org/en/stable/swmr.html
         return self.h5py_file
 
     def close(self):
