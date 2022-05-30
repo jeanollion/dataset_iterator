@@ -15,7 +15,10 @@ class H5pyIO(DatasetIO):
         if self.h5py_file is None:
             with self.__lock__:
                 if self.h5py_file is None:
-                    self.h5py_file = h5py.File(self.path, self.mode, libver='latest', swmr=True) # use https://docs.h5py.org/en/stable/swmr.html
+                    if self.mode == "r":
+                        self.h5py_file = h5py.File(open(self.path, "rb"), self.mode, libver='latest', swmr=True) # use https://docs.h5py.org/en/stable/swmr.html # open: https://stackoverflow.com/questions/60675795/hdf5-python-correct-way-to-handle-reads-from-multiple-processes
+                    else:
+                        self.h5py_file = h5py.File(self.path, self.mode, libver='latest', swmr=True) # use https://docs.h5py.org/en/stable/swmr.html
         return self.h5py_file
 
     def close(self):
