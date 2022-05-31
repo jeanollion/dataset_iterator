@@ -5,7 +5,7 @@ from os import listdir
 from os.path import isfile, join
 from keras_preprocessing import image
 import keras_preprocessing.image.utils as im_utils
-
+import numpy as np
 try:
     from PIL import Image as pil_image
 except ImportError:
@@ -69,26 +69,34 @@ class MultipleFileIO(DatasetIO):
     def close(self):
         pass
 
-    def get_dataset_paths(self, channel_keyword, group_keyword):
+    def get_dataset_paths(self, channel_keyword, group_keyword=None):
+        all_dirs = scandir(self.path)
         if self.n_image_per_file==1:
-            assert group_keyword is None, "groups not supported yet for MultipleFileIO in mode single image per file"
-            return [join(self.path, channel_keyword)]
+            return [d for d in all_dirs if os.path.basename(d) == channel_keyword and (group_keyword is None or group_keyword in d) ]
         else:
-            return self.get_images(join(self.path, channel_keyword), group_keyword)
+            filtered_dirs = all_dirs if group_keyword is None else [d for d in all_dirs if group_keyword in d]
+            all_imgs = []
+            for d in filtered_dirs:
+                all_imgs.extend(self.get_images(d, name = channel_keyword))
+                all_imgs.extend(self.get_images(d, name = channel_keyword, npy=True))
+            return all_imgs
+
+    def __getitem__(self, path):
+        return self.get_dataset(path)
 
     def get_dataset(self, path):
         if self.n_image_per_file==1:
             channel_keyword = os.path.basename(os.path.normpath(path))
             return ImageListWrapper(path, self, channel_keyword)
         else:
-            channel_keyword = os.path.basename(self.get_parent_path(path))
+            channel_keyword = os.path.basename(get_parent_path(path))
             return ImageWrapper(path, self, channel_keyword)
 
     def get_attribute(self, path, attribute_name):
         return None
 
     def create_dataset(self, path, **create_dataset_kwargs):
-        raise NotImplementedError("Not implemented yet")
+        pass
 
     def __contains__(self, key):
         if self.n_image_per_file: # datasets are channel folders
@@ -102,14 +110,30 @@ class MultipleFileIO(DatasetIO):
                     return True
             return False
 
-    def write_direct(self, path, data, source_sel, dest_sel):
-        raise NotImplementedError("Not implemented yet")
+    def write_direct(self, path, data, source_sel=None, dest_sel=None):
+        if source_sel is not None or dest_sel is not None:
+            assert self.n_image_per_file == 1, "index selection is only supported if n_image_per_file==1"
+        if self.n_image_per_file == 1:
+            if not os.path.isdir(path):
+                os.makedirs(path)
+            n_zeros = int(math.log10( len(data) )) + 1
+            if dest_sel is None:
+                dest_sel = source_sel
+            for i, j in zip(source_sel, dest_sel):
+                np.save(os.path.join(path, str(j).zfill(n_zeros)), data[i], allow_pickle=True)
+        else:
+            if not os.path.isdir(get_parent_path(path)):
+                os.makedirs(get_parent_path(path))
+            np.save(path, data)
 
-    def get_images(self, path, group_keyword=None):
-        return [join(path, f) for f in listdir(path) if self.supported_image_fun(f.lower()) and (group_keyword is None or group_keyword in f)]
+    def get_images(self, path, name = None, npy=False):
+        if npy:
+            return [join(path, f) for f in listdir(path) if f.lower().endswith('.npy') and (name is None or os.path.splitext(f)[0] == name)]
+        else:
+            return [join(path, f) for f in listdir(path) if self.supported_image_fun(f.lower()) and (name is None or os.path.splitext(f)[0] == name)]
 
-    def get_parent_path(self, path):
-        return os.path.dirname(os.path.normpath(path))
+def get_parent_path(path):
+    return os.path.dirname(os.path.normpath(path))
 
 def get_crop_function(target_shape):
     target_size = target_shape[::-1]
@@ -120,6 +144,12 @@ def get_crop_function(target_shape):
         else:
             return img
     return fun
+
+def scandir(dirname):
+    subfolders= [f.path for f in os.scandir(dirname) if f.is_dir()]
+    for dirname in list(subfolders):
+        subfolders.extend(scandir(dirname))
+    return subfolders
 
 # adapted from keras_preprocessing
 def get_interpolation_function(target_shape, interpolation):
@@ -139,9 +169,14 @@ class ImageWrapper():
     def __init__(self, path, mfileIO, channel_keyword):
         self.path = path
         self.mfileIO=mfileIO
+        self.npy = path.endswith('.npy')
         if mfileIO.n_image_per_file==0 or mfileIO.image_shape is None: # get shape from image file
-            self.image = pil_image.open(self.path)
-            self.shape = (self.image.n_frames,) + (mfileIO.image_shape if mfileIO.image_shape is not None else self.image.size[::-1])
+            if self.npy:
+                img = np.load(self.path, mmap_mode='r')
+                self.shape = img.shape
+            else:
+                self.image = pil_image.open(self.path)
+                self.shape = (self.image.n_frames,) + (mfileIO.image_shape if mfileIO.image_shape is not None else self.image.size[::-1])
         else:
             self.shape = (mfileIO.n_image_per_file,)+mfileIO.image_shape
         self.image = None
@@ -149,35 +184,49 @@ class ImageWrapper():
         if self.interpolator is None and self.mfileIO.crop_function is not None:
             self.interpolator = self.mfileIO.crop_function
         self.convert = not self.mfileIO.channel_map_nn_interpolation[channel_keyword] if self.mfileIO.channel_map_nn_interpolation is not None else False
-        self.__lock__ = threading.Lock()
+        if self.npy:
+            assert self.interpolator is None, "interpolation not supported (yet) with npy files"
+        self.__lock__ = None if self.npy else threading.Lock()
 
     def __getitem__(self, idx):
-        with self.__lock__:
-            if self.image is None:
-                self.image = pil_image.open(self.path)
-            assert idx<self.shape[0], "invalid index"
-            self.image.seek(idx)
-            if self.interpolator is not None:
-                pil_img = self.image.convert("F") if self.convert else self.image
-                pil_img = self.interpolator(pil_img)
-            else:
-                pil_img = self.image
-            return image.img_to_array(pil_img, data_format=self.mfileIO.data_format, dtype=self.mfileIO.dtype)
+        if self.npy:
+            return np.load(self.path, mmap_mode='r')[idx]
+        else:
+            with self.__lock__:
+                if self.image is None:
+                    self.image = pil_image.open(self.path)
+                assert idx<self.shape[0], "invalid index"
+                self.image.seek(idx)
+                if self.interpolator is not None:
+                    pil_img = self.image.convert("F") if self.convert else self.image
+                    pil_img = self.interpolator(pil_img)
+                else:
+                    pil_img = self.image
+                return image.img_to_array(pil_img, data_format=self.mfileIO.data_format, dtype=self.mfileIO.dtype)
 
     def __len__(self):
         return self.shape[0]
 
 # several files with one single image
 class ImageListWrapper():
-    def __init__(self, directory, mfileIO, channel_keyword, group_keyword=None):
+    def __init__(self, directory, mfileIO, channel_keyword):
         self.path = directory
         self.mfileIO=mfileIO
-        self.image_paths = mfileIO.get_images(directory, group_keyword)
-        if len(self.image_paths)==0:
-            raise ValueError("No supported image found in dir: {}".format(directory))
+        self.image_paths = mfileIO.get_images(directory)
+        if len(self.image_paths)==0: # try with npy images
+            self.image_paths = mfileIO.get_images(directory, npy=True)
+            self.npy = True
+            if len(self.image_paths)==0:
+                raise ValueError("No supported image found in dir: {}".format(directory))
+        else:
+            self.npy = False
         if mfileIO.image_shape is None:
-            pil_img = pil_image.open(self.image_paths[0])
-            self.shape = (len(self.image_paths),) + pil_img.size[::-1]
+            if self.npy:
+                img = np.load(self.image_paths[0], mmap_mode='r')
+                self.shape = (len(self.image_paths),) + img.shape
+            else:
+                pil_img = pil_image.open(self.image_paths[0])
+                self.shape = (len(self.image_paths),) + pil_img.size[::-1]
         else:
             self.shape = (len(self.image_paths),) + mfileIO.image_shape
         self.interpolator = self.mfileIO.channel_map_interpolation[channel_keyword] if self.mfileIO.channel_map_interpolation is not None else None
@@ -185,14 +234,19 @@ class ImageListWrapper():
             self.interpolator = self.mfileIO.crop_function
         self.convert = not self.mfileIO.channel_map_nn_interpolation[channel_keyword] if self.mfileIO.channel_map_nn_interpolation is not None else False
 
+        if self.npy:
+            assert self.interpolator is None, "interpolation not supported (yet) with npy files"
+
     def __getitem__(self, idx):
-        #pil_img = im_utils.load_img(self.image_paths[idx])
-        pil_img = pil_image.open(self.image_paths[idx])
-        if self.interpolator is not None:
-            if self.convert:
-                pil_img = pil_img.convert("F")
-            pil_img = self.interpolator(pil_img)
-        return image.img_to_array(pil_img, data_format=self.mfileIO.data_format, dtype=self.mfileIO.dtype)
+        if self.npy:
+            return np.load(self.image_paths[idx], mmap_mode='r')
+        else:
+            pil_img = pil_image.open(self.image_paths[idx])
+            if self.interpolator is not None:
+                if self.convert:
+                    pil_img = pil_img.convert("F")
+                pil_img = self.interpolator(pil_img)
+            return image.img_to_array(pil_img, data_format=self.mfileIO.data_format, dtype=self.mfileIO.dtype)
 
     def __len__(self):
         return len(self.image_paths)
