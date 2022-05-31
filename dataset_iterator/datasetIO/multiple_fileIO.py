@@ -70,6 +70,7 @@ class MultipleFileIO(DatasetIO):
         pass
 
     def get_dataset_paths(self, channel_keyword, group_keyword=None):
+        channel_keyword = fix_keyword(channel_keyword)
         all_dirs = scandir(self.path)
         if self.n_image_per_file==1:
             return [d for d in all_dirs if os.path.basename(d) == channel_keyword and (group_keyword is None or group_keyword in d) ]
@@ -89,7 +90,7 @@ class MultipleFileIO(DatasetIO):
             channel_keyword = os.path.basename(os.path.normpath(path))
             return ImageListWrapper(path, self, channel_keyword)
         else:
-            channel_keyword = os.path.basename(get_parent_path(path))
+            channel_keyword = os.path.splitext(os.path.basename(path))[0]
             return ImageWrapper(path, self, channel_keyword)
 
     def get_attribute(self, path, attribute_name):
@@ -131,6 +132,13 @@ class MultipleFileIO(DatasetIO):
             return [join(path, f) for f in listdir(path) if f.lower().endswith('.npy') and (name is None or os.path.splitext(f)[0] == name)]
         else:
             return [join(path, f) for f in listdir(path) if self.supported_image_fun(f.lower()) and (name is None or os.path.splitext(f)[0] == name)]
+
+def fix_keyword(keyword):
+    if keyword is None:
+        return None
+    if keyword[0]=='/':
+        keyword = keyword[1:]
+    return keyword
 
 def get_parent_path(path):
     return os.path.dirname(os.path.normpath(path))
