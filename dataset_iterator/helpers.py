@@ -86,7 +86,7 @@ def get_percentile(histogram, bins, percentile):
     assert np.shape(histogram)[0] == np.shape(bins)[0]-1, "invalid edges"
     cs = np.cumsum(histogram)
     if isinstance(percentile, (list, tuple)):
-        percentile = np.array(percentile)
+        percentile = np.array(percentile, dtype = "float64")
     percentile = percentile * cs[-1] / 100
     bin_centers = ( bins[1:] + bins[:-1] ) / 2
     return np.interp(percentile, cs, bin_centers)
@@ -96,7 +96,7 @@ def get_percentile_from_value(histogram, bins, value):
     cs = np.cumsum(histogram)
     cs = cs / cs[-1]
     if isinstance(value, (list, tuple)):
-        value = np.array(value)
+        value = np.array(value, dtype = "float64")
     bin_centers = ( bins[1:] + bins[:-1] ) / 2
     return np.interp(value, bin_centers, cs) * 100
 
