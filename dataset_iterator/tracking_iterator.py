@@ -33,7 +33,7 @@ class TrackingIterator(MultiChannelIterator):
         self.channels_prev=channels_prev
         self.channels_next=channels_next
         self.aug_remove_prob = aug_remove_prob # set current image as prev / next
-        self.n_frames=n_frames
+        self.def_n_frames=n_frames
         self.aug_all_frames=aug_all_frames
         if callable(frame_subsampling):
             self.frame_subsampling = frame_subsampling
@@ -66,7 +66,7 @@ class TrackingIterator(MultiChannelIterator):
         return super()._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, perform_augmentation, transfer_aug_param_function=transfer_aug_param_function, **kwargs)
 
     def _apply_augmentation(self, img, chan_idx, aug_params, **kwargs): # apply separately for prev / cur / next
-        n_frames = kwargs.get("n_frames", self.n_frames if self.n_frames>0 else 1)
+        n_frames = kwargs.get("n_frames", self.def_n_frames if self.def_n_frames>0 else 1)
         if self.channels_prev[chan_idx]:
             aug_param_prev = None if aug_params is None else aug_params.get("aug_params_prev")
             if self.aug_all_frames:
@@ -138,7 +138,7 @@ class TrackingIterator(MultiChannelIterator):
     def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, **kwargs):
         batch = super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, **kwargs)
         batch_list= []
-        n_frames = kwargs.get("n_frames", self.n_frames if self.n_frames>0 else 1)
+        n_frames = kwargs.get("n_frames", self.def_n_frames if self.def_n_frames>0 else 1)
         subsampling = self.frame_subsampling()
         aug_remove = True if n_frames<=0 else n_frames == 1 and random() < self.aug_remove_prob
         if n_frames<=0:
