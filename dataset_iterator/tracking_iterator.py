@@ -14,10 +14,10 @@ class TrackingIterator(MultiChannelIterator):
                 channels_prev,
                 channels_next,
                 mask_channels=[],
-                n_frames = 1,
-                aug_all_frames=True,
-                aug_remove_prob = 0,
-                frame_subsampling = 1, # either integer -> constant subsampling, callable (called at each mini batch and returns the subsampling), or interval with breaks included
+                n_frames:int = 1,
+                aug_all_frames:bool=True,
+                aug_remove_prob:float = 0,
+                frame_subsampling:int = 1, # either integer -> constant subsampling, callable (called at each mini batch and returns the subsampling), or interval with breaks included
                 **kwargs):
 
         if len(channels_next)!=len(channel_keywords):
@@ -51,6 +51,14 @@ class TrackingIterator(MultiChannelIterator):
                     output_channels=output_channels,
                     mask_channels=mask_channels,
                     **kwargs)
+
+    def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False, perform_elasticdeform=True, perform_tiling=True, **kwargs):
+        if "n_frames" not in kwargs:
+            if self.aug_remove_prob>0 and random() < self.aug_remove_prob:
+                kwargs["n_frame"] = 0 # flag aug remove
+        if "frame_subsampling" not in kwargs:
+            kwargs["frame_subsampling"] = self.frame_subsampling()
+        return super()._get_batch_by_channel(index_array, perform_augmentation, input_only, perform_elasticdeform, perform_tiling, **kwargs)
 
     def _get_batches_of_transformed_samples_by_channel(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array=None, perform_augmentation=True, **kwargs):
         def transfer_aug_param_function(source, dest): # also copies prev/next
@@ -140,11 +148,8 @@ class TrackingIterator(MultiChannelIterator):
         batch = super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, **kwargs)
         batch_list= []
         n_frames = kwargs.get("n_frames", self.def_n_frames if self.def_n_frames>0 else 1)
-        subsampling = self.frame_subsampling()
+        subsampling = kwargs.get("frame_subsampling", 1)
         aug_remove = n_frames<=0
-        if "n_frames" not in kwargs and ref_chan_idx==chan_idx and self.aug_remove_prob>0 and n_frames == 1 and random() < self.aug_remove_prob:
-            aug_remove = True
-            kwargs["n_frame"] = 0 # flag aug remove for other channels
         if n_frames<=0:
             n_frames = 1
         if self.channels_prev[chan_idx]:
