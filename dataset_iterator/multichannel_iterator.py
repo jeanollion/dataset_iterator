@@ -540,10 +540,10 @@ class MultiChannelIterator(IndexArrayIterator):
                         transfer_aug_param_function(aug_param_array[i][ref_chan_idx], params)
                     for k,v in params.items():
                         aug_param_array[i][chan_idx][k]=v
-                batch[i] = self._apply_augmentation(batch[i], chan_idx, params, **kwargs)
+                batch[i] = self._apply_augmentation(batch[i], chan_idx, params)
         return batch
 
-    def _apply_augmentation(self, img, chan_idx, aug_params, **kwargs):
+    def _apply_augmentation(self, img, chan_idx, aug_params):
         image_data_generator = self.image_data_generators[chan_idx]
         if image_data_generator is not None:
             img = image_data_generator.apply_transform(img, aug_params)
