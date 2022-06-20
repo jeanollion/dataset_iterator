@@ -123,6 +123,7 @@ class TrackingIterator(MultiChannelIterator):
 
     def _transfer_geom_aug_param_neighbor(self, source, dest): # transfer affine parameters that must be identical between curent and prev/next image
         dest['flip_vertical'] = source.get('flip_vertical', False) # flip must be the same
+        dest['flip_horizontal'] = source.get('flip_horizontal', False) # flip must be the same
         dest['zy'] = source.get('zy', 1) # zoom should be the same so that cell aspect does not change too much
         dest['zx'] = source.get('zx', 1) # zoom should be the same so that cell aspect does not change too much
         dest['shear'] = source.get('shear', 0) # shear should be the same so that cell aspect does not change too much
@@ -145,11 +146,17 @@ class TrackingIterator(MultiChannelIterator):
             n_frames = 1
         if self.channels_prev[chan_idx]:
             for increment in range(n_frames, 0, -1):
-                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment * subsampling, aug_remove, **kwargs))
+                neigh = self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment * subsampling, aug_remove, **kwargs)
+                if neigh is None:
+                    neigh = batch
+                batch_list.append(neigh)
         batch_list.append(batch)
         if self.channels_next[chan_idx]:
             for increment in range(1, n_frames+1):
-                batch_list.append(self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, False, aug_param_array, increment * subsampling, aug_remove, **kwargs))
+                neigh = self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, False, aug_param_array, increment * subsampling, aug_remove, **kwargs)
+                if neigh is None:
+                    neigh = batch
+                batch_list.append(neigh)
         if len(batch_list)>1:
             return np.concatenate(batch_list, axis=-1)
         else:
@@ -182,12 +189,14 @@ class TrackingIterator(MultiChannelIterator):
         if chan_idx==ref_chan_idx: # record actual increment in aug_param_array so that same increment is used for all channels
             for i, (ds_idx, im_idx) in enumerate(zip(index_ds, index_array)):
                 inc,oob = self._get_max_increment(ds_idx, im_idx, ref_chan_idx, prev, increment)
-                if self.perform_data_augmentation and aug_remove: # neighbor image is replaced by current image as part of data augmentation + signal in order to set constant displacement map in further steps
+                if aug_remove: # neighbor image is replaced by current image as part of data augmentation + signal in order to set constant displacement map in further steps
                     aug_param_array[i][ref_chan_idx][inc_kw] = 0
                 else:
                     aug_param_array[i][ref_chan_idx][inc_kw] = inc
                 if oob:
                     aug_param_array[i][ref_chan_idx]['oob_inc'] = inc # flag out-of-bound
+        if aug_remove:
+            return None # image is replaced by same batch
         index_array = np.copy(index_array)
         inc_array = [aug_param_array[i][ref_chan_idx][inc_kw] for i in range(len(index_ds))]
         if prev:
