@@ -73,7 +73,7 @@ class TrackingIterator(MultiChannelIterator):
                 for c in range(n_frames):
                     img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_param_prev, **kwargs)
             else:
-                img[...,0:1] = super()._apply_augmentation(img[...,0:1], chan_idx, aug_param_prev, **kwargs)
+                img[...,:1] = super()._apply_augmentation(img[...,:1], chan_idx, aug_param_prev, **kwargs)
         if self.channels_next[chan_idx]:
             aug_param_next = None if aug_params is None else aug_params.get("aug_params_next")
             start = n_frames+1 if self.channels_prev[chan_idx] else 1
@@ -141,7 +141,10 @@ class TrackingIterator(MultiChannelIterator):
         batch_list= []
         n_frames = kwargs.get("n_frames", self.def_n_frames if self.def_n_frames>0 else 1)
         subsampling = self.frame_subsampling()
-        aug_remove = True if n_frames<=0 else n_frames == 1 and random() < self.aug_remove_prob
+        aug_remove = n_frames<=0
+        if "n_frames" not in kwargs and ref_chan_idx==chan_idx and self.aug_remove_prob>0 and n_frames == 1 and random() < self.aug_remove_prob:
+            aug_remove = True
+            kwargs["n_frame"] = 0 # flag aug remove for other channels
         if n_frames<=0:
             n_frames = 1
         if self.channels_prev[chan_idx]:
