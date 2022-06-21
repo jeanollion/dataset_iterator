@@ -55,9 +55,9 @@ class TrackingIterator(MultiChannelIterator):
     def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False, perform_elasticdeform=True, perform_tiling=True, **kwargs):
         if "n_frames" not in kwargs:
             if self.aug_remove_prob>0 and random() < self.aug_remove_prob:
-                kwargs["n_frame"] = 0 # flag aug remove
+                kwargs.update({"n_frames":0}) # flag aug remove
         if "frame_subsampling" not in kwargs:
-            kwargs["frame_subsampling"] = self.frame_subsampling()
+            kwargs.update({"frame_subsampling":self.frame_subsampling()})
         return super()._get_batch_by_channel(index_array, perform_augmentation, input_only, perform_elasticdeform, perform_tiling, **kwargs)
 
     def _get_batches_of_transformed_samples_by_channel(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array=None, perform_augmentation=True, **kwargs):
@@ -74,7 +74,7 @@ class TrackingIterator(MultiChannelIterator):
         return super()._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, perform_augmentation, transfer_aug_param_function=transfer_aug_param_function, **kwargs)
 
     def _apply_augmentation(self, img, chan_idx, aug_params): # apply separately for prev / cur / next
-        n_frames = (img.shape[-1]-1)//2 if self.channels_next[1] else img.shape[-1]-1
+        n_frames = (img.shape[-1]-1)//2 if self.channels_prev[chan_idx] and self.channels_next[chan_idx] else img.shape[-1]-1
         if self.channels_prev[chan_idx]:
             aug_param_prev = None if aug_params is None else aug_params.get("aug_params_prev")
             if self.aug_all_frames:
