@@ -25,5 +25,5 @@ setuptools.setup(
         'Programming Language :: Python :: 3',
     ],
     python_requires='>=3',
-    install_requires=['h5py>=2.9', 'numpy', 'scipy', 'scikit-learn', 'tensorflow']
+    install_requires=['h5py>=2.9', 'numpy', 'scipy', 'scikit-learn', 'scikit-image', 'tensorflow']
 )
