@@ -151,7 +151,7 @@ class TrackingIterator(MultiChannelIterator):
         subsampling = kwargs.get("frame_subsampling", 1)
         aug_remove = n_frames<=0
         if n_frames<=0:
-            n_frames = 1
+            n_frames = self.def_n_frames
         if self.channels_prev[chan_idx]:
             for increment in range(n_frames, 0, -1):
                 neigh = self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment * subsampling, aug_remove)
