@@ -73,26 +73,37 @@ class TrackingIterator(MultiChannelIterator):
                 copy_geom_tranform_parameters(source["aug_params_next"], dest["aug_params_next"])
         return super()._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, perform_augmentation, transfer_aug_param_function=transfer_aug_param_function, **kwargs)
 
-    def _apply_augmentation(self, img, chan_idx, aug_params): # apply separately for prev / cur / next
+    def _get_frames_to_augment(self, img, chan_idx, aug_params):
+        if self.aug_all_frames:
+            return list(range(img.shape[-1]))
         n_frames = (img.shape[-1]-1)//2 if self.channels_prev[chan_idx] and self.channels_next[chan_idx] else img.shape[-1]-1
-        if self.channels_prev[chan_idx]:
-            aug_param_prev = None if aug_params is None else aug_params.get("aug_params_prev")
-            if self.aug_all_frames:
-                for c in range(n_frames):
-                    img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_param_prev)
-            else:
-                img[...,:1] = super()._apply_augmentation(img[...,:1], chan_idx, aug_param_prev)
-        if self.channels_next[chan_idx]:
-            aug_param_next = None if aug_params is None else aug_params.get("aug_params_next")
-            start = n_frames+1 if self.channels_prev[chan_idx] else 1
-            if self.aug_all_frames:
-                for c in range(start, n_frames+start):
-                    img[...,c:c+1] = super()._apply_augmentation(img[...,c:c+1], chan_idx, aug_param_next)
-            else:
-                img[...,-1:] = super()._apply_augmentation(img[...,-1:], chan_idx, aug_param_next)
+        if self.channels_prev[chan_idx] and self.channels_next[chan_idx]:
+            return [0, n_frames, img.shape[-1]-1]
+        elif self.channels_prev[chan_idx] or self.channels_next[chan_idx]
+            return [0, img.shape[-1]-1]
+        else :
+            return [0]
 
-        cur_chan_idx = n_frames if self.channels_prev[chan_idx] else 0
-        img[...,cur_chan_idx:cur_chan_idx+1] = super()._apply_augmentation(img[...,cur_chan_idx:cur_chan_idx+1], chan_idx, aug_params)
+    def _apply_augmentation(self, img, chan_idx, aug_params): # apply separately for prev / cur / next
+        frames_to_augment = self._get_frames_to_augment(img, chan_idx, aug_params)
+        n_frames = (img.shape[-1]-1)//2 if self.channels_prev[chan_idx] and self.channels_next[chan_idx] else img.shape[-1]-1
+        for f in frames_to_augment:
+            loc = 0
+            if self.channels_prev[chan_idx] and f<n_frames:
+                loc = -1
+            elif self.channels_next[chan_idx]:
+                if self.channels_prev[chan_idx]:
+                    if f>n_frames:
+                        loc=1
+                elif f>0:
+                    loc=1
+            _aug_params = aug_params
+            if aug_params is not None:
+                if loc==-1:
+                    _aug_params = aug_params.get("aug_params_prev")
+                elif loc==1:
+                    _aug_params = aug_params.get("aug_params_next")
+            img[...,f:f+1] = super()._apply_augmentation(img[...,f:f+1], chan_idx, _aug_params)
         return img
 
     def _get_data_augmentation_parameters(self, chan_idx, ref_chan_idx, batch, idx, index_ds, index_array):
