@@ -79,9 +79,9 @@ class TrackingIterator(MultiChannelIterator):
         n_frames = (img.shape[-1]-1)//2 if self.channels_prev[chan_idx] and self.channels_next[chan_idx] else img.shape[-1]-1
         if self.channels_prev[chan_idx] and self.channels_next[chan_idx]:
             return [0, n_frames, img.shape[-1]-1]
-        elif self.channels_prev[chan_idx] or self.channels_next[chan_idx]
+        elif self.channels_prev[chan_idx] or self.channels_next[chan_idx]:
             return [0, img.shape[-1]-1]
-        else :
+        else:
             return [0]
 
     def _apply_augmentation(self, img, chan_idx, aug_params): # apply separately for prev / cur / next
