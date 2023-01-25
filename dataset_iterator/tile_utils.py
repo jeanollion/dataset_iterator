@@ -168,11 +168,11 @@ def _subset_by_channel(batch, tile_coords_by_channel, tile_shape):
     return np.concatenate(subsets, axis=-1)
 
 def _zoom(batch, target_shape, order):
-    ratio = [i / j for i, j in zip(target_shape, batch.shape[1:-1])]
+    ratio = [float(i) / float(j) for i, j in zip(target_shape, batch.shape[1:-1])]
     if np.all(ratio == 1):
         return batch
     else:
-        return zoom(batch, zoom = [1] + ratio + [1], order=order)
+        return zoom(batch, zoom = [1] + ratio + [1], order=order, grid_mode=False, mode="reflect")
 
 def get_stride_2d(image_shape, tile_shape, n_tiles):
     if n_tiles == 1:
