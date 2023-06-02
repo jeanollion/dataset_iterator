@@ -3,14 +3,25 @@ import threading
 import os
 from os import listdir
 from os.path import isfile, join
-from keras_preprocessing import image
-import keras_preprocessing.image.utils as im_utils
+from tensorflow.keras.utils import img_to_array
 import numpy as np
 try:
     from PIL import Image as pil_image
 except ImportError:
     pil_image = None
 
+if pil_image is not None:
+    _PIL_INTERPOLATION_METHODS = {
+        'nearest': pil_image.NEAREST,
+        'bilinear': pil_image.BILINEAR,
+        'bicubic': pil_image.BICUBIC,
+    }
+    if hasattr(pil_image, 'HAMMING'):
+        _PIL_INTERPOLATION_METHODS['hamming'] = pil_image.HAMMING
+    if hasattr(pil_image, 'BOX'):
+        _PIL_INTERPOLATION_METHODS['box'] = pil_image.BOX
+    if hasattr(pil_image, 'LANCZOS'):
+        _PIL_INTERPOLATION_METHODS['lanczos'] = pil_image.LANCZOS
 
 class MultipleFileIO(DatasetIO):
     """Allows to iterate an image dataset that contains several image files compatible with PILLOW
@@ -196,9 +207,9 @@ def scandir(dirname):
 # adapted from keras_preprocessing
 def get_interpolation_function(target_shape, interpolation):
     target_size = target_shape[::-1]
-    if interpolation not in im_utils._PIL_INTERPOLATION_METHODS:
-        raise ValueError('Invalid interpolation method {} specified. Supported methods are {}'.format(interpolation, ", ".join(im_utils._PIL_INTERPOLATION_METHODS.keys())))
-    resample = im_utils._PIL_INTERPOLATION_METHODS[interpolation]
+    if interpolation not in _PIL_INTERPOLATION_METHODS:
+        raise ValueError('Invalid interpolation method {} specified. Supported methods are {}'.format(interpolation, ", ".join(_PIL_INTERPOLATION_METHODS.keys())))
+    resample = _PIL_INTERPOLATION_METHODS[interpolation]
     def fun(img):
         if img.size != target_size:
             return img.resize(target_size, resample)
@@ -244,7 +255,7 @@ class ImageWrapper():
                     pil_img = self.interpolator(pil_img)
                 else:
                     pil_img = self.image
-                return image.img_to_array(pil_img, data_format=self.mfileIO.data_format, dtype=self.mfileIO.dtype)
+                return img_to_array(pil_img, data_format=self.mfileIO.data_format, dtype=self.mfileIO.dtype)
 
     def __len__(self):
         return self.shape[0]
@@ -288,7 +299,7 @@ class ImageListWrapper():
                 if self.convert:
                     pil_img = pil_img.convert("F")
                 pil_img = self.interpolator(pil_img)
-            return image.img_to_array(pil_img, data_format=self.mfileIO.data_format, dtype=self.mfileIO.dtype)
+            return img_to_array(pil_img, data_format=self.mfileIO.data_format, dtype=self.mfileIO.dtype)
 
     def __len__(self):
         return len(self.image_paths)
