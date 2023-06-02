@@ -110,7 +110,7 @@ class MultiChannelIterator(IndexArrayIterator):
     labels : list of string
         list of label vector corresponding to each sub-dataset. initialized if the dataset contains sub-datasets corresponding to the channel keyword "/labels"
         each element of labels is a vector of length equal to the batch axis of the corresponding sub-datasets
-        each label is in the format: <barcode>_fXXXXX where <barcode> is a unique identifier of a time-series withing the sub-dataset, and XXXXX an int that correspond to the time step of the imageself.
+        each label is in the format: <barcode>_fXXXXX where <barcode> is a unique identifier of a time-series within the sub-dataset, and XXXXX an int that correspond to the time step of the imageself.
         Labels are used to return the index of the previous/next time-step in the TrackingIterator. In that case sub-datasets should correpond one or several time-series (a time-series correspond to successive images)
     void_mask_max_proportion : float
         maximum proportion of void images in each batch
@@ -168,6 +168,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 shuffle=True,
                 perform_data_augmentation=True,
                 elasticdeform_parameters=None,
+                return_image_index:bool = False,
                 seed=None,
                 dtype='float32',
                 convert_masks_to_dtype=True,
@@ -230,6 +231,7 @@ class MultiChannelIterator(IndexArrayIterator):
         self.extract_tile_function=extract_tile_function
         self.paths=None
         self.group_map_paths=None
+        self.return_image_index=return_image_index
         self._open_datasetIO()
         # check that all ds have compatible length between input and output
         indexes = np.array([ds.shape[0] for ds in self.ds_array[0]])
@@ -376,7 +378,16 @@ class MultiChannelIterator(IndexArrayIterator):
 
         if self.output_channels is None or len(self.output_channels)==0:
             input = self._get_input_batch(batch_by_channel, ref_chan_idx, aug_param_array)
-            return _apply_multiplicity(input, self.input_multiplicity) # removes None batches
+            input = _apply_multiplicity(input, self.input_multiplicity) # removes None batches
+            if self.return_image_index:
+                if isinstance(input, tuple):
+                    input = list(input)
+                if not isinstance(input, list):
+                    input = [input]
+                input.append(batch_by_channel[-1])
+                return input
+            else:
+                return input
         else:
             input = self._get_input_batch(batch_by_channel, ref_chan_idx, aug_param_array)
             output = self._get_output_batch(batch_by_channel, ref_chan_idx, aug_param_array)
@@ -394,6 +405,12 @@ class MultiChannelIterator(IndexArrayIterator):
                         assert icidx in self.input_multiplicity, "input: #"+icidx+" is not None and not in input_multiplicity"
 
             input = _apply_multiplicity(input, self.input_multiplicity) # removes None batches
+            if self.return_image_index:
+                if isinstance(input, tuple):
+                    input = list(input)
+                if not isinstance(input, list):
+                    input = [input]
+                input.append(batch_by_channel[-1])
             output = _apply_multiplicity(output, self.output_multiplicity) # removes None batches
             return (input, output)
 
@@ -410,7 +427,9 @@ class MultiChannelIterator(IndexArrayIterator):
         aug_param_array = [[dict()]*len(self.channel_keywords) for i in range(len(index_array))]
         for chan_idx in channels:
             batch_by_channel[chan_idx] = self._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, channels[0], aug_param_array, perform_augmentation=perform_augmentation, **kwargs)
-
+            if chan_idx == channels[0] and self.return_image_index:
+                batch_by_channel[-1] = batch_by_channel[chan_idx][1] # image index
+                batch_by_channel[chan_idx] = batch_by_channel[chan_idx][0] # batch
         if perform_elasticdeform or perform_tiling: ## elastic deform do not support float16 type -> temporarily convert to float32
             channels = [c for c in batch_by_channel.keys() if c>=0]
             converted_from_float16=[]
@@ -477,8 +496,11 @@ class MultiChannelIterator(IndexArrayIterator):
             batches = [batch_by_channel[chan_idx] for chan_idx in channels]
             is_mask = [chan_idx in self.mask_channels for chan_idx in channels]
             batches = self.extract_tile_function(batches, is_mask)
+            n_tiles = batches[0].shape[0]//batch_by_channel[channels[0]].shape[0]
             for i, chan_idx in enumerate(channels):
                 batch_by_channel[chan_idx] = batches[i]
+            if self.return_image_index and n_tiles>1:
+                batch_by_channel[-1] = np.tile(batch_by_channel[-1], (n_tiles, 1)) # transmit tiling to image index
 
     def _get_input_batch(self, batch_by_channel, ref_chan_idx, aug_param_array):
         if len(self.input_channels)==1:
@@ -530,7 +552,7 @@ class MultiChannelIterator(IndexArrayIterator):
 
         """
 
-        batch = self._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, **kwargs)
+        batch, index_a = self._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, **kwargs)
         # apply augmentation
         image_data_generator = self.image_data_generators[chan_idx] if self.perform_data_augmentation and perform_augmentation and self.image_data_generators!=None else None
         for i in range(batch.shape[0]):
@@ -542,7 +564,10 @@ class MultiChannelIterator(IndexArrayIterator):
                     for k,v in params.items():
                         aug_param_array[i][chan_idx][k]=v
                 batch[i] = self._apply_augmentation(batch[i], chan_idx, params)
-        return batch
+        if chan_idx==ref_chan_idx and self.return_image_index:
+            return batch, index_a
+        else:
+            return batch
 
     def _apply_augmentation(self, img, chan_idx, aug_params):
         image_data_generator = self.image_data_generators[chan_idx]
@@ -557,7 +582,8 @@ class MultiChannelIterator(IndexArrayIterator):
         grp_idx = self._get_grp_idx(index_array + self.ds_off[index_ds]) if self.group_scaling is not None else [0]*len(index_array)
         images = [self._read_image(chan_idx, ds_idx, im_idx, grp_idx) for i, (ds_idx, im_idx, grp_idx) in enumerate(zip(index_ds, index_array, grp_idx))]
         batch = np.stack(images)
-        return batch
+        index_a = np.copy(index_array)[..., np.newaxis] if self.return_image_index else None
+        return batch, index_a
 
     def _get_data_augmentation_parameters(self, chan_idx, ref_chan_idx, batch, idx, index_ds, index_array):
         if self.image_data_generators is None or self.image_data_generators[chan_idx] is None:

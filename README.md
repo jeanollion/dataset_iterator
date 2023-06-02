@@ -10,7 +10,7 @@ One dataset file can contain several sub-datasets (dataset_name0, dataset_name1,
     │   ├── channel0          
     │   └── channel1   
     │   └── ...
-    ├── dataset_name0                    
+    ├── dataset_name1                    
     │   ├── channel0          
     │   └── channel1   
     │   └── ...

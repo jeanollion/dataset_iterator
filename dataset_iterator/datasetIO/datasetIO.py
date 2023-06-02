@@ -35,8 +35,11 @@ def get_datasetIO(dataset, mode='r'):
             from .h5pyIO import H5pyIO
             return H5pyIO(dataset, mode)
         elif os.path.isdir(dataset):
-            from .multiple_fileIO import MultipleFileIO
+            from .multiple_fileIO import MultipleFileIO # import when needed -> IO libraries may be missing
             return MultipleFileIO(dataset, 1) # consider that directory contains files, each file corresponds to a single image with same dimensions
+        elif dataset.lower().endswith(('.tif', '.tiff')):
+            from .multiple_fileIO import MultipleFileIO
+            return MultipleFileIO(os.path.abspath(os.path.join(dataset, os.pardir)), 0)
     elif isinstance(dataset, (tuple, list)):
         from .concatenate_datasetIO import ConcatenateDatasetIO
         return ConcatenateDatasetIO(dataset) if len(dataset)>1 else get_datasetIO(dataset[0])

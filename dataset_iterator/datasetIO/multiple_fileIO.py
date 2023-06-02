@@ -20,7 +20,39 @@ class MultipleFileIO(DatasetIO):
     directory : string
         Each subdirectory in this directory will be considered to contain images from one channel with the name of the channel corresponding to the name of the subdirectory
     n_image_per_file : int
-        how many images contains each file. set zero if each file contains several images but this number is unknown
+        how many images contains each file.
+        if n_image_per_file == 1 the following structure is expected :
+            path
+            ├── ...
+            ├── dataset_name0
+            │   ├── channel0
+            │   │   ├──frame0 (= single frame image)
+            │   │   ├──frame1
+            │   │   └── ...
+            │   └── channel1
+            │   │   ├──frame0
+            │   │   ├──frame1
+            │   │   └── ...
+            │   └── ...
+            ├── dataset_name1
+            │   ├── channel0
+            │   └── channel1
+            │   └── ...
+            └── ...
+        otherwise:
+            set zero if each file contains several images but this number is unknown
+            the following structure is expected:
+            path
+            ├── ...
+            ├── dataset_name0
+            │   ├── channel0 (= multiple frame image)
+            │   ├── channel1
+            │   └── ...
+            ├── dataset_name1
+            │   ├── channel0
+            │   ├── channel1
+            │   └── ...
+            └── ...
     target_shape : tuple
         tuple of integers, dimensions to resize input images to. if None all image must have same dimension. no check is done at initialization
     channel_map_interpolation : dict
@@ -50,7 +82,7 @@ class MultipleFileIO(DatasetIO):
     data_type
 
     """
-    def __init__(self, directory, n_image_per_file, target_shape=None, channel_map_interpolation=None , data_format='channels_last', data_type='float32', supported_image_fun = lambda f : f.endswith(('.png', '.tif', '.tiff'))):
+    def __init__(self, directory, n_image_per_file, target_shape=None, channel_map_interpolation=None , data_format='channels_last', data_type='float32', supported_image_fun = lambda f : f.lower().endswith(('.png', '.tif', '.tiff'))):
         super().__init__()
         self.path = directory
         if pil_image is None:
@@ -75,6 +107,8 @@ class MultipleFileIO(DatasetIO):
         if self.n_image_per_file==1:
             return [d for d in all_dirs if os.path.basename(d) == channel_keyword and (group_keyword is None or group_keyword in d) ]
         else:
+            if len(all_dirs)==0:
+                all_dirs = [self.path]
             filtered_dirs = all_dirs if group_keyword is None else [d for d in all_dirs if group_keyword in d]
             all_imgs = []
             for d in filtered_dirs:
@@ -100,7 +134,7 @@ class MultipleFileIO(DatasetIO):
         pass
 
     def __contains__(self, key):
-        if self.n_image_per_file: # datasets are channel folders
+        if self.n_image_per_file==1: # datasets are channel folders
             for root, dirs, files in os.walk(self.path):
                 if key in dirs:
                     return True
@@ -129,9 +163,9 @@ class MultipleFileIO(DatasetIO):
 
     def get_images(self, path, name = None, npy=False):
         if npy:
-            return [join(path, f) for f in listdir(path) if f.lower().endswith('.npy') and (name is None or os.path.splitext(f)[0] == name)]
+            return [join(path, f) for f in listdir(path) if f.lower().endswith('.npy') and (name is None or name in f)]
         else:
-            return [join(path, f) for f in listdir(path) if self.supported_image_fun(f.lower()) and (name is None or os.path.splitext(f)[0] == name)]
+            return [join(path, f) for f in listdir(path) if self.supported_image_fun(f.lower()) and (name is None or name in f)]
 
 def fix_keyword(keyword):
     if keyword is None:
