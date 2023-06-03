@@ -164,20 +164,30 @@ class TrackingIterator(MultiChannelIterator):
         aug_remove = n_frames<=0
         if n_frames<=0:
             n_frames = self.def_n_frames
-        if self.channels_prev[chan_idx]:
-            for increment in range(n_frames, 0, -1):
-                neigh, index_array_neigh = self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment * subsampling, aug_remove)
-                if neigh is None:
-                    neigh = batch
-                batch_list.append(neigh)
-                index_array_list.append(index_array_neigh)
+
         batch_list.append(batch)
         index_array_list.append(index_a)
+        if self.channels_prev[chan_idx]:
+            for increment in range(1, n_frames+1):
+                neigh = self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment * subsampling, aug_remove)
+                if neigh is None: # repeat previous one
+                    neigh = batch_list[-1]
+                    index_array_neigh = index_array_list[-1]
+                else:
+                    neigh, index_array_neigh = neigh
+                batch_list.append(neigh)
+                index_array_list.append(index_array_neigh)
+            batch_list = batch_list[::-1] # reverse order -> previous frames first
+            index_array_list = index_array_list[::-1]
+
         if self.channels_next[chan_idx]:
             for increment in range(1, n_frames+1):
-                neigh, index_array_neigh = self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, False, aug_param_array, increment * subsampling, aug_remove)
-                if neigh is None:
-                    neigh = batch
+                neigh = self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, False, aug_param_array, increment * subsampling, aug_remove)
+                if neigh is None: # repeat previous one
+                    neigh = batch_list[-1]
+                    index_array_neigh = index_array_list[-1]
+                else:
+                    neigh, index_array_neigh = neigh
                 batch_list.append(neigh)
                 index_array_list.append(index_array_neigh)
         if len(batch_list)>1:
