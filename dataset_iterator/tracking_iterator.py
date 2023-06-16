@@ -40,11 +40,17 @@ class TrackingIterator(MultiChannelIterator):
         elif isinstance(frame_subsampling, (list, tuple)):
             assert len(frame_subsampling) == 2, "if tuple/list frame_subsampling should be of length 2"
             assert frame_subsampling[0]<=frame_subsampling[1] and frame_subsampling[0]>=0, "invalid interval for frame_subsampling"
-            self.frame_subsampling = lambda:randint(frame_subsampling[0], frame_subsampling[1])
+            def fs(): # no lambda for pickling
+                return randint(frame_subsampling[0], frame_subsampling[1])
+            self.frame_subsampling = fs
         elif frame_subsampling is None or frame_subsampling<=1:
-            self.frame_subsampling = lambda:1
+            def fs():
+                return 1
+            self.frame_subsampling = fs
         else:
-            self.frame_subsampling = lambda:frame_subsampling
+            def fs():
+                return frame_subsampling
+            self.frame_subsampling = fs
         super().__init__(dataset=dataset,
                     channel_keywords=channel_keywords,
                     input_channels=input_channels,
