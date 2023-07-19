@@ -148,6 +148,7 @@ class MultiChannelIterator(IndexArrayIterator):
     def __init__(self,
                 dataset,
                 channel_keywords=['/raw'],
+                array_keywords=[],
                 input_channels=[0],
                 output_channels=[0],
                 weight_map_functions=None,
@@ -189,6 +190,7 @@ class MultiChannelIterator(IndexArrayIterator):
             for grp_idx, grp in enumerate(group_scaling):
                 assert grp is None or (isinstance(grp, (tuple, list)) and len(grp) == len(channel_keywords)), "scaling parameters for group {} should be either None either of same length as channel numbers".format(grp_idx)
         self.channel_keywords=channel_keywords
+        self.array_keywords = array_keywords
         self.dtype = dtype
         self.convert_masks_to_dtype=convert_masks_to_dtype
         self.perform_data_augmentation=perform_data_augmentation
@@ -247,7 +249,14 @@ class MultiChannelIterator(IndexArrayIterator):
                                 raise ValueError("Channel {} is set as singleton but one dataset has more that one image".format(c))
                         elif indexes[ds_idx] != ds.shape[0]:
                             raise ValueError('Channel {}({}) has at least one dataset with number of elements that differ from Channel 0'.format(c, channel_keywords[c]))
-
+        if len(array_keywords)>1: # check that all array ds have compatible length
+            for c, ds_l in enumerate(self.ads_array):
+                if self.array_keywords[c] is not None:
+                    if len(self.ds_array[0])!=len(ds_l):
+                        raise ValueError('Array {}({}) has #{} datasets whereas first channel has #{} datasets'.format(c, channel_keywords[c], len(ds_l), len(self.ds_array[0])))
+                    for ds_idx, ds in enumerate(ds_l):
+                        if indexes[ds_idx] != ds.shape[0]:
+                            raise ValueError('Array {}({}) has at least one dataset with number of elements that differ from Channel 0'.format(c, channel_keywords[c]))
         # get offset for each dataset
         for i in range(1, len(indexes)):
             indexes[i]=indexes[i-1]+indexes[i]
@@ -309,6 +318,7 @@ class MultiChannelIterator(IndexArrayIterator):
             self.paths = flatten_list(self.group_map_paths.values())
         # get all matching dataset
         self.ds_array = [ [self.datasetIO.get_dataset(self._get_dataset_path(c, ds_idx)) for ds_idx in range(len(self.paths))] if self.channel_keywords[c] is not None else None for c in range(len(self.channel_keywords))]
+        self.ads_array = [ [self.datasetIO.get_dataset(self._get_dataset_path(c, ds_idx, is_array=True)) for ds_idx in range(len(self.paths))] if self.array_keywords[c] is not None else None for c in range(len(self.array_keywords))]
         getAttribute = lambda a, def_val : def_val if a is None else (a[0] if isinstance(a, list) else a)
         self.ds_scaling_center = [[getAttribute(self.datasetIO.get_attribute(self._get_dataset_path(c, ds_idx), "scaling_center"), 0) for ds_idx in range(len(self.paths))]  if self.channel_keywords[c] is not None else None for c in range(len(self.channel_keywords))]
         self.ds_scaling_factor = [[getAttribute(self.datasetIO.get_attribute(self._get_dataset_path(c, ds_idx), "scaling_factor"), 1) for ds_idx in range(len(self.paths))]  if self.channel_keywords[c] is not None else None for c in range(len(self.channel_keywords))]
@@ -318,6 +328,7 @@ class MultiChannelIterator(IndexArrayIterator):
             self.datasetIO.close()
             self.datasetIO = None
             self.ds_array = None
+            self.ads_array = None
 
     def train_test_split(self, **options):
         """Split this iterator in two distinct iterators
@@ -431,7 +442,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 batch_by_channel[-1] = batch_by_channel[chan_idx][1] # image index
                 batch_by_channel[chan_idx] = batch_by_channel[chan_idx][0] # batch
         if perform_elasticdeform or perform_tiling: ## elastic deform do not support float16 type -> temporarily convert to float32
-            channels = [c for c in batch_by_channel.keys() if c>=0]
+            channels = [c for c in batch_by_channel.keys() if not isinstance(c, str) and c>=0]
             converted_from_float16=[]
             for c in channels:
                 if batch_by_channel[c].dtype == np.float16:
@@ -450,11 +461,17 @@ class MultiChannelIterator(IndexArrayIterator):
         if self.channels_postprocessing_function is not None:
             self.channels_postprocessing_function(batch_by_channel)
 
+        arrays = dict()
+        batch_by_channel["arrays"] = arrays
+        if len(self.array_keywords is not None and self.array_keywords)>0:
+            for c, n in enumerate(self.array_keywords):
+                if n is not None:
+                    arrays[c] = self._read_image_batch(index_ds, index_array, c, channels[0], aug_param_array, is_array=True, **kwargs)[0]
         return batch_by_channel, aug_param_array, channels[0]
 
     def _apply_elasticdeform(self, batch_by_channel):
         if self.elasticdeform_parameters is not None:
-            channels = [c for c in batch_by_channel.keys() if c>=0]
+            channels = [c for c in batch_by_channel.keys() if not isinstance(c, str) and c>=0]
             elasticdeform_parameters = self.elasticdeform_parameters.copy()
             order = elasticdeform_parameters.pop("order", 1)
             order = ensure_multiplicity(len(channels), order)
@@ -492,7 +509,7 @@ class MultiChannelIterator(IndexArrayIterator):
 
     def _apply_tiling(self, batch_by_channel):
         if self.extract_tile_function is not None:
-            channels = [c for c in batch_by_channel.keys() if c>=0]
+            channels = [c for c in batch_by_channel.keys() if not isinstance(c, str) and c>=0]
             batches = [batch_by_channel[chan_idx] for chan_idx in channels]
             is_mask = [chan_idx in self.mask_channels for chan_idx in channels]
             batches = self.extract_tile_function(batches, is_mask)
@@ -576,11 +593,12 @@ class MultiChannelIterator(IndexArrayIterator):
             img = image_data_generator.standardize(img)
         return img
 
-    def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, **kwargs):
+    def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, is_array=False, **kwargs):
         # read all images # TODO read all image per ds at once.
         # in case of group scaling : group index is retrieved:
         grp_idx = self._get_grp_idx(index_array + self.ds_off[index_ds]) if self.group_scaling is not None else [0]*len(index_array)
-        images = [self._read_image(chan_idx, ds_idx, im_idx, grp_idx) for i, (ds_idx, im_idx, grp_idx) in enumerate(zip(index_ds, index_array, grp_idx))]
+        read_fun = self._read_array if is_array else self._read_image
+        images = [read_fun(chan_idx, ds_idx, im_idx, grp_idx) for i, (ds_idx, im_idx, grp_idx) in enumerate(zip(index_ds, index_array, grp_idx))]
         batch = np.stack(images)
         index_a = np.copy(index_array)[..., np.newaxis] if self.return_image_index else None
         return batch, index_a
@@ -628,11 +646,16 @@ class MultiChannelIterator(IndexArrayIterator):
             im[np.abs(im) < 1e-10] = 0
         return im
 
-    def _get_dataset_path(self, channel_idx, ds_idx):
-        if channel_idx==0:
+    def _read_array(self, chan_idx, ds_idx, im_idx, grp_idx=0):
+        ds = self.ads_array[chan_idx][ds_idx]
+        im = ds[im_idx]
+        return im
+
+    def _get_dataset_path(self, channel_idx, ds_idx, is_array=False):
+        if channel_idx==0 and not is_array:
             return self.paths[ds_idx]
         else:
-            return replace_last(self.paths[ds_idx], self.channel_keywords[0], self.channel_keywords[channel_idx])
+            return replace_last(self.paths[ds_idx], self.channel_keywords[0], self.channel_keywords[channel_idx] if not is_array else self.array_keywords[channel_idx])
 
     def inspect_indices(self, index_array):
         a = np.array(index_array, dtype=np.int)

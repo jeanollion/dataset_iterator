@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="dataset_iterator",
-    version="0.3.0",
+    version="0.3.1",
     author="Jean Ollion",
     author_email="jean.ollion@polytechnique.org",
     description="data iterator for images contained in dataset files such as hdf5 or PIL readable files. Images can be contained in several files. Based on tensorflow.keras.preprocessing.image.Iterator",
