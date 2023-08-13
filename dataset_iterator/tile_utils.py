@@ -52,6 +52,7 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
         assert len(image_shape)==2, "only 2d images supported when specifying n_tiles"
         _, n_tiles_yx = get_stride_2d(image_shape, tile_shape, n_tiles)
         tile_coords = _get_tile_coords(image_shape, tile_shape, n_tiles_yx, random_stride)
+        tile_coords = _get_n_tiles(tile_coords, n_tiles)
     if len(image_shape)==2:
         tile_fun = lambda b : np.concatenate([b[:, tile_coords[0][i]:tile_coords[0][i] + tile_shape[0], tile_coords[1][i]:tile_coords[1][i] + tile_shape[1]] for i in range(len(tile_coords[0]))])
     else:
@@ -127,6 +128,7 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
         assert len(image_shape)==2, "only 2d images supported when specifying n_tiles"
         _, n_tiles_yx = get_stride_2d(image_shape, tile_shape, n_tiles)
         tile_coords = _get_tile_coords(image_shape, tile_shape, n_tiles_yx, random_stride)
+        tile_coords = _get_n_tiles(tile_coords, n_tiles)
     n_t = tile_coords[0].shape[0]
     zoom_range_corrected = [1./np.max(zoom_range), np.min([ min(1./np.min(zoom_range), float(image_shape[ax])/float(tile_shape[ax])) for ax in range(rank) ])]
     zoom = random(n_t) * (zoom_range_corrected[1] - zoom_range_corrected[0]) + zoom_range_corrected[0]
@@ -134,7 +136,7 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
     aspect_ratio = [ aspect_ratio_fun(ax) for ax in range(1, rank) ]
     tile_size_fun = lambda ax : np.rint(zoom * tile_shape[ax]).astype(int) if ax==0 else np.rint(zoom * aspect_ratio[ax-1] * tile_shape[ax]).astype(int)
     r_tile_shape = [tile_size_fun(ax) for ax in range(rank)]
-    for i in range(n_t): # translate coords if necesary so that tile is valid
+    for i in range(n_t): # translate coords if necessary so that tile is valid
         for ax in range(rank):
             delta = tile_coords[ax][i] + r_tile_shape[ax][i] - image_shape[ax]
             if delta>0:
@@ -195,16 +197,29 @@ def get_stride_2d(image_shape, tile_shape, n_tiles):
     n_tiles_y = (Sy / stride) + 1
     n_tiles_x_i = round(n_tiles_x)
     n_tiles_y_i = round(n_tiles_y)
-    if abs(n_tiles_x_i-n_tiles_x)<abs(n_tiles_y_i-n_tiles_y):
-        n_tiles_x = n_tiles_x_i
-        n_tiles_y = n_tiles // n_tiles_x
+    if abs(n_tiles_x_i-n_tiles_x) < abs(n_tiles_y_i-n_tiles_y):
+        n_tiles_y_i = n_tiles // n_tiles_x_i
     else:
-        n_tiles_y = n_tiles_y_i
-        n_tiles_x = n_tiles // n_tiles_y
+        n_tiles_x_i = n_tiles // n_tiles_y_i
+    if n_tiles_x_i * n_tiles_y_i < n_tiles:
+        if abs(n_tiles_x_i + 1 - n_tiles_x) < abs(n_tiles_y_i + 1 - n_tiles_y):
+            n_tiles_x_i += 1
+        else:
+            n_tiles_y_i += 1
+    n_tiles_x = n_tiles_x_i
+    n_tiles_y = n_tiles_y_i
     stride_x = Sx // (n_tiles_x - 1) if n_tiles_x > 1 else image_shape[1]
     stride_y = Sy // (n_tiles_y - 1) if n_tiles_y > 1 else image_shape[0]
     return (stride_y, stride_x), (n_tiles_y, n_tiles_x)
 
+def _get_n_tiles(tile_coords, n_tiles):
+    if tile_coords[0].shape[0] == n_tiles:
+        return tile_coords
+    elif tile_coords[0].shape[0] > n_tiles:
+        idxs = np.random.permutation(tile_coords[0].shape[0])[:n_tiles]
+        return [tile_coords[i][idxs] for i in range(len(tile_coords))]
+    else:
+        raise ValueError(f"Too few tiles: expected={n_tiles} got={tile_coords[0].shape[0]}")
 def _get_tile_coords(image_shape, tile_shape, n_tiles, random_stride=False):
     n_dims = len(image_shape)
     assert n_dims == len(tile_shape), "tile rank should be equal to image rank"
