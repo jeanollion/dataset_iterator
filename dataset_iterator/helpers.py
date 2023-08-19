@@ -2,6 +2,36 @@ import numpy as np
 from .multichannel_iterator import MultiChannelIterator
 from scipy.ndimage import gaussian_filter
 
+def get_optimal_tiling(dataset, channel:str, target_batch_size:int, tile_shape:tuple, tile_overlap_fraction:float=1./3):
+    """
+
+    Parameters
+    ----------
+    dataset : datasetIO or dataset path (string)
+    channel : channel to inspect within dataset
+    target_batch_size : batch size after tiling
+    tile_shape: shape of tiles (Y, X)
+    tile_overlap_fraction : hint on volume fraction of tiles that can overlap
+
+    Returns
+    -------
+    batch_size:int, n_tiles:int so that target_batch_size = batch_size x n_tiles
+    """
+    it = MultiChannelIterator(dataset, channel_keywords=[channel])
+    assert it.consistent_image_shape, "dataset contains sub-datasets with different images shapes"
+    assert tile_overlap_fraction < 1, "invalid argument: tile_overlap_fraction must be <1"
+    image_shape = it.channel_image_shapes[0][:it.n_spatial_dims]
+    n_tiles = np.prod(image_shape) / ((1 - tile_overlap_fraction) * np.prod(tile_shape))
+    assert n_tiles >= 1, f"tile volume is higher than image volume: image shape: {image_shape} tile shape: {tile_shape}"
+    n_tile_int = int(n_tiles + 0.5)
+    n_tile_candidates = [n_tile_int, int(n_tiles+1), int(n_tiles)]
+    for i in range(1, n_tile_int):
+        n_tile_candidates.append(n_tile_int + i)
+        n_tile_candidates.append(n_tile_int - i)
+    for n_t in n_tile_candidates:
+        if target_batch_size % n_t == 0:
+            return target_batch_size//n_t, n_t
+
 def open_channel(dataset, channel_keyword, group_keyword=None, size=None):
     iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=list(np.arange(len(channel_keyword))) if isinstance(channel_keyword, (list, tuple)) else [0], output_channels=[], batch_size=1 if size is None else size, shuffle=False)
     if size is None:
