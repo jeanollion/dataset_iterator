@@ -22,6 +22,9 @@ def ensure_multiplicity(n, object):
         return []
     return object
 
+def is_list(l):
+    return isinstance(l, (list, tuple, np.ndarray))
+
 def flatten_list(l):
     flat_list = []
     for item in l:
