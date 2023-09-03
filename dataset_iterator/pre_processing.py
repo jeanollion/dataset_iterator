@@ -2,7 +2,7 @@ import numpy as np
 from random import uniform, random
 from scipy.ndimage.filters import gaussian_filter
 from .utils import ensure_multiplicity, is_list
-import helpers as dih
+from .helpers import get_modal_value, get_percentile, get_percentile_from_value, get_histogram, get_histogram_bins_IPR, get_mean_sd
 
 # image scaling
 SCALING_MODES = ["RANDOM_CENTILES", "RANDOM_MIN_MAX", "FLUORESCENCE", "TRANSMITTED_LIGHT"]
@@ -72,9 +72,8 @@ def random_histogram_range(img, min_range=0.1, range=[0,1]):
     return adjust_histogram_range(img, min, max)
 
 def get_histogram_normalization_center_scale_ranges(histogram, bins, center_percentile_extent, scale_percentile_range, verbose=False):
-    assert dih is not None, "dataset_iterator package is required for this method"
-    mode_value = dih.get_modal_value(histogram, bins)
-    mode_percentile = dih.get_percentile_from_value(histogram, bins, mode_value)
+    mode_value = get_modal_value(histogram, bins)
+    mode_percentile = get_percentile_from_value(histogram, bins, mode_value)
     print("mode value={}, mode percentile={}".format(mode_value, mode_percentile))
     assert mode_percentile<scale_percentile_range[0], "mode percentile is {} and must be lower than lower bound of scale_percentile_range={}".format(mode_percentile, scale_percentile_range)
     if is_list(center_percentile_extent):
@@ -86,7 +85,7 @@ def get_histogram_normalization_center_scale_ranges(histogram, bins, center_perc
     if isinstance(scale_percentile_range, tuple):
         scale_percentile_range = list(scale_percentile_range)
     percentiles = percentiles + scale_percentile_range
-    values = dih.get_percentile(histogram, bins, percentiles)
+    values = get_percentile(histogram, bins, percentiles)
     mode_range = [values[0], values[1] ]
     scale_range = [values[2] - mode_value, values[3] - mode_value]
     if verbose:
@@ -130,13 +129,13 @@ def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool
             return scale_range[0], center_range[0]
         return scale_range, center_range
     if fluorescence:
-        bins = dih.get_histogram_bins_IPR(*dih.get_histogram(dataset, channel_name, bins=1000), n_bins=256, percentiles=[0, 95], verbose=True)
-        histo, _ = dih.get_histogram(dataset, channel_name, bins=bins)
+        bins = get_histogram_bins_IPR(*get_histogram(dataset, channel_name, bins=1000), n_bins=256, percentiles=[0, 95], verbose=True)
+        histo, _ = get_histogram(dataset, channel_name, bins=bins)
         center_range, scale_range = get_histogram_normalization_center_scale_ranges(histo, bins, fluo_center_centile_extent, fluo_scale_centile_range, verbose=True)
         print("center: [{}; {}] / scale: [{}; {}]".format(center_range[0], center_range[1], scale_range[0], scale_range[1]))
         return center_range, scale_range
     else:
-        mean, sd = dih.get_mean_sd(dataset, channel_name, per_channel=True)
+        mean, sd = get_mean_sd(dataset, channel_name, per_channel=True)
         mean, sd = np.mean(mean), np.mean(sd)
         print("mean: {} sd: {}".format(mean, sd))
         if transmitted_light_per_image_mode:
