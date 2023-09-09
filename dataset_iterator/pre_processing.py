@@ -43,11 +43,11 @@ def get_random_scaling_function(mode="RANDOM_CENTILES", dataset=None, channel_na
             center_range, scale_range = get_center_scale_range(dataset, channel_name=channel_name, fluorescence=fluo, **kwargs)
         if not fluo and not kwargs.get("transmitted_light_per_image_mode", False):
             def fun(img):
-                center = uniform(center_range[0], center_range[1])
-                scale = uniform(scale_range[0], scale_range[1])
                 mean = np.mean(img)
                 sd = np.std(img)
-                return (img - (center + mean)) / (scale * sd)
+                center = uniform(center_range[0] * sd, center_range[1] * sd) + mean
+                scale = uniform(scale_range[0] * sd, scale_range[1] * sd)
+                return (img - center) / scale
         else:
             def fun(img):
                 center = uniform(center_range[0], center_range[1])
@@ -92,7 +92,7 @@ def get_histogram_normalization_center_scale_ranges(histogram, bins, center_perc
         print("normalization_center_scale: modal value: {}, center_range: [{}; {}] scale_range: [{}; {}]".format(mode_value, mode_range[0], mode_range[1], scale_range[0], scale_range[1]))
     return mode_range, scale_range
 
-def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool = False, tl_sd_factor:float=3., fluo_scale_centile_range:list=[75, 99.9], fluo_center_centile_extent:list=[20, 30], transmitted_light_per_image_mode:bool=True):
+def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool = False, tl_sd_factor:float=3., fluo_scale_centile_range:list=[75, 99.9], fluo_center_centile_extent:list=[20, 30], transmitted_light_per_image_mode:bool=True, verbose:bool=True):
     """Computes a range for center and for scale factor for data augmentation.
     Image can then be normalized using a random center C in the center range and a random scaling factor in the scale range: I -> (I - C) / S
 
@@ -129,21 +129,23 @@ def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool
             return scale_range[0], center_range[0]
         return scale_range, center_range
     if fluorescence:
-        bins = get_histogram_bins_IPR(*get_histogram(dataset, channel_name, bins=1000), n_bins=256, percentiles=[0, 95], verbose=True)
+        bins = get_histogram_bins_IPR(*get_histogram(dataset, channel_name, bins=1000), n_bins=256, percentiles=[0, 95], verbose=verbose)
         histo, _ = get_histogram(dataset, channel_name, bins=bins)
         center_range, scale_range = get_histogram_normalization_center_scale_ranges(histo, bins, fluo_center_centile_extent, fluo_scale_centile_range, verbose=True)
-        print("center: [{}; {}] / scale: [{}; {}]".format(center_range[0], center_range[1], scale_range[0], scale_range[1]))
+        if verbose:
+            print("center: [{}; {}] / scale: [{}; {}]".format(center_range[0], center_range[1], scale_range[0], scale_range[1]))
         return center_range, scale_range
     else:
-        mean, sd = get_mean_sd(dataset, channel_name, per_channel=True)
-        mean, sd = np.mean(mean), np.mean(sd)
-        print("mean: {} sd: {}".format(mean, sd))
         if transmitted_light_per_image_mode:
-            center_range, scale_range = [- tl_sd_factor*sd, tl_sd_factor*sd], [1./tl_sd_factor, tl_sd_factor]
-            print("center: [{}; {}] / scale: [{}; {}]".format(center_range[0], center_range[1], scale_range[0], scale_range[1]))
+            center_range, scale_range = [- tl_sd_factor, tl_sd_factor], [1./tl_sd_factor, tl_sd_factor]
         else:
+            mean, sd = get_mean_sd(dataset, channel_name, per_channel=True)
+            mean, sd = np.mean(mean), np.mean(sd)
+            if verbose:
+                print("mean: {} sd: {}".format(mean, sd))
             center_range, scale_range = [mean - tl_sd_factor*sd, mean + tl_sd_factor*sd], [sd/tl_sd_factor, sd*tl_sd_factor]
-            print("center: [{}; {}] / scale: [{}; {}]".format(center_range[0], center_range[1], scale_range[0], scale_range[1]))
+            if verbose:
+                print("center: [{}; {}] / scale: [{}; {}]".format(center_range[0], center_range[1], scale_range[0], scale_range[1]))
         return center_range, scale_range
 
 
