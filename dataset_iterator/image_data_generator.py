@@ -14,6 +14,24 @@ def get_image_data_generator(scaling_parameters=None, illumination_parameters=No
         generators.append(KerasImageDataGenerator(**keras_parameters))
     return ImageGeneratorList(generators)
 
+def data_generator_to_channel_postprocessing_fun(image_data_generator, channels):
+    def pp_fun(batch_by_channel):
+        if not is_list(image_data_generator):
+            generator_list = [image_data_generator]
+            channel_list = [channels]
+        else:
+            generator_list = image_data_generator
+            channel_list = channels
+            assert len(generator_list) == len(channel_list), "as many generators as channel list should be provided"
+        for gen, channels_ in zip(generator_list, channel_list):
+            for c in channels_:
+                batch = batch_by_channel[c]
+                for b in range(batch.shape[0]):
+                    params = gen.get_random_transform(batch.shape[1:-1])
+                    for c in range(batch.shape[-1]):
+                        batch[b,...,c] = gen.apply_transform(batch[b,...,c], params)
+    return pp_fun
+
 class ImageGeneratorList():
     """Chain several ImageGenerators
 
