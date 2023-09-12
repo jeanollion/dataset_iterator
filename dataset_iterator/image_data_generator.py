@@ -37,9 +37,10 @@ class ImageGeneratorList():
             try:
                 params = g.get_random_transform(image_shape)
                 if params is not None:
-                    all_params.update()
+                    all_params.update(params)
             except AttributeError:
                 pass
+        return all_params
 
     def transfer_parameters(self, source:dict, destination:dict):
         for g in self.generators:
@@ -76,7 +77,7 @@ class ImageGeneratorList():
         return img
 
 # image scaling
-SCALING_MODES = ["RANDOM_CENTILES", "RANDOM_MIN_MAX", "FLUORESCENCE", "TRANSMITTED_LIGHT"]
+SCALING_MODES = ["RANDOM_CENTILES", "RANDOM_MIN_MAX", "FLUORESCENCE", "BRIGHT_FIELD"]
 def get_random_scaling_function(mode="RANDOM_CENTILES", dataset=None, channel_name:str=None, **kwargs):
     data_gen = ScalingImageGenerator(mode, dataset, channel_name, **kwargs)
     def fun(img):
@@ -98,10 +99,12 @@ class ScalingImageGenerator():
         elif mode == "RANDOM_MIN_MAX":
             self.min_range = kwargs.get("min_range", 0.1)
             self.range = kwargs.get("range", [0, 1])
-        elif mode == "FLUORESCENCE" or mode == "TRANSMITTED_LIGHT":
+        elif mode == "FLUORESCENCE" or mode == "BRIGHT_FIELD":
             fluo = mode == "FLUORESCENCE"
-            self.transmitted_light_per_image_mode = kwargs.get("transmitted_light_per_image_mode", False)
-            if not self.transmitted_light_per_image_mode and dataset is None:
+            if "per_image" not in kwargs:
+                kwargs["per_image"] = dataset is None
+            self.per_image = kwargs.get("per_image", True)
+            if not self.per_image and dataset is None:
                 assert "scale_range" in kwargs and "center_range" in kwargs, "if no dataset is provided, scale_range and center_range must be provided"
                 self.scale_range = kwargs["scale_range"]
                 self.center_range = kwargs["center_range"]
@@ -122,14 +125,15 @@ class ScalingImageGenerator():
                 cmin = self.min_centile_range[0] + (self.min_centile_range[1] - self.min_centile_range[0]) * pmin
                 cmax = self.max_centile_range[0] + (self.max_centile_range[1] - self.max_centile_range[0]) * pmax
             params["cmin"] = pmin
-            params["cmin"] = pmax
+            params["cmax"] = pmax
         elif self.mode == "RANDOM_MIN_MAX":
             pmin, pmax = compute_histogram_range(self.min_range, self.range)
             params["vmin"] = pmin
-            params["vmin"] = pmax
-        elif self.mode == "FLUORESCENCE" or self.mode == "TRANSMITTED_LIGHT":
+            params["vmax"] = pmax
+        elif self.mode == "FLUORESCENCE" or self.mode == "BRIGHT_FIELD":
             params["center"] = uniform(self.center_range[0], self.center_range[1])
             params["scale"] = uniform(self.scale_range[0], self.scale_range[1])
+        return params
 
     def transfer_parameters(self, source, destination):
         if self.mode == "RANDOM_CENTILES":
@@ -138,9 +142,10 @@ class ScalingImageGenerator():
         elif self.mode == "RANDOM_MIN_MAX":
             destination["vmin"] = source.get("vmin", 0)
             destination["vmax"] = source.get("vmax", 1)
-        elif self.mode == "FLUORESCENCE" or self.mode == "TRANSMITTED_LIGHT":
+        elif self.mode == "FLUORESCENCE" or self.mode == "BRIGHT_FIELD":
             destination["center"] = source["center"]
             destination["scale"] = source["scale"]
+
     def apply_transform(self, img, aug_params):
         if self.mode == "RANDOM_CENTILES":
             min0, min1, max0, max1 = np.percentile(img, self.min_centile_range + self.max_centile_range)
@@ -154,14 +159,16 @@ class ScalingImageGenerator():
             return img
         elif self.mode == "RANDOM_MIN_MAX":
             return adjust_histogram_range(img, aug_params["vmin"], aug_params["vmax"])
-        elif self.mode == "FLUORESCENCE" or self.mode == "TRANSMITTED_LIGHT":
+        elif self.mode == "FLUORESCENCE" or self.mode == "BRIGHT_FIELD":
             center = aug_params["center"]
             scale = aug_params["scale"]
-            if self.mode == "TRANSMITTED_LIGHT" and self.transmitted_light_per_image_mode:
+            if self.mode == "BRIGHT_FIELD" and self.per_image:
                 mean = np.mean(img)
                 sd = np.std(img)
                 center = center * sd + mean
                 scale = scale * sd
+            elif self.mode == "FLUORESCENCE" and self.per_image:
+                raise NotImplementedError("FLUORESCENCE per image is not implemented yet")
             return (img - center) / scale
 
     def standardize(self, img):
@@ -179,6 +186,7 @@ class IlluminationImageGenerator():
         assert histogram_elasticdeform_intensity > 0 and histogram_elasticdeform_intensity < 1, "histogram_elasticdeform_intensity should be in range ]0, 1["
         self.histogram_elasticdeform_intensity = histogram_elasticdeform_intensity
         self.illumination_variation_n_points = ensure_multiplicity(2, illumination_variation_n_points)
+        assert illumination_variation_intensity > 0 and illumination_variation_intensity < 1, "histogram_elasticdeform_intensity should be in range ]0, 1["
         self.illumination_variation_intensity = illumination_variation_intensity
 
     def get_random_transform(self, image_shape):
@@ -197,10 +205,9 @@ class IlluminationImageGenerator():
         
         if self.histogram_elasticdeform_n_points > 0 and self.histogram_elasticdeform_intensity > 0 and not getrandbits(1):
             # draw target point displacement  
-            params["histogram_elasticdeform_target_points_delta"] = get_histogram_elasticdeform_target_points_delta(self.histogram_elasticdeform_n_points) 
+            params["histogram_elasticdeform_target_points_delta"] = get_histogram_elasticdeform_target_points_delta(self.histogram_elasticdeform_n_points + 2) # +2 = edges
         elif "histogram_elasticdeform_target_points_delta" in params:
             del params["histogram_elasticdeform_target_points_delta"]
-        
         if self.illumination_variation_n_points[0] > 0 and self.illumination_variation_intensity > 0 and not getrandbits(1):
             params["illumination_variation_target_points_y"] = get_illumination_variation_target_points(self.illumination_variation_n_points[0], self.illumination_variation_intensity)
         elif "illumination_variation_target_points_y" in params:
@@ -209,6 +216,7 @@ class IlluminationImageGenerator():
             params["illumination_variation_target_points_x"] = get_illumination_variation_target_points(self.illumination_variation_n_points[1], self.illumination_variation_intensity)
         elif "illumination_variation_target_points_x" in params:
             del params["illumination_variation_target_points_x"]
+        return params
 
     def transfer_parameters(self, source, destination):
         # do not transfer gaussian blur as focus may vary from one frame to the other
@@ -241,9 +249,9 @@ class IlluminationImageGenerator():
         elif "illumination_variation_target_points_x" in destination:
             del destination["illumination_variation_target_points_x"]
 
-    def apply_transform(self, img, aug_params):        
+    def apply_transform(self, img, aug_params):
         if "histogram_elasticdeform_target_points_delta" in aug_params:
-            img = histogram_elasticdeform(img, self.histogram_elasticdeform_n_points, self.histogram_elasticdeform_intensity, target_point_delta=aug_params["histogram_variation_target_point_delta"])
+            img = histogram_elasticdeform(img, self.histogram_elasticdeform_n_points, self.histogram_elasticdeform_intensity, target_point_delta=aug_params["histogram_elasticdeform_target_points_delta"])
         if "illumination_variation_target_points_y" in aug_params or "illumination_variation_target_points_x" in aug_params:
             target_points_y = aug_params.get("illumination_variation_target_points_y", None)
             target_points_x = aug_params.get("illumination_variation_target_points_x", None)

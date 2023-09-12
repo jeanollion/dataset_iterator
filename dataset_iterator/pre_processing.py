@@ -45,7 +45,7 @@ def get_histogram_normalization_center_scale_ranges(histogram, bins, center_perc
         print("normalization_center_scale: modal value: {}, center_range: [{}; {}] scale_range: [{}; {}]".format(mode_value, mode_range[0], mode_range[1], scale_range[0], scale_range[1]))
     return mode_range, scale_range
 
-def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool = False, tl_sd_factor:float=3., fluo_scale_centile_range:list=[75, 99.9], fluo_center_centile_extent:list=[20, 30], transmitted_light_per_image_mode:bool=True, verbose:bool=True):
+def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool = False, bf_sd_factor:float=3., fluo_scale_centile_range:list=[75, 99.9], fluo_center_centile_extent:list=[20, 30], per_image:bool=True, verbose:bool=True):
     """Computes a range for center and for scale factor for data augmentation.
     Image can then be normalized using a random center C in the center range and a random scaling factor in the scale range: I -> (I - C) / S
 
@@ -58,14 +58,14 @@ def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool
         in fluoresence mode:
             mode M is computed, corresponding to the Mp centile: M = centile(Mp). center_range = [centile(Mp-fluo_center_centile_extent), centile(Mp+fluo_center_centile_extent)]
             scale_range = [centile(fluo_scale_centile_range[0]) - M, centile(fluo_scale_centile_range[0]) + M ]
-        in transmitted light mode: with transmitted_light_per_image_mode=True center_range = [mean - tl_sd_factor*sd, mean + tl_sd_factor*sd]; scale_range = [sd/tl_sd_factor, sd*tl_sd_factor]
-        in transmitted light mode: with transmitted_light_per_image_mode=False: center_range = [-tl_sd_factor*sd, tl_sd_factor*sd]; scale_range = [1/tl_sd_factor, tl_sd_factor]
-    tl_sd_factor : float
-        use in the computation of transmitted light ranges cf description of fluorescence parameter
+        in bright field mode: with per_image=True center_range = [mean - bf_sd_factor*sd, mean + bf_sd_factor*sd]; scale_range = [sd/bf_sd_factor, sd*bf_sd_factor]
+        in bright field mode: with per_image=False: center_range = [-bf_sd_factor*sd, bf_sd_factor*sd]; scale_range = [1/bf_sd_factor, bf_sd_factor]
+    bf_sd_factor : float
+        use in the computation of bright field ranges cf description of fluorescence parameter
     fluo_scale_centile_range : list
-        in fluoresence mode, interval for scale range in centiles
+        in fluorescence mode, interval for scale range in centiles
     fluo_center_centile_extent : float
-        in fluoresence mode, extent for center range in centiles
+        in fluorescence mode, extent for center range in centiles
 
     Returns
     -------
@@ -75,28 +75,31 @@ def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool
     if isinstance(dataset, (list, tuple)):
         scale_range, center_range = [], []
         for ds in dataset:
-            sr, cr = get_center_scale_range(ds, channel_name, fluorescence, tl_sd_factor, fluo_scale_centile_range, fluo_center_centile_extent)
+            sr, cr = get_center_scale_range(ds, channel_name, fluorescence, bf_sd_factor, fluo_scale_centile_range, fluo_center_centile_extent)
             scale_range.append(sr)
             center_range.append(cr)
         if len(dataset)==1:
             return scale_range[0], center_range[0]
         return scale_range, center_range
     if fluorescence:
-        bins = get_histogram_bins_IPR(*get_histogram(dataset, channel_name, bins=1000), n_bins=256, percentiles=[0, 95], verbose=verbose)
-        histo, _ = get_histogram(dataset, channel_name, bins=bins)
-        center_range, scale_range = get_histogram_normalization_center_scale_ranges(histo, bins, fluo_center_centile_extent, fluo_scale_centile_range, verbose=True)
-        if verbose:
-            print("center: [{}; {}] / scale: [{}; {}]".format(center_range[0], center_range[1], scale_range[0], scale_range[1]))
+        if per_image:
+            center_range, scale_range = [0, 1], [0, 1]
+        else:
+            bins = get_histogram_bins_IPR(*get_histogram(dataset, channel_name, bins=1000), n_bins=256, percentiles=[0, 95], verbose=verbose)
+            histo, _ = get_histogram(dataset, channel_name, bins=bins)
+            center_range, scale_range = get_histogram_normalization_center_scale_ranges(histo, bins, fluo_center_centile_extent, fluo_scale_centile_range, verbose=True)
+            if verbose:
+                print("center: [{}; {}] / scale: [{}; {}]".format(center_range[0], center_range[1], scale_range[0], scale_range[1]))
         return center_range, scale_range
     else:
-        if transmitted_light_per_image_mode:
-            center_range, scale_range = [- tl_sd_factor, tl_sd_factor], [1./tl_sd_factor, tl_sd_factor]
+        if per_image:
+            center_range, scale_range = [- bf_sd_factor, bf_sd_factor], [1. / bf_sd_factor, bf_sd_factor]
         else:
             mean, sd = get_mean_sd(dataset, channel_name, per_channel=True)
             mean, sd = np.mean(mean), np.mean(sd)
             if verbose:
                 print("mean: {} sd: {}".format(mean, sd))
-            center_range, scale_range = [mean - tl_sd_factor*sd, mean + tl_sd_factor*sd], [sd/tl_sd_factor, sd*tl_sd_factor]
+            center_range, scale_range = [mean - bf_sd_factor * sd, mean + bf_sd_factor * sd], [sd / bf_sd_factor, sd * bf_sd_factor]
             if verbose:
                 print("center: [{}; {}] / scale: [{}; {}]".format(center_range[0], center_range[1], scale_range[0], scale_range[1]))
         return center_range, scale_range
@@ -180,7 +183,7 @@ def histogram_elasticdeform(image, num_control_points=5, intensity=0.5, target_p
     max = image.max()
     control_points = np.linspace(min, max, num=num_control_points + 2)
     if target_point_delta is None:
-        target_point_delta = get_histogram_elasticdeform_target_points_delta(control_points)
+        target_point_delta = get_histogram_elasticdeform_target_points_delta(num_control_points + 2)
     target_points = control_points + target_point_delta * intensity * (max - min) / float(num_control_points + 1)
     if target_points[0] != min or target_points[-1] != max:
         target_points[0] = min
@@ -221,7 +224,10 @@ def illumination_variation(image, num_control_points_y=5, num_control_points_x=5
             target_points_y = get_illumination_variation_target_points(num_control_points_y, intensity)
         mapping = interpolate.PchipInterpolator(control_points_y, target_points_y)
         curve = mapping(np.linspace(0,image.shape[0]-1,image.shape[0]))
-        curve_im_y = np.reshape(curve, curve.shape + (1,))
+        newshape = [curve.shape[0], 1]
+        if len(np.shape(image)) == 3:
+            newshape += [1]
+        curve_im_y = np.reshape(curve, newshape)
         #curve_im_y = np.reshape( np.tile( np.reshape(curve, curve.shape + (1,)), (1, image.shape[1])) ,image.shape )
         # Apply this curve to the image intensity along y:
         image = np.multiply(image - min, curve_im_y)
@@ -234,7 +240,10 @@ def illumination_variation(image, num_control_points_y=5, num_control_points_x=5
             target_points_x = get_illumination_variation_target_points(num_control_points_x, intensity)
         mapping = interpolate.PchipInterpolator(control_points_x, target_points_x)
         curve = mapping(np.linspace(0, image.shape[1]-1, image.shape[1]))
-        curve_im_x = np.reshape(curve, (1,) + curve.shape )
+        newshape = [1, curve.shape[0]]
+        if len(np.shape(image))==3:
+            newshape += [1]
+        curve_im_x = np.reshape(curve, newshape)
         #curve_im_x = np.reshape( np.tile( np.reshape(curve, (1,) + curve.shape ), (image.shape[1], 1)), image.shape )
         # Apply this curve to the image intensity along y:
         im_min = min if num_control_points_y == 0 else 0
