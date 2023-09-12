@@ -2,7 +2,7 @@ import itertools
 from math import ceil, floor
 import numpy as np
 from numpy.random import randint, random
-from .utils import ensure_multiplicity
+from .utils import ensure_multiplicity, is_list
 from scipy.ndimage import zoom
 
 OVERLAP_MODE = ["NO_OVERLAP", "ALLOW", "FORCE"]
@@ -36,7 +36,7 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
     random_stride : bool
         whether tile coordinates should be randomized, within the gap / overlap zone
     return_coords : bool
-        whether tile coodinates should be returned
+        whether tile coordinates should be returned
 
     Returns
     -------
@@ -58,22 +58,26 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
     else:
         tile_fun = lambda b : np.concatenate([b[:, tile_coords[0][i]:tile_coords[0][i] + tile_shape[0], tile_coords[1][i]:tile_coords[1][i] + tile_shape[1], tile_coords[2][i]:tile_coords[2][i] + tile_shape[2]] for i in range(len(tile_coords[0]))])
     if isinstance(batch, (list, tuple)):
-        return [tile_fun(b) for b in batch]
+        tiles = [tile_fun(b) for b in batch]
     else:
-        return tile_fun(batch)
+        tiles = tile_fun(batch)
     if return_coords:
         return tiles, tile_coords
     else:
         return tiles
 
 def extract_tile_random_zoom_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, augmentation_rotate=True, zoom_range=[0.6, 1.6], aspect_ratio_range=[0.6, 1.6], interpolation_order=1, random_channel_jitter_shape=None):
+    if (is_null(zoom_range, 1) or is_null(zoom_range, 0)) and is_null(random_channel_jitter_shape, 0):
+        return extract_tile_function(tile_shape, perform_augmentation=perform_augmentation, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, augmentation_rotate=augmentation_rotate)
     def func(batch, is_mask):
         if isinstance(batch, (list, tuple)):
             is_mask = ensure_multiplicity(len(batch), is_mask)
             order = [0 if m else interpolation_order for m in is_mask]
+        else:
+            order = 0 if is_mask else interpolation_order
         tiles = extract_tiles_random_zoom(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, zoom_range=zoom_range, aspect_ratio_range=aspect_ratio_range, interpolation_order=order, random_channel_jitter_shape=random_channel_jitter_shape)
         if perform_augmentation:
-            tiles = augment_tiles_inplace(tiles, rotate = augmentation_rotate and all([s==tile_shape[0] for s in tile_shape]), n_dims=len(tile_shape))
+            tiles = augment_tiles_inplace(tiles, rotate=augmentation_rotate and all([s==tile_shape[0] for s in tile_shape]), n_dims=len(tile_shape))
         return tiles
     return func
 
@@ -103,7 +107,7 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
         aspect ratio relative to the first axis.
         [min aspect ratio, max aspect ratio]
     interpolation_order : int
-        The order of the spline interpolation passed to scipy.ndimage.zoom
+        The order of the spline interpolation passed to scipy.ndimage.zoom, range 0-5
     random_channel_jitter_range : list / tuple of ints or int
         if not None: tile coordinates are translated of a random value in this range. The range can be either the same for all dimensions (random_channel_jitter_range should be an integer) or distinct (random_channel_jitter_range should be a list or tuple of ints of length equal to the number of spatial dimensions of the batch)
     Returns
@@ -333,3 +337,14 @@ def augment_tiles_inplace(tiles, rotate, n_dims=2):
             if aug[b]>0: # 0 is identity
                 tiles[b] = aug_fun[aug[b]](tiles[b])
     return tiles
+
+def is_null(param, null_value):
+    if param is None:
+        return True
+    if is_list(param):
+        for p in param:
+            if p != null_value:
+                return False
+        return True
+    else:
+        return param == null_value

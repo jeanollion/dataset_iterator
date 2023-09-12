@@ -1,59 +1,10 @@
+import copy
 import numpy as np
 from random import uniform, random
 from scipy.ndimage.filters import gaussian_filter
+from scipy import interpolate
 from .utils import ensure_multiplicity, is_list
 from .helpers import get_modal_value, get_percentile, get_percentile_from_value, get_histogram, get_histogram_bins_IPR, get_mean_sd
-
-# image scaling
-SCALING_MODES = ["RANDOM_CENTILES", "RANDOM_MIN_MAX", "FLUORESCENCE", "TRANSMITTED_LIGHT"]
-def get_random_scaling_function(mode="RANDOM_CENTILES", dataset=None, channel_name:str=None, **kwargs):
-    assert mode in SCALING_MODES, f"invalid mode, should be in {SCALING_MODES}"
-    if mode == "RANDOM_CENTILES":
-        min_centile_range = kwargs.get("min_centile_range", [0.1, 5])
-        max_centile_range = kwargs.get("max_centile_range", [95, 99.9])
-        assert min_centile_range[0] <= min_centile_range[1], "invalid min range"
-        assert max_centile_range[0] <= max_centile_range[1], "invalid max range"
-        assert min_centile_range[0] < max_centile_range[1], "invalid min and max range"
-        saturate = kwargs.get("saturate", True)
-
-        def fun(img):
-            min0, min1, max0, max1 = np.percentile(img, min_centile_range + max_centile_range)
-            cmin = uniform(min0, min1)
-            cmax = uniform(max0, max1)
-            while cmin >= cmax:
-                cmin = uniform(min0, min1)
-                cmax = uniform(max0, max1)
-            if saturate:
-                img = adjust_histogram_range(img, min=0, max=1, initial_range=[cmin, cmax])  # will saturate values under cmin or over cmax, as in real life.
-            else:
-                scale = 1. / (cmax - cmin)
-                img = (img - cmin) * scale
-            return img
-
-        return fun
-    elif mode == "RANDOM_MIN_MAX":
-        return lambda img:random_histogram_range(img, **kwargs)
-    elif mode == "FLUORESCENCE" or mode == "TRANSMITTED_LIGHT":
-        fluo = mode == "FLUORESCENCE"
-        if dataset is None:
-            assert "scale_range" in kwargs and "center_range" in kwargs, "if no dataset is provided, scale_range and center_range must be provided"
-            scale_range = kwargs["scale_range"]
-            center_range = kwargs["center_range"]
-        else :
-            center_range, scale_range = get_center_scale_range(dataset, channel_name=channel_name, fluorescence=fluo, **kwargs)
-        if not fluo and not kwargs.get("transmitted_light_per_image_mode", False):
-            def fun(img):
-                mean = np.mean(img)
-                sd = np.std(img)
-                center = uniform(center_range[0] * sd, center_range[1] * sd) + mean
-                scale = uniform(scale_range[0] * sd, scale_range[1] * sd)
-                return (img - center) / scale
-        else:
-            def fun(img):
-                center = uniform(center_range[0], center_range[1])
-                scale = uniform(scale_range[0], scale_range[1])
-                return (img - center) / scale
-        return fun
 
 def adjust_histogram_range(img, min=0, max=1, initial_range=None):
     if initial_range is None:
@@ -63,6 +14,8 @@ def adjust_histogram_range(img, min=0, max=1, initial_range=None):
 def compute_histogram_range(min_range, range=[0, 1]):
     if range[1]-range[0]<min_range:
         raise ValueError("Range must be greater than min_range")
+    elif range[1]-range[0]==min_range:
+        return range[0], range[1]
     vmin = uniform(range[0], range[1]-min_range)
     vmax = uniform(vmin+min_range, range[1])
     return vmin, vmax
@@ -158,6 +111,12 @@ def random_gaussian_blur(img, sigma=(1, 2)):
         sig = sigma
     return gaussian_blur(img, sig)
 
+def gaussian_blur(img, sig):
+    if len(img.shape)>2 and img.shape[-1]==1:
+        return np.expand_dims(gaussian_filter(img.squeeze(-1), sig), -1)
+    else:
+        return gaussian_filter(img, sig)
+
 def add_gaussian_noise(img, sigma=(0, 0.1), scale_sigma_to_image_range=False):
     if is_list(sigma):
         if len(sigma)==2:
@@ -168,11 +127,30 @@ def add_gaussian_noise(img, sigma=(0, 0.1), scale_sigma_to_image_range=False):
         sigma *= (img.max() - img.min())
     gauss = np.random.normal(0,sigma,img.shape)
     return img + gauss
-def gaussian_blur(img, sig):
-    if len(img.shape)>2 and img.shape[-1]==1:
-        return np.expand_dims(gaussian_filter(img.squeeze(-1), sig), -1)
-    else:
-        return gaussian_filter(img, sig)
+
+def add_poisson_noise(img, noise_intensity=[0, 0.1], adjust_intensity=True):
+    if is_list(noise_intensity):
+        if len(noise_intensity)==2:
+            noise_intensity = uniform(noise_intensity[0], noise_intensity[1])
+        else:
+            raise ValueError("noise_intensity should be either a list/tuple of lenth 2 or a scalar")
+    if adjust_intensity:
+        noise_intensity /= 10.0 # so that intensity is comparable to gaussian sigma
+    min = img.min()
+    max = img.max()
+    img = (img - min) / (max - min)
+    output = np.random.poisson(img / noise_intensity) * noise_intensity
+    return output * (max - min) + min
+
+def add_speckle_noise(img, sigma=[0, 0.1]):
+    if is_list(sigma):
+        if len(sigma)==2:
+            sigma = uniform(sigma[0], sigma[1])
+        else:
+            raise ValueError("noise_intensity  should be either a list/tuple of length 2 or a scalar")
+    min = img.min()
+    gauss = np.random.normal(1, sigma, img.shape)
+    return (img - min) * gauss + min
 
 # other helper functions
 def sometimes(func, prob=0.5):
@@ -186,3 +164,85 @@ def apply_successively(*functions):
             img = f(img)
         return img
     return func
+
+# functions
+def histogram_elasticdeform(image, num_control_points=5, intensity=0.5, target_point_delta = None, return_mapping = False):
+    '''
+    Adapted from delta software: https://gitlab.com/dunloplab/delta/blob/master/data.py
+    It performs an elastic deformation on the image histogram to simulate
+    changes in illumination
+    '''
+    assert intensity > 0 and intensity < 1, "Intensity should be in range ]0, 1["
+    if target_point_delta is not None:
+        assert len(target_point_delta)== num_control_points + 2, "invalid target point delta number"
+
+    min = image.min()
+    max = image.max()
+    control_points = np.linspace(min, max, num=num_control_points + 2)
+    if target_point_delta is None:
+        target_point_delta = get_histogram_elasticdeform_target_points_delta(control_points)
+    target_points = control_points + target_point_delta * intensity * (max - min) / float(num_control_points + 1)
+    if target_points[0] != min or target_points[-1] != max:
+        target_points[0] = min
+        target_points[-1] = max
+    mapping = interpolate.PchipInterpolator(control_points, target_points)
+    newimage = mapping(image)
+    if return_mapping:
+        return newimage, mapping
+    else:
+        return newimage
+
+def get_histogram_elasticdeform_target_points_delta(n_points):
+    assert n_points>2, "n_point must be > 2"
+    deltas = np.random.uniform(low=-1, high=1, size = n_points)
+    deltas[0] = 0
+    deltas[-1] = 0
+    return deltas
+
+def illumination_variation(image, num_control_points_y=5, num_control_points_x=5, intensity=0.8, target_points_y = None, target_points_x = None):
+    '''
+    Adapted from delta software: https://gitlab.com/dunloplab/delta/blob/master/data.py
+    It simulates a variation in illumination along the length of the chamber
+    '''
+    assert intensity > 0 and intensity < 1, "Intensity should be in range ]0, 1["
+
+    if target_points_x is not None:
+        assert len(target_points_x) == num_control_points_x, "invalid target point number for x axis"
+
+    min = image.min()
+    max = image.max()
+
+    if num_control_points_y>0:
+        # Create a random curve along y:
+        if target_points_y is not None:
+            assert len(target_points_y) == num_control_points_y, "invalid target point number for y axis"
+        control_points_y = np.linspace(0, image.shape[0]-1, num=num_control_points_y)
+        if target_points_y is None:
+            target_points_y = get_illumination_variation_target_points(num_control_points_y, intensity)
+        mapping = interpolate.PchipInterpolator(control_points_y, target_points_y)
+        curve = mapping(np.linspace(0,image.shape[0]-1,image.shape[0]))
+        curve_im_y = np.reshape(curve, curve.shape + (1,))
+        #curve_im_y = np.reshape( np.tile( np.reshape(curve, curve.shape + (1,)), (1, image.shape[1])) ,image.shape )
+        # Apply this curve to the image intensity along y:
+        image = np.multiply(image - min, curve_im_y)
+    if num_control_points_x>0:
+        # Create a random curve along y:
+        if target_points_x is not None:
+            assert len(target_points_x) == num_control_points_x, "invalid target point number for x axis"
+        control_points_x = np.linspace(0, image.shape[1]-1, num=num_control_points_x)
+        if target_points_x is None:
+            target_points_x = get_illumination_variation_target_points(num_control_points_x, intensity)
+        mapping = interpolate.PchipInterpolator(control_points_x, target_points_x)
+        curve = mapping(np.linspace(0, image.shape[1]-1, image.shape[1]))
+        curve_im_x = np.reshape(curve, (1,) + curve.shape )
+        #curve_im_x = np.reshape( np.tile( np.reshape(curve, (1,) + curve.shape ), (image.shape[1], 1)), image.shape )
+        # Apply this curve to the image intensity along y:
+        im_min = min if num_control_points_y == 0 else 0
+        image = np.multiply(image - im_min, curve_im_x)
+    # Rescale values to original range:
+    return np.interp(image, (image.min(), image.max()), (min, max))
+
+def get_illumination_variation_target_points(num_control_points, intensity):
+    assert intensity > 0 and intensity < 1, "Intensity should be in range ]0, 1["
+    return np.random.uniform(low=(1 - intensity) / 2.0, high=(1 + intensity) / 2.0, size=num_control_points)
+

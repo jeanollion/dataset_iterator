@@ -1,10 +1,10 @@
+from math import ceil
 import numpy as np
 from .multichannel_iterator import MultiChannelIterator
 from scipy.ndimage import gaussian_filter
 
 def get_optimal_tiling(dataset, channel:str, target_batch_size:int, tile_shape:tuple, tile_overlap_fraction:float=1./3):
     """
-
     Parameters
     ----------
     dataset : datasetIO or dataset path (string)
@@ -50,6 +50,52 @@ def get_min_and_max(dataset, channel_keyword, group_keyword=None, batch_size=1):
         vmax = max(batch.max(), vmax)
     iterator._close_datasetIO()
     return vmin, vmax
+
+def get_min_max_range(dataset, channel_keyword:str = "/raw", min_centile_range:list=[0.01, 5.], max_centile_range:list=[95., 99.9], verbose:bool=False):
+    """Computes a range for min and max value for random intensity normalization during data augmentation.
+    Image can then be normalized using a random min and max value that will be mapped to [0, 1]
+
+    Parameters
+    ----------
+    dataset : datasetIO/path(str) OR list/tuple of datasetIO/path(str)
+    channel_keyword : str
+        name of the dataset
+    min_centile_range : list
+        interval for min range in centiles
+    min_centile_range : float
+        interval for max range in centiles
+
+    Returns
+    -------
+    min_range (list(2)) , max_range (list(2))
+
+    """
+    if isinstance(min_centile_range, float):
+        min_centile_range = [min_centile_range, min_centile_range]
+    if isinstance(max_centile_range, float):
+        max_centile_range = [max_centile_range, max_centile_range]
+    assert min_centile_range[0]<=min_centile_range[1], "invalid min range"
+    assert max_centile_range[0]<=max_centile_range[1], "invalid max range"
+    assert min_centile_range[0]<max_centile_range[1], "invalid min and max range"
+    if isinstance(dataset, (list, tuple)):
+        min_range, max_range = [], []
+        for ds in dataset:
+            min_r, max_r = get_min_max_range(ds, channel_keyword, min_centile_range, max_centile_range)
+            min_range.append(min_r)
+            max_range.append(max_r)
+        if len(dataset)==1:
+            return min_range[0], max_range[0]
+        return min_range, max_range
+
+    bins = get_histogram_bins_IPR(*get_histogram(dataset, channel_keyword, bins=1000), n_bins=256, percentiles=[0, 95], verbose=True)
+    histogram, _ = get_histogram(dataset, channel_keyword, bins=bins)
+
+    values = get_percentile(histogram, bins, min_centile_range + max_centile_range)
+    min_range = [values[0], values[1]]
+    max_range = [values[2], values[3]]
+    if verbose:
+        print(f"normalization: min_range: [{min_range[0]}; {min_range[1]}] max_range: [{max_range[0]}; {max_range[1]}]")
+    return min_range, max_range
 
 def get_histogram(dataset, channel_keyword, bins, bin_size=None, sum_to_one=False, group_keyword=None, batch_size=1, return_min_and_bin_size=False, smooth_scale = 0, smooth_scale_in_bin_unit=True):
     iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, output_channels=[], batch_size=batch_size)

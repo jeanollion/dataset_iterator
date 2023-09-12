@@ -9,20 +9,20 @@ class ConcatIterator(IndexArrayIterator):
             proportion:list=None,
             shuffle:bool=True,
             seed = None,
-            incomplete_last_batch_mode:str=IMCOMPLETE_LAST_BATCH_MODE[0]):
+            incomplete_last_batch_mode:str=IMCOMPLETE_LAST_BATCH_MODE[0],
+            step_number:int=0):
         assert isinstance(iterators, (list, tuple)), "iterators must be either list or tuple"
         self.iterators = iterators
         if proportion is None:
-            self.proportion = [1./len(iterators) for i in iterators]
-        else:
-            self.proportion = ensure_multiplicity(len(iterators), proportion)
+            self.proportion = [1.]
+        self.proportion = ensure_multiplicity(len(iterators), proportion)
 
         it_len = np.array([len(it) for it in self.iterators])
         for i in range(1, len(it_len)):
             it_len[i]=it_len[i-1]+it_len[i]
         self.it_cumlen=it_len
         self.it_off=np.insert(self.it_cumlen[:-1], 0, 0)
-        super().__init__(-1, batch_size, shuffle, seed, incomplete_last_batch_mode)
+        super().__init__(-1, batch_size, shuffle, seed, incomplete_last_batch_mode, step_number=step_number)
 
     def _set_index_array(self):
         indices_per_iterator = [np.random.randint(low=self.it_off[i], high=self.it_cumlen[i], size=int((self.it_cumlen[i] - self.it_off[i])*self.proportion[i]+0.5) ) for i in range(len(self.iterators))]
@@ -31,7 +31,8 @@ class ConcatIterator(IndexArrayIterator):
             self.index_array = np.random.permutation(index_a)
         else:
             self.index_array = index_a
-        self.n = len(index_a)
+        self._ensure_step_number()
+        self.n = len(self.index_array)
 
     def __len__(self):
         if self.n<0:

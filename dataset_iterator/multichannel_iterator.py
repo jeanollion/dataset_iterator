@@ -166,6 +166,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 channel_slicing_channels=None,
                 n_spatial_dims=2,
                 batch_size=32,
+                step_number:int=0,
                 shuffle=True,
                 perform_data_augmentation=True,
                 elasticdeform_parameters=None,
@@ -302,7 +303,7 @@ class MultiChannelIterator(IndexArrayIterator):
         else:
             self.void_mask_chan=-1
         self.total_n = indexes[-1]
-        super().__init__(self.total_n, batch_size, shuffle, seed, incomplete_last_batch_mode)
+        super().__init__(self.total_n, batch_size, shuffle, seed, incomplete_last_batch_mode, step_number=step_number)
 
     def _open_datasetIO(self):
         self.datasetIO = get_datasetIO(self.dataset, 'r')
@@ -799,7 +800,6 @@ class MultiChannelIterator(IndexArrayIterator):
                     idx_void = np.flatnonzero(void_masks)
                     to_rem = np.random.choice(idx_void, n_rem, replace=0)
                     index_a = np.delete(self.allowed_indexes, to_rem)
-                    self.n = len(index_a)
                 else:
                     index_a = self.allowed_indexes
             else:  # only void or only not void
@@ -816,7 +816,6 @@ class MultiChannelIterator(IndexArrayIterator):
                 allowed_indexes_per_group = [self.allowed_indexes[index_grp==i] for i in range(len(self.group_map_paths))]
                 indexes_per_group = [ pick_from_array(allowed_indexes_per_group[i], self.group_proportion[i]) for i in range(len(self.group_map_paths)) ]
                 index_a = np.concatenate(indexes_per_group)
-            self.n = len(index_a)
             self.group_proportion_init = True
         else:
             index_a = self.allowed_indexes
@@ -824,6 +823,8 @@ class MultiChannelIterator(IndexArrayIterator):
             self.index_array = np.random.permutation(index_a)
         else:
             self.index_array = np.copy(index_a)
+        self._ensure_step_number()
+        self.n = len(self.index_array)
 
     def evaluate(self, model, metrics, perform_data_augmentation=True, reset_allowed_indices=False, progress_callback=None, return_metadata=False):
         """Evaluates model on this iterator.

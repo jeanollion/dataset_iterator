@@ -129,38 +129,19 @@ class TrackingIterator(MultiChannelIterator):
                     pass
         if self.channels_prev[chan_idx] and params is not None:
             params_prev = super()._get_data_augmentation_parameters(chan_idx, ref_chan_idx, batch[...,0:1], idx, index_ds, index_array)
-            self._transfer_illumination_aug_param(params, params_prev)
-            self._transfer_geom_aug_param_neighbor(params, params_prev)
-            #try:
-            #    self.image_data_generators[chan_idx].adjust_augmentation_param_from_mask(params_prev, batch[idx,...,0])
-            #except AttributeError: # data generator does not have this method
-            #    pass
+            try:
+                self.image_data_generators[chan_idx].transfer_parameters(params, params_prev)
+            except AttributeError:
+                pass
             params["aug_params_prev"] = params_prev
         if self.channels_next[chan_idx] and params is not None:
             params_next = super()._get_data_augmentation_parameters(chan_idx, ref_chan_idx, batch[...,-1:], idx, index_ds, index_array)
-            self._transfer_illumination_aug_param(params, params_next)
-            self._transfer_geom_aug_param_neighbor(params, params_next)
-            # try:
-            #     self.image_data_generators[chan_idx].adjust_augmentation_param_from_mask(params_next, batch[idx,...,-1])
-            # except AttributeError: # data generator does not have this method
-            #     pass
+            try:
+                self.image_data_generators[chan_idx].transfer_parameters(params, params_next)
+            except AttributeError:
+                pass
             params["aug_params_next"] = params_next
         return params
-
-    def _transfer_geom_aug_param_neighbor(self, source, dest): # transfer affine parameters that must be identical between curent and prev/next image
-        dest['flip_vertical'] = source.get('flip_vertical', False) # flip must be the same
-        dest['flip_horizontal'] = source.get('flip_horizontal', False) # flip must be the same
-        dest['zy'] = source.get('zy', 1) # zoom should be the same so that cell aspect does not change too much
-        dest['zx'] = source.get('zx', 1) # zoom should be the same so that cell aspect does not change too much
-        dest['shear'] = source.get('shear', 0) # shear should be the same so that cell aspect does not change too much
-
-    def _transfer_illumination_aug_param(self, source, dest):
-        # illumination parameters should be the same between current and neighbor images
-        transfer_illumination_aug_parameters(source, dest)
-        if 'brightness' in source:
-            dest['brightness'] = source['brightness']
-        elif 'brightness' in dest:
-            del dest['brightness']
 
     def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, is_array=False, **kwargs):
         batch, index_a = super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, is_array=is_array, **kwargs)
@@ -281,37 +262,3 @@ def get_neighbor_label(label, increment):
     if increment<0 and frame<-increment:
         return None
     return label[:-5]+str(frame+increment).zfill(5)
-
-def transfer_illumination_aug_parameters(source, dest): # TODO parametrizable
-    if "vmin" in source and "vmax" in source:
-        dest["vmin"] = source["vmin"]
-        dest["vmax"] = source["vmax"]
-    else:
-        if "vmin" in dest:
-            del dest["vmin"]
-        if "vmax" in dest:
-            del des["vmax"]
-    if "poisson_noise" in source:
-        dest["poisson_noise"] = source.get("poisson_noise", 0)
-    elif "poisson_noise" in dest:
-        del dest["poisson_noise"]
-    if "speckle_noise" in source:
-        dest["speckle_noise"] = source.get("speckle_noise", 0)
-    elif "speckle_noise" in dest:
-        del dest["speckle_noise"]
-    if "gaussian_noise" in source:
-        dest["gaussian_noise"] = source.get("gaussian_noise", 0)
-    elif "gaussian_noise" in dest:
-        del dest["gaussian_noise"]
-    if "gaussian_blur" in source:
-        dest["gaussian_blur"] = source.get("gaussian_blur", 0)
-    elif "gaussian_blur" in dest:
-        del dest["gaussian_blur"]
-    if "histogram_voodoo_target_points" in source:
-        dest["histogram_voodoo_target_points"] = copy.copy(source["histogram_voodoo_target_points"])
-    elif "histogram_voodoo_target_points" in dest:
-        del dest["histogram_voodoo_target_points"]
-    if "illumination_voodoo_target_points" in source:
-        dest["illumination_voodoo_target_points"] = copy.copy(source["illumination_voodoo_target_points"])
-    elif "illumination_voodoo_target_points" in dest:
-        del dest["illumination_voodoo_target_points"]
