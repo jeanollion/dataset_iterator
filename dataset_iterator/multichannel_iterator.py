@@ -280,7 +280,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 for ds_idx, ds in enumerate(ds_l):
                     if ds.shape[1:] != self.channel_image_shapes[c]:
                         warnings.warn('Dataset {dsi} with path {dspath} from channel {chan}({chank}) has shape {dsshape} that differs from first dataset with path {ds1path} with shape {ds1shape}. Batch size is set to 1'.format(dsi=ds_idx, dspath=self._get_dataset_path(c, ds_idx), chan=c, chank=self.channel_keywords[c], dsshape=ds.shape[1:], ds1path=self._get_dataset_path(c, 0), ds1shape=self.channel_image_shapes[c] ))
-                        self.batch_size=1
+                        self.set_batch_size(1)
                         self.consistent_image_shape = False
         # labels
         try:

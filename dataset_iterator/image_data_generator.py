@@ -1,8 +1,8 @@
 import tensorflow as tf
 import numpy as np
 from random import uniform, random, getrandbits
-from utils import is_list, ensure_multiplicity
-from pre_processing import get_center_scale_range, compute_histogram_range, adjust_histogram_range, add_poisson_noise, add_speckle_noise, add_gaussian_noise, gaussian_blur, get_histogram_elasticdeform_target_points_delta, histogram_elasticdeform, get_illumination_variation_target_points, illumination_variation
+from .utils import is_list, ensure_multiplicity
+from .pre_processing import get_center_scale_range, compute_histogram_range, adjust_histogram_range, add_poisson_noise, add_speckle_noise, add_gaussian_noise, gaussian_blur, get_histogram_elasticdeform_target_points_delta, histogram_elasticdeform, get_illumination_variation_target_points, illumination_variation
 
 def get_image_data_generator(scaling_parameters=None, illumination_parameters=None, keras_parameters=None):
     generators = []

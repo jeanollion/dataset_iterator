@@ -1,5 +1,5 @@
 import numpy as np
-
+from math import ceil
 def replace_last(s, old, new):
     # return (s[::-1].replace(old[::-1], new[::-1], 1))[::-1]
     return new.join(s.rsplit(old, 1))
@@ -8,6 +8,14 @@ def remove_duplicates(seq):
     seen = set()
     seen_add = seen.add
     return [x for x in seq if not (x in seen or seen_add(x))]
+
+def ensure_size(array, size:int, shuffle:bool = False):
+    rep = ceil(size / len(array))
+    if rep > 1:
+        array = np.repeat(array, rep)
+    if shuffle:
+        array = np.random.permutation(array)
+    return array[:size]
 
 def ensure_multiplicity(n, object):
     if object is None:

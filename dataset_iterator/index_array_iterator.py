@@ -1,7 +1,7 @@
 from math import ceil
 import tensorflow as tf
 import numpy as np
-import types
+from .utils import ensure_size
 
 IMCOMPLETE_LAST_BATCH_MODE = ["KEEP", "CONSTANT_SIZE", "REMOVE"]
 class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
@@ -21,11 +21,12 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
         self.index_array=None
 
     def __len__(self):
-        n = self.step_number if self.step_number >0 else self.n
+        if self.step_number > 0:
+            return self.step_number
         if self.incomplete_last_batch_mode==2:
-            return n // self.batch_size
+            return self.n // self.batch_size
         else:
-            return (n + self.batch_size - 1) // self.batch_size  # round up
+            return (self.n + self.batch_size - 1) // self.batch_size  # round up
 
     def __getitem__(self, idx):
         length = len(self)
@@ -51,7 +52,8 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
     def _ensure_step_number(self):
         if self.step_number <= 0:
             return
-        rep = ceil(self.batch_size * self.step_number / len(self.index_array))
-        if rep > 1:
-            self.index_array = np.repeat(self.index_array, rep)
-        self.index_array = self.index_array[:self.step_number]
+        self.index_array = ensure_size(self.index_array, self.step_number * self.batch_size, shuffle=self.shuffle)
+
+    def set_batch_size(self, batch_size):
+        self.batch_size = batch_size
+        self._ensure_step_number()
