@@ -183,10 +183,10 @@ class IlluminationImageGenerator():
         self.poisson_noise = poisson_noise
         self.speckle_noise = speckle_noise
         self.histogram_elasticdeform_n_points = histogram_elasticdeform_n_points
-        assert histogram_elasticdeform_intensity > 0 and histogram_elasticdeform_intensity < 1, "histogram_elasticdeform_intensity should be in range ]0, 1["
+        assert histogram_elasticdeform_intensity < 1, "histogram_elasticdeform_intensity should be in range [0, 1)"
         self.histogram_elasticdeform_intensity = histogram_elasticdeform_intensity
         self.illumination_variation_n_points = ensure_multiplicity(2, illumination_variation_n_points)
-        assert illumination_variation_intensity > 0 and illumination_variation_intensity < 1, "histogram_elasticdeform_intensity should be in range ]0, 1["
+        assert illumination_variation_intensity < 1, "illumination_variation_intensity should be in range [0, 1)"
         self.illumination_variation_intensity = illumination_variation_intensity
 
     def get_random_transform(self, image_shape):
