@@ -202,7 +202,7 @@ def get_histogram_elasticdeform_target_points_delta(n_points):
     deltas[-1] = 0
     return deltas
 
-def illumination_variation(image, num_control_points_y=5, num_control_points_x=5, intensity=0.8, target_points = None):
+def illumination_variation(image, num_control_points_y=5, num_control_points_x=5, intensity=0.8, target_points = None, perform_2D:bool = False):
     '''
     Adapted from delta software: https://gitlab.com/dunloplab/delta/blob/master/data.py
     It simulates a variation in illumination along the length of the chamber
@@ -211,7 +211,7 @@ def illumination_variation(image, num_control_points_y=5, num_control_points_x=5
 
     min = image.min()
     max = image.max()
-    if num_control_points_y > 0 and num_control_points_x > 0:
+    if num_control_points_y > 0 and num_control_points_x > 0 and perform_2D:
         num_control_points = num_control_points_x * num_control_points_y
         if target_points is not None:
             assert len(target_points) == num_control_points, "invalid target point number"
@@ -228,38 +228,41 @@ def illumination_variation(image, num_control_points_y=5, num_control_points_x=5
         if len(image.shape) == 3:
             curve_im = np.expand_dims(curve_im, -1)
         image = np.multiply(image - min, curve_im)
-    elif num_control_points_y>0:
+    if num_control_points_y>0 and not perform_2D:
         # Create a random curve along y:
         if target_points is not None:
-            assert len(target_points) == num_control_points_y, "invalid target point number for y axis"
+            assert len(target_points) == num_control_points_x + num_control_points_y, f"invalid target point number for y axis expected = {num_control_points_x + num_control_points_y} actual = {len(target_points)}"
+            target_points_ = target_points[:num_control_points_y]
         else:
-            target_points = get_illumination_variation_target_points(num_control_points_y, intensity)
+            target_points_ = get_illumination_variation_target_points(num_control_points_y, intensity)
         control_points = np.linspace(0, image.shape[0] - 1, num=num_control_points_y)
-        mapping = interpolate.PchipInterpolator(control_points, target_points)
+        mapping = interpolate.PchipInterpolator(control_points, target_points_)
         curve = mapping(np.linspace(0,image.shape[0]-1,image.shape[0]))
         newshape = [curve.shape[0], 1]
         if len(np.shape(image)) == 3:
             newshape += [1]
         curve_im_y = np.reshape(curve, newshape)
         image = np.multiply(image - min, curve_im_y)
-    elif num_control_points_x>0:
+    if num_control_points_x>0 and not perform_2D:
         # Create a random curve along y:
         if target_points is not None:
-            assert len(target_points) == num_control_points_x, "invalid target point number for x axis"
+            assert len(target_points) == num_control_points_x + num_control_points_y, "invalid target point number for x axis"
+            target_points_ = target_points[num_control_points_y:]
         else :
-            target_points = get_illumination_variation_target_points(num_control_points_x, intensity)
+            target_points_ = get_illumination_variation_target_points(num_control_points_x, intensity)
         control_points = np.linspace(0, image.shape[1] - 1, num=num_control_points_x)
-        mapping = interpolate.PchipInterpolator(control_points, target_points)
+        mapping = interpolate.PchipInterpolator(control_points, target_points_)
         curve = mapping(np.linspace(0, image.shape[1]-1, image.shape[1]))
         newshape = [1, curve.shape[0]]
         if len(np.shape(image))==3:
             newshape += [1]
         curve_im_x = np.reshape(curve, newshape)
-        image = np.multiply(image - min, curve_im_x)
+        min_ = 0 if num_control_points_y>0 else min
+        image = np.multiply(image - min_, curve_im_x)
     # Rescale values to original range:
     return np.interp(image, (image.min(), image.max()), (min, max))
 
 def get_illumination_variation_target_points(num_control_points, intensity):
-    assert intensity > 0 and intensity < 1, "Intensity should be in range ]0, 1["
+    assert intensity >= 0 and intensity <= 1, "Intensity should be in range [0, 1]"
     return np.random.uniform(low=(1 - intensity) / 2.0, high=(1 + intensity) / 2.0, size=num_control_points)
 

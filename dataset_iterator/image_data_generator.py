@@ -194,18 +194,19 @@ class ScalingImageGenerator():
 
 
 class IlluminationImageGenerator():
-    def __init__(self, gaussian_blur_range:list=[1, 2], noise_intensity:float = 0.1, gaussian_noise:bool = True, poisson_noise:bool=True, speckle_noise:bool=False, histogram_elasticdeform_n_points:int=5, histogram_elasticdeform_intensity:float=0.5, illumination_variation_n_points:list=[0, 0], illumination_variation_intensity:float=0.6):
+    def __init__(self, gaussian_blur_range:list=[1, 2], noise_intensity:float = 0.1, gaussian_noise:bool = True, poisson_noise:bool=True, speckle_noise:bool=False, histogram_elasticdeform_n_points:int=5, histogram_elasticdeform_intensity:float=0.5, illumination_variation_n_points:list=[0, 0], illumination_variation_intensity:float=0.6, illumination_variation_2d:bool = False):
         self.gaussian_blur_range = ensure_multiplicity(2, gaussian_blur_range)
         self.noise_intensity = noise_intensity
         self.gaussian_noise = gaussian_noise
         self.poisson_noise = poisson_noise
         self.speckle_noise = speckle_noise
         self.histogram_elasticdeform_n_points = histogram_elasticdeform_n_points
-        assert histogram_elasticdeform_intensity < 1, "histogram_elasticdeform_intensity should be in range [0, 1)"
+        assert histogram_elasticdeform_intensity <= 1, "histogram_elasticdeform_intensity should be in range [0, 1]"
         self.histogram_elasticdeform_intensity = histogram_elasticdeform_intensity
         self.illumination_variation_n_points = ensure_multiplicity(2, illumination_variation_n_points)
-        assert illumination_variation_intensity < 1, "illumination_variation_intensity should be in range [0, 1)"
+        assert illumination_variation_intensity <= 1, "illumination_variation_intensity should be in range [0, 1]"
         self.illumination_variation_intensity = illumination_variation_intensity
+        self.illumination_variation_2d = illumination_variation_2d
 
     def get_random_transform(self, image_shape):
         params = {}
@@ -221,12 +222,19 @@ class IlluminationImageGenerator():
         if poisson:
             params["poisson_noise"] = uniform(0, ni)
         
-        if self.histogram_elasticdeform_n_points > 0 and self.histogram_elasticdeform_intensity > 0 and not getrandbits(1):
+        if self.histogram_elasticdeform_n_points > 0 and self.histogram_elasticdeform_intensity > 0 : #and not getrandbits(1):
             # draw target point displacement  
             params["histogram_elasticdeform_target_points_delta"] = get_histogram_elasticdeform_target_points_delta(self.histogram_elasticdeform_n_points + 2) # +2 = edges
         elif "histogram_elasticdeform_target_points_delta" in params:
             del params["histogram_elasticdeform_target_points_delta"]
-        n_points = self.illumination_variation_n_points[0] * self.illumination_variation_n_points[1]
+
+        if self.illumination_variation_n_points[0] == 0 and self.illumination_variation_n_points[0] == 0:
+            n_points = 0
+        else:
+            if self.illumination_variation_2d:
+                n_points = max(1, self.illumination_variation_n_points[0]) * max(1, self.illumination_variation_n_points[1])
+            else:
+                n_points = self.illumination_variation_n_points[0] + self.illumination_variation_n_points[1]
         if self.illumination_variation_intensity > 0 and n_points > 0 and not getrandbits(1):
             params["illumination_variation_target_points"] = get_illumination_variation_target_points(n_points, self.illumination_variation_intensity)
         elif "illumination_variation_target_points" in params:
@@ -265,7 +273,7 @@ class IlluminationImageGenerator():
             img = histogram_elasticdeform(img, self.histogram_elasticdeform_n_points, self.histogram_elasticdeform_intensity, target_point_delta=aug_params["histogram_elasticdeform_target_points_delta"])
         if "illumination_variation_target_points" in aug_params:
             target_points = aug_params.get("illumination_variation_target_points", None)
-            img = illumination_variation(img, num_control_points_y=self.illumination_variation_n_points[0], num_control_points_x=self.illumination_variation_n_points[1], intensity=self.illumination_variation_intensity, target_points=target_points)
+            img = illumination_variation(img, num_control_points_y=self.illumination_variation_n_points[0], num_control_points_x=self.illumination_variation_n_points[1], intensity=self.illumination_variation_intensity, target_points=target_points, perform_2D=self.illumination_variation_2d)
         if aug_params.get("gaussian_blur", 0) > 0:
             img = gaussian_blur(img, aug_params["gaussian_blur"])
         gaussian_noise_intensity = aug_params.get("gaussian_noise", 0)
