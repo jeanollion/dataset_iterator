@@ -38,7 +38,7 @@ class ConcatIterator(IndexArrayIterator):
         else:
             self.index_array = index_a
         self._ensure_step_number()
-        self.n = len(self.index_array)
+        self._n = len(self.index_array)
 
     def __len__(self):
         if self.n<0:
