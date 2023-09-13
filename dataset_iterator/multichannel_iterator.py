@@ -9,7 +9,7 @@ from math import copysign, ceil
 from .datasetIO import DatasetIO, get_datasetIO, MemoryIO
 from .utils import ensure_multiplicity, flatten_list, replace_last
 from itertools import groupby
-from .index_array_iterator import IMCOMPLETE_LAST_BATCH_MODE
+from .index_array_iterator import INCOMPLETE_LAST_BATCH_MODE
 try:
     import elasticdeform as ed
     from elasticdeform.deform_grid import _normalize_axis_list
@@ -146,36 +146,36 @@ class MultiChannelIterator(IndexArrayIterator):
 
     """
     def __init__(self,
-                dataset,
-                channel_keywords=['/raw'],
-                array_keywords=[],
-                input_channels=[0],
-                output_channels=[0],
-                weight_map_functions=None,
-                output_postprocessing_functions=None,
-                channels_postprocessing_function=None,
-                extract_tile_function=None,
-                mask_channels=[],
-                output_multiplicity = 1,
-                input_multiplicity = 1,
-                group_keyword=None,
-                group_proportion=None,
-                group_scaling=None,
-                image_data_generators=None,
-                singleton_channels=[],
-                channel_slicing_channels=None,
-                n_spatial_dims=2,
-                batch_size=32,
-                step_number:int=0,
-                shuffle=True,
-                perform_data_augmentation=True,
-                elasticdeform_parameters=None,
-                return_image_index:bool = False,
-                seed=None,
-                dtype='float32',
-                convert_masks_to_dtype=True,
-                memory_persistant=False,
-                incomplete_last_batch_mode=IMCOMPLETE_LAST_BATCH_MODE[0]):
+                 dataset,
+                 channel_keywords=['/raw'],
+                 array_keywords=[],
+                 input_channels=[0],
+                 output_channels=[0],
+                 weight_map_functions=None,
+                 output_postprocessing_functions=None,
+                 channels_postprocessing_function=None,
+                 extract_tile_function=None,
+                 mask_channels=[],
+                 output_multiplicity = 1,
+                 input_multiplicity = 1,
+                 group_keyword=None,
+                 group_proportion=None,
+                 group_scaling=None,
+                 image_data_generators=None,
+                 singleton_channels=[],
+                 channel_slicing_channels=None,
+                 n_spatial_dims=2,
+                 batch_size=32,
+                 step_number:int=0,
+                 shuffle=True,
+                 perform_data_augmentation=True,
+                 elasticdeform_parameters=None,
+                 return_image_index:bool = False,
+                 seed=None,
+                 dtype='float32',
+                 convert_masks_to_dtype=True,
+                 memory_persistant=False,
+                 incomplete_last_batch_mode=INCOMPLETE_LAST_BATCH_MODE[1]):
         self.dataset = dataset
         self.memory_persistant=memory_persistant
         self.n_spatial_dims=n_spatial_dims

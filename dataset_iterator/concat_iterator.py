@@ -1,16 +1,16 @@
 import numpy as np
-from .index_array_iterator import IndexArrayIterator, IMCOMPLETE_LAST_BATCH_MODE
+from .index_array_iterator import IndexArrayIterator, INCOMPLETE_LAST_BATCH_MODE
 from .utils import ensure_multiplicity, ensure_size
 
 class ConcatIterator(IndexArrayIterator):
     def __init__(self,
-            iterators:list,
-            batch_size:int,
-            proportion:list=None,
-            shuffle:bool=True,
-            seed = None,
-            incomplete_last_batch_mode:str=IMCOMPLETE_LAST_BATCH_MODE[0],
-            step_number:int=0):
+                 iterators:list,
+                 batch_size:int,
+                 proportion:list=None,
+                 shuffle:bool=True,
+                 seed = None,
+                 incomplete_last_batch_mode:str=INCOMPLETE_LAST_BATCH_MODE[1],
+                 step_number:int=0):
         assert isinstance(iterators, (list, tuple)), "iterators must be either list or tuple"
         self.iterators = iterators
         if proportion is None:

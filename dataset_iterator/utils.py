@@ -12,7 +12,7 @@ def remove_duplicates(seq):
 def ensure_size(array, size:int, shuffle:bool = False):
     rep = ceil(size / len(array))
     if rep > 1:
-        array = np.repeat(array, rep)
+        array = np.tile(array, rep)
     if shuffle:
         array = np.random.permutation(array)
     return array[:size]

@@ -3,12 +3,12 @@ import tensorflow as tf
 import numpy as np
 from .utils import ensure_size
 
-IMCOMPLETE_LAST_BATCH_MODE = ["KEEP", "CONSTANT_SIZE", "REMOVE"]
+INCOMPLETE_LAST_BATCH_MODE = ["KEEP", "CONSTANT_SIZE", "REMOVE"]
 class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
-    def __init__(self, n, batch_size, shuffle, seed, incomplete_last_batch_mode=IMCOMPLETE_LAST_BATCH_MODE[0], step_number:int=0):
+    def __init__(self, n, batch_size, shuffle, seed, incomplete_last_batch_mode=INCOMPLETE_LAST_BATCH_MODE[1], step_number:int=0):
         super().__init__(n, batch_size, shuffle, seed)
         self.allowed_indexes=np.arange(self.n)
-        self.incomplete_last_batch_mode = IMCOMPLETE_LAST_BATCH_MODE.index(incomplete_last_batch_mode)
+        self.incomplete_last_batch_mode = INCOMPLETE_LAST_BATCH_MODE.index(incomplete_last_batch_mode)
         self.step_number=step_number
 
     def set_allowed_indexes(self, indexes):
@@ -50,9 +50,11 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
         pass
 
     def _ensure_step_number(self):
+        step_number = self.step_number
         if self.step_number <= 0:
-            return
-        self.index_array = ensure_size(self.index_array, self.step_number * self.batch_size, shuffle=self.shuffle)
+            if len(self.index_array) < self.batch_size :
+                step_number = 1
+        self.index_array = ensure_size(self.index_array, step_number * self.batch_size, shuffle=self.shuffle)
 
     def set_batch_size(self, batch_size):
         self.batch_size = batch_size
