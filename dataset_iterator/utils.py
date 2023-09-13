@@ -45,6 +45,11 @@ def append_to_list(l, element):
     else:
         l.append(element)
 
+def transpose_list(l):
+    if len(l)==0:
+        return l
+    n_inner = len(l[0])
+    return [[l[i][j] for i in range(len(l))] for j in range(n_inner)]
 def pick_from_array(array, proportion):
     if proportion<=0:
         return []
