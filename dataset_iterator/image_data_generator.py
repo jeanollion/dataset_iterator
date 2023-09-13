@@ -12,7 +12,10 @@ def get_image_data_generator(scaling_parameters=None, illumination_parameters=No
         generators.append(IlluminationImageGenerator(**illumination_parameters))
     if keras_parameters is not None:
         generators.append(KerasImageDataGenerator(**keras_parameters))
-    return ImageGeneratorList(generators)
+    if len(generators) == 1:
+        return generators[0]
+    else:
+        return ImageGeneratorList(generators)
 
 def data_generator_to_channel_postprocessing_fun(image_data_generator, channels):
     def pp_fun(batch_by_channel):
@@ -235,7 +238,7 @@ class IlluminationImageGenerator():
                 n_points = max(1, self.illumination_variation_n_points[0]) * max(1, self.illumination_variation_n_points[1])
             else:
                 n_points = self.illumination_variation_n_points[0] + self.illumination_variation_n_points[1]
-        if self.illumination_variation_intensity > 0 and n_points > 0 and not getrandbits(1):
+        if self.illumination_variation_intensity > 0 and n_points > 0: # and not getrandbits(1):
             params["illumination_variation_target_points"] = get_illumination_variation_target_points(n_points, self.illumination_variation_intensity)
         elif "illumination_variation_target_points" in params:
             del params["illumination_variation_target_points"]
