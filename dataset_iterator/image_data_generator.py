@@ -273,7 +273,7 @@ class IlluminationImageGenerator():
             img = histogram_elasticdeform(img, self.histogram_elasticdeform_n_points, self.histogram_elasticdeform_intensity, target_point_delta=aug_params["histogram_elasticdeform_target_points_delta"])
         if "illumination_variation_target_points" in aug_params:
             target_points = aug_params.get("illumination_variation_target_points", None)
-            img = illumination_variation(img, num_control_points_y=self.illumination_variation_n_points[0], num_control_points_x=self.illumination_variation_n_points[1], intensity=self.illumination_variation_intensity, target_points=target_points, perform_2D=self.illumination_variation_2d)
+            img = illumination_variation(img, num_control_points_y=self.illumination_variation_n_points[0], num_control_points_x=self.illumination_variation_n_points[1], intensity=self.illumination_variation_intensity, target_points=target_points, perform_2d=self.illumination_variation_2d)
         if aug_params.get("gaussian_blur", 0) > 0:
             img = gaussian_blur(img, aug_params["gaussian_blur"])
         gaussian_noise_intensity = aug_params.get("gaussian_noise", 0)
