@@ -202,52 +202,60 @@ def get_histogram_elasticdeform_target_points_delta(n_points):
     deltas[-1] = 0
     return deltas
 
-def illumination_variation(image, num_control_points_y=5, num_control_points_x=5, intensity=0.8, target_points_y = None, target_points_x = None):
+def illumination_variation(image, num_control_points_y=5, num_control_points_x=5, intensity=0.8, target_points = None):
     '''
     Adapted from delta software: https://gitlab.com/dunloplab/delta/blob/master/data.py
     It simulates a variation in illumination along the length of the chamber
     '''
     assert intensity > 0 and intensity < 1, "Intensity should be in range ]0, 1["
 
-    if target_points_x is not None:
-        assert len(target_points_x) == num_control_points_x, "invalid target point number for x axis"
-
     min = image.min()
     max = image.max()
-
-    if num_control_points_y>0:
+    if num_control_points_y > 0 and num_control_points_x > 0:
+        num_control_points = num_control_points_x * num_control_points_y
+        if target_points is not None:
+            assert len(target_points) == num_control_points, "invalid target point number"
+        else:
+            target_points = get_illumination_variation_target_points(num_control_points, intensity)
+        target_points = np.reshape(target_points, (num_control_points_y, num_control_points_x))
+        cp_y = np.linspace(0, image.shape[0] - 1, num=num_control_points_y)
+        cp_x = np.linspace(0, image.shape[1] - 1, num=num_control_points_x)
+        mapping = interpolate.RegularGridInterpolator((cp_y, cp_x), target_points)
+        y = np.linspace(0, image.shape[0] - 1, image.shape[0])
+        x = np.linspace(0, image.shape[1] - 1, image.shape[1])
+        Y, X = np.meshgrid(y, x, indexing='ij')
+        curve_im = mapping((Y, X))
+        if len(image.shape) == 3:
+            curve_im = np.expand_dims(curve_im, -1)
+        image = np.multiply(image - min, curve_im)
+    elif num_control_points_y>0:
         # Create a random curve along y:
-        if target_points_y is not None:
-            assert len(target_points_y) == num_control_points_y, "invalid target point number for y axis"
-        control_points_y = np.linspace(0, image.shape[0]-1, num=num_control_points_y)
-        if target_points_y is None:
-            target_points_y = get_illumination_variation_target_points(num_control_points_y, intensity)
-        mapping = interpolate.PchipInterpolator(control_points_y, target_points_y)
+        if target_points is not None:
+            assert len(target_points) == num_control_points_y, "invalid target point number for y axis"
+        else:
+            target_points = get_illumination_variation_target_points(num_control_points_y, intensity)
+        control_points = np.linspace(0, image.shape[0] - 1, num=num_control_points_y)
+        mapping = interpolate.PchipInterpolator(control_points, target_points)
         curve = mapping(np.linspace(0,image.shape[0]-1,image.shape[0]))
         newshape = [curve.shape[0], 1]
         if len(np.shape(image)) == 3:
             newshape += [1]
         curve_im_y = np.reshape(curve, newshape)
-        #curve_im_y = np.reshape( np.tile( np.reshape(curve, curve.shape + (1,)), (1, image.shape[1])) ,image.shape )
-        # Apply this curve to the image intensity along y:
         image = np.multiply(image - min, curve_im_y)
-    if num_control_points_x>0:
+    elif num_control_points_x>0:
         # Create a random curve along y:
-        if target_points_x is not None:
-            assert len(target_points_x) == num_control_points_x, "invalid target point number for x axis"
-        control_points_x = np.linspace(0, image.shape[1]-1, num=num_control_points_x)
-        if target_points_x is None:
-            target_points_x = get_illumination_variation_target_points(num_control_points_x, intensity)
-        mapping = interpolate.PchipInterpolator(control_points_x, target_points_x)
+        if target_points is not None:
+            assert len(target_points) == num_control_points_x, "invalid target point number for x axis"
+        else :
+            target_points = get_illumination_variation_target_points(num_control_points_x, intensity)
+        control_points = np.linspace(0, image.shape[1] - 1, num=num_control_points_x)
+        mapping = interpolate.PchipInterpolator(control_points, target_points)
         curve = mapping(np.linspace(0, image.shape[1]-1, image.shape[1]))
         newshape = [1, curve.shape[0]]
         if len(np.shape(image))==3:
             newshape += [1]
         curve_im_x = np.reshape(curve, newshape)
-        #curve_im_x = np.reshape( np.tile( np.reshape(curve, (1,) + curve.shape ), (image.shape[1], 1)), image.shape )
-        # Apply this curve to the image intensity along y:
-        im_min = min if num_control_points_y == 0 else 0
-        image = np.multiply(image - im_min, curve_im_x)
+        image = np.multiply(image - min, curve_im_x)
     # Rescale values to original range:
     return np.interp(image, (image.min(), image.max()), (min, max))
 

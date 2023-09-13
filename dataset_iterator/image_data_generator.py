@@ -226,14 +226,11 @@ class IlluminationImageGenerator():
             params["histogram_elasticdeform_target_points_delta"] = get_histogram_elasticdeform_target_points_delta(self.histogram_elasticdeform_n_points + 2) # +2 = edges
         elif "histogram_elasticdeform_target_points_delta" in params:
             del params["histogram_elasticdeform_target_points_delta"]
-        if self.illumination_variation_n_points[0] > 0 and self.illumination_variation_intensity > 0 and not getrandbits(1):
-            params["illumination_variation_target_points_y"] = get_illumination_variation_target_points(self.illumination_variation_n_points[0], self.illumination_variation_intensity)
-        elif "illumination_variation_target_points_y" in params:
-            del params["illumination_variation_target_points_y"]
-        if self.illumination_variation_n_points[1] > 0 and self.illumination_variation_intensity > 0 and not getrandbits(1):
-            params["illumination_variation_target_points_x"] = get_illumination_variation_target_points(self.illumination_variation_n_points[1], self.illumination_variation_intensity)
-        elif "illumination_variation_target_points_x" in params:
-            del params["illumination_variation_target_points_x"]
+        n_points = self.illumination_variation_n_points[0] * self.illumination_variation_n_points[1]
+        if self.illumination_variation_intensity > 0 and n_points > 0 and not getrandbits(1):
+            params["illumination_variation_target_points"] = get_illumination_variation_target_points(n_points, self.illumination_variation_intensity)
+        elif "illumination_variation_target_points" in params:
+            del params["illumination_variation_target_points"]
         return params
 
     def transfer_parameters(self, source, destination):
@@ -258,22 +255,17 @@ class IlluminationImageGenerator():
             destination["histogram_elasticdeform_target_points_delta"] = source["histogram_elasticdeform_target_points_delta"]
         elif "histogram_elasticdeform_target_points_delta" in destination:
             del destination["histogram_elasticdeform_target_points_delta"]
-        if "illumination_variation_target_points_y" in source:
-            destination["illumination_variation_target_points_y"] = source["illumination_variation_target_points_y"]
-        elif "illumination_variation_target_points_y" in destination:
-            del destination["illumination_variation_target_points_y"]
-        if "illumination_variation_target_points_x" in source:
-            destination["illumination_variation_target_points_x"] = source["illumination_variation_target_points_x"]
-        elif "illumination_variation_target_points_x" in destination:
-            del destination["illumination_variation_target_points_x"]
+        if "illumination_variation_target_points" in source:
+            destination["illumination_variation_target_points"] = source["illumination_variation_target_points"]
+        elif "illumination_variation_target_points" in destination:
+            del destination["illumination_variation_target_points"]
 
     def apply_transform(self, img, aug_params):
         if "histogram_elasticdeform_target_points_delta" in aug_params:
             img = histogram_elasticdeform(img, self.histogram_elasticdeform_n_points, self.histogram_elasticdeform_intensity, target_point_delta=aug_params["histogram_elasticdeform_target_points_delta"])
-        if "illumination_variation_target_points_y" in aug_params or "illumination_variation_target_points_x" in aug_params:
-            target_points_y = aug_params.get("illumination_variation_target_points_y", None)
-            target_points_x = aug_params.get("illumination_variation_target_points_x", None)
-            img = illumination_variation(img, num_control_points_y=len(target_points_y) if target_points_y is not None else 0, num_control_points_x=len(target_points_x) if target_points_x is not None else 0, intensity=self.illumination_variation_intensity, target_points_y=target_points_y, target_points_x=target_points_x)
+        if "illumination_variation_target_points" in aug_params:
+            target_points = aug_params.get("illumination_variation_target_points", None)
+            img = illumination_variation(img, num_control_points_y=self.illumination_variation_n_points[0], num_control_points_x=self.illumination_variation_n_points[1], intensity=self.illumination_variation_intensity, target_points=target_points)
         if aug_params.get("gaussian_blur", 0) > 0:
             img = gaussian_blur(img, aug_params["gaussian_blur"])
         gaussian_noise_intensity = aug_params.get("gaussian_noise", 0)
