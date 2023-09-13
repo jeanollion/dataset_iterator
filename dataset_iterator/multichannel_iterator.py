@@ -476,6 +476,15 @@ class MultiChannelIterator(IndexArrayIterator):
         if self.elasticdeform_parameters is not None:
             channels = [c for c in batch_by_channel.keys() if not isinstance(c, str) and c>=0]
             elasticdeform_parameters = self.elasticdeform_parameters.copy()
+            # check validity :
+            if 'grid_spacing' in elasticdeform_parameters and elasticdeform_parameters['grid_spacing'] <= 1:
+                return
+            if 'points' in elasticdeform_parameters and elasticdeform_parameters['points'] <= 2:
+                return
+            if 'sigma_factor' in elasticdeform_parameters and elasticdeform_parameters['sigma_factor'] <= 0:
+                return
+            if 'sigma' in elasticdeform_parameters and elasticdeform_parameters['sigma'] <= 0:
+                return
             order = elasticdeform_parameters.pop("order", 1)
             order = ensure_multiplicity(len(channels), order)
             if len(self.mask_channels)>0:
