@@ -1,8 +1,7 @@
-import itertools
 from math import ceil, floor
 import numpy as np
 from numpy.random import randint, random
-from .utils import ensure_multiplicity, is_list
+from .utils import ensure_multiplicity, is_null
 from scipy.ndimage import zoom
 
 OVERLAP_MODE = ["NO_OVERLAP", "ALLOW", "FORCE"]
@@ -15,7 +14,7 @@ def extract_tile_function(tile_shape, perform_augmentation=True, overlap_mode=OV
         return tiles
     return func
 
-def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, return_coords=False):
+def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=True, return_coords=False):
     """Extract tiles.
 
     Parameters
@@ -52,7 +51,7 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
         assert len(image_shape)==2, "only 2d images supported when specifying n_tiles"
         _, n_tiles_yx = get_stride_2d(image_shape, tile_shape, n_tiles)
         tile_coords = _get_tile_coords(image_shape, tile_shape, n_tiles_yx, random_stride)
-        tile_coords = _get_n_tiles(tile_coords, n_tiles)
+        tile_coords = _get_n_tiles(tile_coords, n_tiles, random=random_stride)
     if len(image_shape)==2:
         tile_fun = lambda b : np.concatenate([b[:, tile_coords[0][i]:tile_coords[0][i] + tile_shape[0], tile_coords[1][i]:tile_coords[1][i] + tile_shape[1]] for i in range(len(tile_coords[0]))])
     else:
@@ -66,7 +65,7 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
     else:
         return tiles
 
-def extract_tile_random_zoom_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, augmentation_rotate=True, zoom_range=[0.6, 1.6], aspect_ratio_range=[0.6, 1.6], interpolation_order=1, random_channel_jitter_shape=None):
+def extract_tile_random_zoom_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=True, augmentation_rotate=True, zoom_range=[0.9, 1.1], aspect_ratio_range=[0.9, 1.1], interpolation_order=1, random_channel_jitter_shape=None):
     if (is_null(zoom_range, 1) or is_null(zoom_range, 0)) and is_null(random_channel_jitter_shape, 0):
         return extract_tile_function(tile_shape, perform_augmentation=perform_augmentation, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, augmentation_rotate=augmentation_rotate)
     def func(batch, is_mask):
@@ -132,7 +131,7 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
         assert len(image_shape)==2, "only 2d images supported when specifying n_tiles"
         _, n_tiles_yx = get_stride_2d(image_shape, tile_shape, n_tiles)
         tile_coords = _get_tile_coords(image_shape, tile_shape, n_tiles_yx, random_stride)
-        tile_coords = _get_n_tiles(tile_coords, n_tiles)
+        tile_coords = _get_n_tiles(tile_coords, n_tiles, random=random_stride)
     n_t = tile_coords[0].shape[0]
     zoom_range_corrected = [1./np.max(zoom_range), np.min([ min(1./np.min(zoom_range), float(image_shape[ax])/float(tile_shape[ax])) for ax in range(rank) ])]
     zoom = random(n_t) * (zoom_range_corrected[1] - zoom_range_corrected[0]) + zoom_range_corrected[0]
@@ -216,12 +215,15 @@ def get_stride_2d(image_shape, tile_shape, n_tiles):
     stride_y = Sy // (n_tiles_y - 1) if n_tiles_y > 1 else image_shape[0]
     return (stride_y, stride_x), (n_tiles_y, n_tiles_x)
 
-def _get_n_tiles(tile_coords, n_tiles):
+def _get_n_tiles(tile_coords, n_tiles, random:bool=True):
     if tile_coords[0].shape[0] == n_tiles:
         return tile_coords
     elif tile_coords[0].shape[0] > n_tiles:
-        idxs = np.random.permutation(tile_coords[0].shape[0])[:n_tiles]
-        return [tile_coords[i][idxs] for i in range(len(tile_coords))]
+        if random:
+            idxs = np.random.permutation(tile_coords[0].shape[0])[:n_tiles]
+            return [tile_coords[i][idxs] for i in range(len(tile_coords))]
+        else:
+            return [tile_coords[i][:n_tiles] for i in range(len(tile_coords))]
     else:
         raise ValueError(f"Too few tiles: expected={n_tiles} got={tile_coords[0].shape[0]}")
 def _get_tile_coords(image_shape, tile_shape, n_tiles, random_stride=False):
@@ -338,13 +340,3 @@ def augment_tiles_inplace(tiles, rotate, n_dims=2):
                 tiles[b] = aug_fun[aug[b]](tiles[b])
     return tiles
 
-def is_null(param, null_value):
-    if param is None:
-        return True
-    if is_list(param):
-        for p in param:
-            if p != null_value:
-                return False
-        return True
-    else:
-        return param == null_value

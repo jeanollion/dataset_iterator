@@ -111,3 +111,15 @@ def enrich_with_hardest_indices(evaluation_result, metrics_weights, hardest_exam
         warning.warn("no enrichment in hardest indices")
     np.random.shuffle(indices)
     return indices
+
+
+def is_null(param, null_value):
+    if param is None:
+        return True
+    if is_list(param):
+        for p in param:
+            if p != null_value:
+                return False
+        return True
+    else:
+        return param == null_value
