@@ -1,5 +1,6 @@
 import warnings
 import numpy as np
+from random import uniform
 from dataset_iterator import IndexArrayIterator
 from .utils import remove_duplicates, pick_from_array
 from sklearn.model_selection import train_test_split
@@ -484,6 +485,8 @@ class MultiChannelIterator(IndexArrayIterator):
             if 'sigma_factor' in elasticdeform_parameters and elasticdeform_parameters['sigma_factor'] <= 0:
                 return
             if 'sigma' in elasticdeform_parameters and elasticdeform_parameters['sigma'] <= 0:
+                return
+            if uniform(0, 1) > elasticdeform_parameters.get("probability", 1):
                 return
             order = elasticdeform_parameters.pop("order", 1)
             order = ensure_multiplicity(len(channels), order)
