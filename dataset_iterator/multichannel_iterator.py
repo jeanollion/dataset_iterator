@@ -486,7 +486,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 return
             if 'sigma' in elasticdeform_parameters and elasticdeform_parameters['sigma'] <= 0:
                 return
-            if uniform(0, 1) > elasticdeform_parameters.get("probability", 1):
+            if uniform(0, 1) > elasticdeform_parameters.pop("probability", 1):
                 return
             order = elasticdeform_parameters.pop("order", 1)
             order = ensure_multiplicity(len(channels), order)
