@@ -228,6 +228,8 @@ def illumination_variation(image, num_control_points_y=5, num_control_points_x=5
         if len(image.shape) == 3:
             curve_im = np.expand_dims(curve_im, -1)
         image = np.multiply(image - min, curve_im)
+    elif num_control_points_y > 0 and num_control_points_x > 0 :
+        target_points = np.sqrt(target_points) # each pixel will be multiplied by Y and X transform
     if num_control_points_y>0 and not perform_2d:
         # Create a random curve along y:
         if target_points is not None:
