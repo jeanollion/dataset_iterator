@@ -31,7 +31,7 @@ def get_optimal_tiling(dataset, channel:str, target_batch_size:int, tile_shape:t
     for n_t in n_tile_candidates:
         if target_batch_size % n_t == 0:
             return target_batch_size//n_t, n_t
-
+    return target_batch_size, 1
 def open_channel(dataset, channel_keyword:str, group_keyword:str=None, size=None):
     iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=list(np.arange(len(channel_keyword))) if isinstance(channel_keyword, (list, tuple)) else [0], output_channels=[], batch_size=1 if size is None else size, incomplete_last_batch_mode=0, shuffle=False)
     if size is None:

@@ -219,7 +219,7 @@ class IlluminationImageGenerator():
         poisson = self.poisson_noise and not getrandbits(1)
         ni = self.noise_intensity / float(1.5 ** (sum([gaussian, speckle, poisson]) - 1))
         if gaussian:
-            params["gaussian_noise"] = uniform(0, ni)
+            params["gaussian_noise"] = uniform(0, ni * 0.7)
         if speckle:
             params["speckle_noise"] = uniform(0, ni)
         if poisson:
