@@ -186,8 +186,8 @@ def get_stride_2d(image_shape, tile_shape, n_tiles):
     tile_shape = ensure_multiplicity(2, tile_shape)
     Sy = image_shape[0] - tile_shape[0]
     Sx = image_shape[1] - tile_shape[1]
-    assert Sy>=0, "tile size is too high on first axis"
-    assert Sx>=0, "tile size is too high on second axis"
+    assert Sy>=0, f"tile size is too high on first axis: image size: {image_shape[0]} tile size: {tile_shape[0]}"
+    assert Sx>=0, f"tile size is too high on second axis: image size: {image_shape[1]} tile size: {tile_shape[1]}"
     a = - n_tiles + 1
     b = Sy + Sx
     c = Sx*Sy
