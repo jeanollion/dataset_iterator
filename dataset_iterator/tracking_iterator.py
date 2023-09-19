@@ -18,6 +18,7 @@ class TrackingIterator(MultiChannelIterator):
                 aug_all_frames:bool=True,
                 aug_remove_prob:float = 0,
                 frame_subsampling:int = 1, # either integer -> constant subsampling, callable (called at each mini batch and returns the subsampling), or interval with breaks included
+                verbose:bool = False,
                 **kwargs):
 
         if len(channels_next)!=len(channel_keywords):
@@ -29,7 +30,7 @@ class TrackingIterator(MultiChannelIterator):
                 raise ValueError("Previous time point of first mask channel should be returned if previous time point from another channel is returned")
             if any(channels_next) and not channels_next[mask_channels[0]]:
                 raise ValueError("Next time point of first mask channel should be returned if next time point from another channel is returned")
-
+        self.verbose=verbose
         self.channels_prev=channels_prev
         self.channels_next=channels_next
         self.aug_remove_prob = aug_remove_prob # set current image as prev / next
@@ -155,6 +156,8 @@ class TrackingIterator(MultiChannelIterator):
 
         batch_list.append(batch)
         index_array_list.append(index_a)
+        if self.verbose:
+            print(f"read n_frames={n_frames} (aug remove: {aug_remove}) -> {index_array}")
         if (not is_array and self.channels_prev[chan_idx]) or (is_array and self.channels_prev[ref_chan_idx]):
             for increment in range(1, n_frames+1):
                 neigh = self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment * subsampling, aug_remove, is_array, **kwargs)
@@ -227,6 +230,8 @@ class TrackingIterator(MultiChannelIterator):
             index_array -= inc_array
         else:
             index_array += inc_array
+        if self.verbose:
+            print(f"read inc={increment} -> {index_array}")
         return super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, is_array=is_array, **kwargs)
 
     def train_test_split(self, **options):

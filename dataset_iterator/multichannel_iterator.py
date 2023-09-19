@@ -955,14 +955,6 @@ def _apply_multiplicity(batch, multiplicity):
         return batch * multiplicity
 
 def copy_geom_tranform_parameters(aug_param_source, aug_param_dest): # TODO : parametrizable
-    aug_param_dest['theta'] = aug_param_source.get('theta', 0)
-    aug_param_dest['tx'] = aug_param_source.get('tx', 0)
-    aug_param_dest['ty'] = aug_param_source.get('ty', 0)
-    aug_param_dest['shear'] = aug_param_source.get('shear', 0)
-    aug_param_dest['zx'] = aug_param_source.get('zx', 1)
-    aug_param_dest['zy'] = aug_param_source.get('zy', 1)
-    aug_param_dest['flip_horizontal'] = aug_param_source.get('flip_horizontal', False)
-    aug_param_dest['flip_vertical'] = aug_param_source.get('flip_vertical', 0)
     if 'bacteria_swim' in aug_param_source:
         aug_param_dest['bacteria_swim'] = copy.deepcopy(aug_param_source['bacteria_swim'])
     if 'rotate90' in aug_param_source:

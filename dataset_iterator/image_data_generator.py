@@ -307,6 +307,9 @@ class KerasImageDataGenerator(tf.keras.preprocessing.image.ImageDataGenerator):
             destination['brightness'] = source['brightness']
         elif 'brightness' in destination:
             del destination['brightness']
+        destination['theta'] = source.get('theta', 0)
+        #destination['tx'] = source.get('tx', 0)
+        #destination['ty'] = source.get('ty', 0)
 
 class PreProcessingImageGenerator():
     """Simple data generator that only applies a custom pre-processing function to each image.
