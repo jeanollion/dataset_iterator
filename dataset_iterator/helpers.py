@@ -17,7 +17,7 @@ def get_optimal_tiling(dataset, channel:str, target_batch_size:int, tile_shape:t
     -------
     batch_size:int, n_tiles:int so that target_batch_size = batch_size x n_tiles
     """
-    it = MultiChannelIterator(dataset, channel_keywords=[channel], group_keyword=group_keyword, incomplete_last_batch_mode=0)
+    it = MultiChannelIterator(dataset, channel_keywords=[channel], input_channels=[0], output_channels=[], group_keyword=group_keyword, incomplete_last_batch_mode=0)
     assert it.consistent_image_shape, "dataset contains sub-datasets with different images shapes"
     assert tile_overlap_fraction < 1, "invalid argument: tile_overlap_fraction must be <1"
     image_shape = it.channel_image_shapes[0][:it.n_spatial_dims]
@@ -33,7 +33,7 @@ def get_optimal_tiling(dataset, channel:str, target_batch_size:int, tile_shape:t
             return target_batch_size//n_t, n_t
     return target_batch_size, 1
 def open_channel(dataset, channel_keyword:str, group_keyword:str=None, size=None):
-    iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=list(np.arange(len(channel_keyword))) if isinstance(channel_keyword, (list, tuple)) else [0], output_channels=[], batch_size=1 if size is None else size, incomplete_last_batch_mode=0, shuffle=False)
+    iterator = MultiChannelIterator(dataset=dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=[0], output_channels=[], batch_size=1 if size is None else size, incomplete_last_batch_mode=0, shuffle=False)
     if size is None:
         iterator.batch_size=len(iterator)
     data = iterator[0]
@@ -41,7 +41,7 @@ def open_channel(dataset, channel_keyword:str, group_keyword:str=None, size=None
     return data
 
 def get_min_and_max(dataset, channel_keyword:str, group_keyword:str=None, batch_size=1):
-    iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, output_channels=[], batch_size=batch_size, incomplete_last_batch_mode=0)
+    iterator = MultiChannelIterator(dataset=dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=[0], output_channels=[], batch_size=batch_size, incomplete_last_batch_mode=0)
     vmin = float('inf')
     vmax = float('-inf')
     for i in range(len(iterator)):
@@ -98,7 +98,7 @@ def get_min_max_range(dataset, channel_keyword:str = "/raw", group_keyword:str=N
     return min_range, max_range
 
 def get_histogram(dataset, channel_keyword:str, bins, bin_size=None, sum_to_one:bool=False, group_keyword:str=None, batch_size:int=1, return_min_and_bin_size:bool=False, smooth_scale:float = 0., smooth_scale_in_bin_unit:bool=True):
-    iterator = MultiChannelIterator(dataset = dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, output_channels=[], batch_size=batch_size, incomplete_last_batch_mode=0)
+    iterator = MultiChannelIterator(dataset=dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=[0], output_channels=[], batch_size=batch_size, incomplete_last_batch_mode=0)
     if bins is None:
         assert bin_size is not None
         vmin, vmax = get_min_and_max(dataset, channel_keyword, batch_size=batch_size)
@@ -188,6 +188,7 @@ def get_mean_sd(dataset, channel_keyword:str, group_keyword:str=None, per_channe
   params = dict(dataset=dataset,
               channel_keywords=[channel_keyword],
               group_keyword=group_keyword,
+              input_channels = [0],
               output_channels=[],
               perform_data_augmentation=False,
               batch_size=1,
