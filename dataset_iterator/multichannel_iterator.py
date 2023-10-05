@@ -430,9 +430,9 @@ class MultiChannelIterator(IndexArrayIterator):
         index_ds = self._get_ds_idx(index_array) # modifies index_array
 
         batch_by_channel = dict()
-        channels = self.input_channels if input_only else [c_idx for c_idx, key in enumerate(self.channel_keywords) if key is not None] #remove_duplicates(self.input_channels+self.output_channels)
-        if len(self.mask_channels)>0 and self.mask_channels[0] in channels: # put mask channel first so it can be used for determining some data augmentation parameters
-            channels.insert(0, channels.pop(channels.index(self.mask_channels[0])))
+        channels = self.input_channels if input_only else [c_idx for c_idx, key in enumerate(self.channel_keywords) if key is not None]
+        #if len(self.mask_channels)>0 and self.mask_channels[0] in channels: # put mask channel first so it can be used for determining some data augmentation parameters
+        #    channels.insert(0, channels.pop(channels.index(self.mask_channels[0])))
         aug_param_array = [[dict()]*len(self.channel_keywords) for i in range(len(index_array))]
         for chan_idx in channels:
             batch_by_channel[chan_idx] = self._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, channels[0], aug_param_array, perform_augmentation=perform_augmentation, **kwargs)
@@ -605,7 +605,7 @@ class MultiChannelIterator(IndexArrayIterator):
     def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, is_array=False, **kwargs):
         # read all images # TODO read all image per ds at once.
         read_fun = self._read_array if is_array else self._read_image
-        images = [read_fun(chan_idx, ds_idx, im_idx) for i, (ds_idx, im_idx, grp_idx) in enumerate(zip(index_ds, index_array))]
+        images = [read_fun(chan_idx, ds_idx, im_idx) for i, (ds_idx, im_idx) in enumerate(zip(index_ds, index_array))]
         batch = np.stack(images)
         index_a = np.copy(index_array)[..., np.newaxis] if self.return_image_index else None
         return batch, index_a

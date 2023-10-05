@@ -25,11 +25,11 @@ class TrackingIterator(MultiChannelIterator):
             raise ValueError("length of channels_next differs from channel_keywords")
         if len(channels_prev)!=len(channel_keywords):
             raise ValueError("length of channels_prev differs from channel_keywords")
-        if mask_channels is not None and len(mask_channels)>0:
-            if any(channels_prev) and not channels_prev[mask_channels[0]]:
-                raise ValueError("Previous time point of first mask channel should be returned if previous time point from another channel is returned")
-            if any(channels_next) and not channels_next[mask_channels[0]]:
-                raise ValueError("Next time point of first mask channel should be returned if next time point from another channel is returned")
+        #if mask_channels is not None and len(mask_channels)>0:
+        #    if any(channels_prev) and not channels_prev[mask_channels[0]]:
+        #        raise ValueError("Previous time point of first mask channel should be returned if previous time point from another channel is returned")
+        #    if any(channels_next) and not channels_next[mask_channels[0]]:
+        #        raise ValueError("Next time point of first mask channel should be returned if next time point from another channel is returned")
         self.verbose=verbose
         self.channels_prev=channels_prev
         self.channels_next=channels_next
