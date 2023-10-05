@@ -12,7 +12,7 @@ setuptools.setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/jeanollion/dataset_iterator.git",
-    download_url = 'https://files.pythonhosted.org/packages/b3/1c/6383e70b8d6e409fe1e3a774d659ff0fc7fa7933a88dd199a6e48319df8b/dataset_iterator-0.3.3.tar.gz',
+    download_url = 'https://files.pythonhosted.org/packages/b3/1c/6383e70b8d6e409fe1e3a774d659ff0fc7fa7933a88dd199a6e48319df8b/dataset_iterator-0.3.4.tar.gz',
     keywords = ['Iterator', 'Dataset', 'Image', 'Numpy'],
     packages=setuptools.find_packages(),
     classifiers=[ #https://pypi.org/classifiers/

@@ -60,10 +60,6 @@ class MultiChannelIterator(IndexArrayIterator):
         input = (input) * input_multiplicity
     group_keyword : string or list of strings
         string contained in the path of all channels -> allows to limit iteration to a subset of the dataset. If dataset is h5: group_keywords can contain .* regular expression
-    group_scaling: list of list
-        group-wise+channel-wise scaling
-        should be of same length as group number, each sub-list should be either None either a list of same length as channel number.
-        each element should be either None, a callable, that is called on a single image and return the scaled image, either [center, scale] (scaled image will be I -> ( I - center) / scale )
     image_data_generators : list of image ImageDataGenerator as defined in keras pre-processing, for data augmentation.
         should be of same size as channel_keywords.
         augmentation parameters are computed on the first channel, and applied on each channels using the ImageDataGenerator of corresponding index.
@@ -113,12 +109,12 @@ class MultiChannelIterator(IndexArrayIterator):
         each element of labels is a vector of length equal to the batch axis of the corresponding sub-datasets
         each label is in the format: <barcode>_fXXXXX where <barcode> is a unique identifier of a time-series within the sub-dataset, and XXXXX an int that correspond to the time step of the imageself.
         Labels are used to return the index of the previous/next time-step in the TrackingIterator. In that case sub-datasets should correpond one or several time-series (a time-series correspond to successive images)
-    void_mask_max_proportion : float
+    void_mask_proportion : [float, float] or None
         maximum proportion of void images in each batch
         an image is considered as void when the corresponding image in the channel defined in void_mask_chan contains only zeros.
     void_mask_chan : int
         index of the mask channel used to determine whether and image is void or not.
-        see: void_mask_max_proportion
+        see: void_mask_proportion
     group_proportion : list of floats
         should be of same length as group_keyword
         proportion of image of each group in each batch
@@ -161,7 +157,7 @@ class MultiChannelIterator(IndexArrayIterator):
                  input_multiplicity = 1,
                  group_keyword=None,
                  group_proportion=None,
-                 group_scaling=None,
+                 void_mask_proportion=None,
                  image_data_generators=None,
                  singleton_channels=[],
                  channel_slicing_channels=None,
@@ -182,15 +178,9 @@ class MultiChannelIterator(IndexArrayIterator):
         self.n_spatial_dims=n_spatial_dims
         self.group_keyword=group_keyword
         self.group_proportion=group_proportion
-        self.group_scaling = group_scaling
         self.group_proportion_init=False
         if group_proportion is not None:
             assert group_keyword is not None and isinstance(group_keyword, (tuple, list)) and isinstance(group_proportion, (tuple, list)) and len(group_proportion)==len(group_keyword), "when group_proportion is not None, group_keyword should be a list/tuple group_proportion should be of same length as group_keyword"
-        if self.group_scaling is not None:
-            n_grps = len(group_keyword) if isinstance(group_keyword, (tuple, list)) else 1
-            assert isinstance(group_scaling, (tuple, list)) and len(group_scaling) == n_grps, "group_scaling is not None, and should be of same length as group number"
-            for grp_idx, grp in enumerate(group_scaling):
-                assert grp is None or (isinstance(grp, (tuple, list)) and len(grp) == len(channel_keywords)), "scaling parameters for group {} should be either None either of same length as channel numbers".format(grp_idx)
         self.channel_keywords=channel_keywords
         self.array_keywords = array_keywords
         self.dtype = dtype
@@ -298,7 +288,11 @@ class MultiChannelIterator(IndexArrayIterator):
 
         if not memory_persistant:
             self._close_datasetIO()
-        self.void_mask_max_proportion = -1
+        self.void_mask_proportion = void_mask_proportion
+        if self.void_mask_proportion is not None:
+            assert self.group_proportion is None, "cannot define void mask proportion and group proportion simultaneously"
+            assert len(void_mask_proportion) == 2 and void_mask_proportion[0]<=void_mask_proportion[1] and void_mask_proportion[0]>=0 and void_mask_proportion[1]<=1, "invalid void_mask_proportion must be a proportion range"
+            assert len(mask_channels)>0, "mask channels must be defined if void mask proportion is defined"
         if len(mask_channels)>0:
             self.void_mask_chan = mask_channels[0]
         else:
@@ -610,10 +604,8 @@ class MultiChannelIterator(IndexArrayIterator):
 
     def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, is_array=False, **kwargs):
         # read all images # TODO read all image per ds at once.
-        # in case of group scaling : group index is retrieved:
-        grp_idx = self._get_grp_idx(index_array + self.ds_off[index_ds]) if self.group_scaling is not None else [0]*len(index_array)
         read_fun = self._read_array if is_array else self._read_image
-        images = [read_fun(chan_idx, ds_idx, im_idx, grp_idx) for i, (ds_idx, im_idx, grp_idx) in enumerate(zip(index_ds, index_array, grp_idx))]
+        images = [read_fun(chan_idx, ds_idx, im_idx) for i, (ds_idx, im_idx, grp_idx) in enumerate(zip(index_ds, index_array))]
         batch = np.stack(images)
         index_a = np.copy(index_array)[..., np.newaxis] if self.return_image_index else None
         return batch, index_a
@@ -629,7 +621,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 pass
         return params
 
-    def _read_image(self, chan_idx, ds_idx, im_idx, grp_idx=0):
+    def _read_image(self, chan_idx, ds_idx, im_idx):
         ds = self.ds_array[chan_idx][ds_idx]
         if chan_idx in self.singleton_channels:
             im_idx=0
@@ -647,14 +639,6 @@ class MultiChannelIterator(IndexArrayIterator):
         factor = self.ds_scaling_factor[chan_idx][ds_idx]
         if off!=0 or factor!=1:
             im = (im - off)/factor
-
-        # apply group-wise scaling
-        if self.group_scaling is not None and self.group_scaling[grp_idx] is not None and self.group_scaling[grp_idx][chan_idx] is not None:
-            scaling = self.group_scaling[grp_idx][chan_idx]
-            if callable(scaling):
-                im = scaling(im)
-            else:
-                im = ( im - scaling[0] ) / scaling[1]
 
         # in case of lossy compression: mask must be 0 outside
         if chan_idx in self.mask_channels and not issubclass(im.dtype.type, np.integer):
@@ -791,12 +775,12 @@ class MultiChannelIterator(IndexArrayIterator):
         self.group_proportion_init = False # reset group proportion init flag
 
     def __len__(self):
-        if self.void_mask_max_proportion>=0 and not hasattr(self, "void_masks") or self.void_mask_max_proportion<0 and self.group_proportion is not None and not self.group_proportion_init:
+        if self.void_mask_proportion is not None and not hasattr(self, "void_masks") or self.void_mask_proportion is None and self.group_proportion is not None and not self.group_proportion_init:
             self._set_index_array() # redefines n in either cases
         return super().__len__()
 
     def _set_index_array(self):
-        if self.void_mask_max_proportion>=0: # if void_mask_max_proportion is set. Use case: in case there are too many void masks -> some are randomly removed
+        if self.void_mask_proportion is not None: # if void_mask_proportion is set. Use case: in case there are too many void masks -> some are randomly removed
             try:
                 void_masks = self.void_masks
             except AttributeError:
@@ -804,16 +788,26 @@ class MultiChannelIterator(IndexArrayIterator):
                 void_masks = self.void_masks
             bins = np.bincount(void_masks) #[not void ; void]
             if len(bins)==2:
-                prop = bins[1] / (bins[0]+bins[1])
-                target_void_count = int( (self.void_mask_max_proportion / (1 - self.void_mask_max_proportion) ) * bins[0] )
-                n_rem  = bins[1] - target_void_count
-                #print("void mask bins: {}, prop: {}, n_rem: {}".format(bins, prop, n_rem))
-                if n_rem>0:
-                    idx_void = np.flatnonzero(void_masks)
-                    to_rem = np.random.choice(idx_void, n_rem, replace=0)
-                    index_a = np.delete(self.allowed_indexes, to_rem)
+                if self.void_mask_proportion[0]==0 and self.void_mask_proportion[1]==0: # remove all void masks
+                    index_a = np.delete(self.allowed_indexes, np.flatnonzero(void_masks))
                 else:
-                    index_a = self.allowed_indexes
+                    # test right bound
+                    target_void_count = int( (self.void_mask_proportion[1] / (1 - self.void_mask_proportion[1]) ) * bins[0] )
+                    n_rem = bins[1] - target_void_count
+                    if n_rem>0:
+                        idx_void = np.flatnonzero(void_masks)
+                        to_rem = np.random.choice(idx_void, n_rem, replace=False)
+                        print(f"adjust void mask prop: from {bins[0]/(bins[0]+bins[1])} to max {self.void_mask_proportion[1]} remove : {to_rem.shape[0]/self.allowed_indexes.shape[0]} ")
+                        index_a = np.delete(self.allowed_indexes, to_rem)
+                    else: # test left bound
+                        target_void_count = int( (self.void_mask_proportion[0] / (1 - self.void_mask_proportion[0])) * bins[0])
+                        n_add = target_void_count - bins[1]
+                        if n_add>0:
+                            idx_void = np.flatnonzero(void_masks)
+                            to_add = np.random.choice(idx_void, n_add, replace=False)
+                            index_a = np.append(self.allowed_indexes, to_add)
+                        else:
+                            index_a = self.allowed_indexes
             else:  # only void or only not void
                 #print("void mask bins: ", bins)
                 index_a = self.allowed_indexes

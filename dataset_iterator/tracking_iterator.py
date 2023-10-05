@@ -198,6 +198,7 @@ class TrackingIterator(MultiChannelIterator):
         else:
             if im_idx+increment>=len(self.ds_array[c_idx][ds_idx]):
                 increment = len(self.ds_array[c_idx][ds_idx]) - 1 - im_idx
+                oob = True
         if increment==0:
             return 0,oob
         if self.labels is not None: # in this case, actual frame number can be deduced from label, and we can allow non-consecutive frames in a single dataset
@@ -205,8 +206,7 @@ class TrackingIterator(MultiChannelIterator):
                 inc = -increment if prev else increment
                 if get_neighbor_label(self.labels[ds_idx][im_idx], increment=inc)!=self.labels[ds_idx][im_idx+inc]:
                     increment -= 1
-                    if prev:
-                        oob=True
+                    oob=True
                 else:
                     return increment,oob
         return increment,oob
