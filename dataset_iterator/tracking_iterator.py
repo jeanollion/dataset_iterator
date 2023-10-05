@@ -7,23 +7,33 @@ import copy
 
 class TrackingIterator(MultiChannelIterator):
     def __init__(self,
-                dataset,
-                channel_keywords,
-                input_channels,
-                output_channels,
-                channels_prev,
-                channels_next,
-                mask_channels=[],
+                *args,
+                channels_prev:list,
+                channels_next:list,
                 n_frames:int = 1,
                 aug_all_frames:bool=True,
                 aug_remove_prob:float = 0,
                 frame_subsampling:int = 1, # either integer -> constant subsampling, callable (called at each mini batch and returns the subsampling), or interval with breaks included
                 verbose:bool = False,
                 **kwargs):
+        """
 
-        if len(channels_next)!=len(channel_keywords):
+        Parameters
+        ----------
+        dataset : dataset IO or convertible
+        channels_prev: return previous frames for which channel
+        channels_next return next frames for which channel
+        n_frames: number of previous/next frames added to central frame
+        aug_all_frames: whether perform data augmentation on all frames or only on central and edges
+        aug_remove_prob: probability that previous/next frames equals current frame (simulate static)
+        frame_subsampling : callable / list / integer: random spacing bewteen frames
+        verbose
+        kwargs
+        """
+        super().__init__(*args, **kwargs)
+        if len(channels_next)!=len(self.channel_keywords):
             raise ValueError("length of channels_next differs from channel_keywords")
-        if len(channels_prev)!=len(channel_keywords):
+        if len(channels_prev)!=len(self.channel_keywords):
             raise ValueError("length of channels_prev differs from channel_keywords")
         #if mask_channels is not None and len(mask_channels)>0:
         #    if any(channels_prev) and not channels_prev[mask_channels[0]]:
@@ -52,12 +62,7 @@ class TrackingIterator(MultiChannelIterator):
             def fs():
                 return frame_subsampling
             self.frame_subsampling = fs
-        super().__init__(dataset=dataset,
-                    channel_keywords=channel_keywords,
-                    input_channels=input_channels,
-                    output_channels=output_channels,
-                    mask_channels=mask_channels,
-                    **kwargs)
+
 
     def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False, perform_elasticdeform=True, perform_tiling=True, **kwargs):
         if "n_frames" not in kwargs:
