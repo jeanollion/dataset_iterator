@@ -117,7 +117,7 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
     """
     image_shape = batch[0].shape[1:-1] if isinstance(batch, (list, tuple)) else batch.shape[1:-1]
     rank = len(image_shape)
-    nchan = np.max([b.shape[-1] for b in batch]) if isinstance(batch, (list, tuple)) else batch.shape[-1]
+    nchan_max = np.max([b.shape[-1] for b in batch]) if isinstance(batch, (list, tuple)) else batch.shape[-1]
     assert rank in [2, 3], "only 2D or 3D images are supported"
     aspect_ratio_range = ensure_multiplicity(2, aspect_ratio_range)
     assert aspect_ratio_range[0]<=aspect_ratio_range[1], "invalid aspect_ratio_range"
@@ -145,17 +145,26 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
             if delta>0:
                 tile_coords[ax][i] -= delta
 
-    if random_channel_jitter_shape is not None and nchan>1:
+    tile_fun_no_jitter = lambda b, o: np.concatenate([_zoom(
+        _subset(b, [tile_coords[ax][i] for ax in range(rank)], [r_tile_shape[ax][i] for ax in range(rank)]), tile_shape,
+        o) for i in range(n_t)])
+
+    if random_channel_jitter_shape is not None and nchan_max>1:
         random_channel_jitter_shape = ensure_multiplicity(rank, random_channel_jitter_shape)
         def r_channel_jitter_fun(ax):
             min_a = np.maximum(0, tile_coords[ax]-random_channel_jitter_shape[ax] )
             max_a = np.minimum(tile_coords[ax] + random_channel_jitter_shape[ax], image_shape[ax]-r_tile_shape[ax])
             return randint(min_a, max_a+1, size=n_t)
-        tile_coords_c = [ [r_channel_jitter_fun(ax) for ax in range(rank)] for c in range(nchan) ]
-        tile_fun = lambda b,o : np.concatenate([_zoom(_subset_by_channel(b, [[tile_coords_c[c][ax][i] for ax in range(rank)] for c in range(nchan)], [r_tile_shape[ax][i] for ax in range(rank)]), tile_shape, o) for i in range(n_t)])
+        tile_coords_c = [ [r_channel_jitter_fun(ax) for ax in range(rank)] for c in range(nchan_max) ]
+        def tile_fun(b, o):
+            if b.shape[-1]==1:
+                return tile_fun_no_jitter(b, o)
+            return np.concatenate(
+                [ _zoom(_subset_by_channel(b, [[tile_coords_c[c][ax][i] for ax in range(rank)] for c in range(b.shape[-1])], [r_tile_shape[ax][i] for ax in range(rank)]), tile_shape, o) for i in range(n_t)]
+            )
     else:
-        tile_fun = lambda b,o : np.concatenate([_zoom(_subset(b, [tile_coords[ax][i] for ax in range(rank)], [r_tile_shape[ax][i] for ax in range(rank)]), tile_shape, o) for i in range(n_t)])
-    if isinstance(batch, (list, tuple)): # multi-array case (batch is actually an array of batches)
+        tile_fun = tile_fun_no_jitter
+    if isinstance(batch, (list, tuple)): # multi-array case (batch is actually a list of batches)
         interpolation_order= ensure_multiplicity(len(batch), interpolation_order)
         return [tile_fun(b, interpolation_order[i]) for i, b in enumerate(batch)]
     else:
