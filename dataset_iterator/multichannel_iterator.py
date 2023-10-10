@@ -328,6 +328,9 @@ class MultiChannelIterator(IndexArrayIterator):
             self.ds_array = None
             self.ads_array = None
 
+    def close(self):
+        self._close_datasetIO()
+
     def train_test_split(self, **options):
         """Split this iterator in two distinct iterators
 

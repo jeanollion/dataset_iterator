@@ -51,7 +51,7 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
         pass
 
     def _set_index_array(self):
-        pass
+        pass # called at on_epoch_end
 
     def _ensure_step_number(self):
         if self.index_array is None:
