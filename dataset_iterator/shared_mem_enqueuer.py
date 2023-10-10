@@ -1,12 +1,11 @@
 import multiprocessing
-
+import tensorflow as tf
 import numpy as np
 from multiprocessing import shared_memory, managers
 import queue
+from tensorflow import keras
 from keras.utils import data_utils
 
-
-# adapted from https://muditb.medium.com/speed-up-your-keras-sequence-pipeline-f5d158359f46
 class ShmArray(np.ndarray):
     def __new__(cls, shape, dtype=float, buffer=None, offset=0, strides=None, order=None, shm=None):
         obj = super(ShmArray, cls).__new__(cls, shape, dtype, buffer, offset, strides, order)
@@ -91,7 +90,7 @@ def get_index(uid, idx, epoch, use_shm):
     else:
         return inputs, outputs
 
-class SharedMemEnqueuer(data_utils.OrderedEnqueuer): # adapted from tf.keras.utils.data_utils.OrderedEnqueuer
+class SharedMemEnqueuer(tf.keras.utils.OrderedEnqueuer): # adapted from tf.keras.utils.data_utils.OrderedEnqueuer
     """Builds an Enqueuer from a Sequence.
 
     Args:
