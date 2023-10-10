@@ -3,8 +3,9 @@ import tensorflow as tf
 import numpy as np
 from multiprocessing import shared_memory, managers
 import queue
-from tensorflow import keras
-from keras.utils import data_utils
+from contextlib import closing
+from tensorflow.python.keras.utils import data_utils
+
 
 class ShmArray(np.ndarray):
     def __new__(cls, shape, dtype=float, buffer=None, offset=0, strides=None, order=None, shm=None):
@@ -173,7 +174,7 @@ class SharedMemEnqueuer(tf.keras.utils.OrderedEnqueuer): # adapted from tf.keras
         """Submits request to the executor and queue the `Future` objects."""
         sequence = list(range(self.sequence_len))
         #self._send_sequence()
-        with data_utils.closing(self.executor_fn()) as executor:
+        with closing(self.executor_fn()) as executor:
             epoch = 0
             while True:
                 if self.shuffle:
