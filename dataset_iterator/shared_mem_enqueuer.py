@@ -119,11 +119,12 @@ class SharedMemEnqueuer(tf.keras.utils.OrderedEnqueuer): # adapted from tf.keras
                 self.sequence = sequence_fun()
                 self.epoch = 0
 
-            def __del__(self):
+            def close(self):
                 try:
                     self.sequence.close()
-                finally:
-                    super().__del__()
+                except AttributeError:
+                    pass
+                super().close()
 
             def set_epoch(self, epoch):
                 if epoch != self.epoch:
