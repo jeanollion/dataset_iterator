@@ -557,7 +557,7 @@ class MultiChannelIterator(IndexArrayIterator):
         else:
             return [self._apply_postprocessing_and_concat_weight_map(batch_by_channel[chan_idx], i) for i, chan_idx in enumerate(self.output_channels)]
 
-    def _get_batches_of_transformed_samples_by_channel(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array=None, perform_augmentation=True, transfer_aug_param_function=lambda source, dest:copy_geom_tranform_parameters(source, dest), **kwargs):
+    def _get_batches_of_transformed_samples_by_channel(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array=None, perform_augmentation=True, **kwargs):
         """Generate a batch of transformed sample for a given channel
 
         Parameters
@@ -589,7 +589,10 @@ class MultiChannelIterator(IndexArrayIterator):
                 params = self._get_data_augmentation_parameters(chan_idx, ref_chan_idx, batch, i, index_ds, index_array)
                 if aug_param_array is not None and params is not None:
                     if chan_idx!=ref_chan_idx:
-                        transfer_aug_param_function(aug_param_array[i][ref_chan_idx], params)
+                        try:
+                            self.image_data_generators[chan_idx].transfer_parameters(aug_param_array[i][ref_chan_idx], params)
+                        except AttributeError:
+                            pass
                     for k,v in params.items():
                         aug_param_array[i][chan_idx][k]=v
                 batch[i] = self._apply_augmentation(batch[i], chan_idx, params)
@@ -950,9 +953,3 @@ def _apply_multiplicity(batch, multiplicity):
     elif multiplicity>1:
         batch = [b for b in batch if b is not None]
         return batch * multiplicity
-
-def copy_geom_tranform_parameters(aug_param_source, aug_param_dest): # TODO : parametrizable
-    if 'bacteria_swim' in aug_param_source:
-        aug_param_dest['bacteria_swim'] = copy.deepcopy(aug_param_source['bacteria_swim'])
-    if 'rotate90' in aug_param_source:
-        aug_param_dest['rotate90'] = aug_param_dest['rotate90']

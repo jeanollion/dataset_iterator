@@ -1,9 +1,6 @@
 import numpy as np
 from dataset_iterator import MultiChannelIterator
 from random import random, randint
-from sklearn.model_selection import train_test_split
-from .multichannel_iterator import copy_geom_tranform_parameters
-import copy
 
 class TrackingIterator(MultiChannelIterator):
     def __init__(self,
@@ -73,19 +70,6 @@ class TrackingIterator(MultiChannelIterator):
         res = super()._get_batch_by_channel(index_array, perform_augmentation, input_only, perform_elasticdeform, perform_tiling, **kwargs)
         return res
 
-    def _get_batches_of_transformed_samples_by_channel(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array=None, perform_augmentation=True, **kwargs):
-        def transfer_aug_param_function(source, dest): # also copies prev/next
-            copy_geom_tranform_parameters(source, dest)
-            if "aug_params_prev" in source:
-                if "aug_params_prev" not in dest:
-                    dest["aug_params_prev"] = dict()
-                copy_geom_tranform_parameters(source["aug_params_prev"], dest["aug_params_prev"])
-            if "aug_params_next" in source:
-                if "aug_params_next" not in dest:
-                    dest["aug_params_next"] = dict()
-                copy_geom_tranform_parameters(source["aug_params_next"], dest["aug_params_next"])
-        return super()._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, perform_augmentation, transfer_aug_param_function=transfer_aug_param_function, **kwargs)
-
     def _get_frames_to_augment(self, img, chan_idx, aug_params):
         if self.aug_all_frames:
             return list(range(img.shape[-1]))
@@ -99,55 +83,11 @@ class TrackingIterator(MultiChannelIterator):
 
     def _apply_augmentation(self, img, chan_idx, aug_params): # apply separately for prev / cur / next
         frames_to_augment = self._get_frames_to_augment(img, chan_idx, aug_params)
-        n_frames = (img.shape[-1]-1)//2 if self.channels_prev[chan_idx] and self.channels_next[chan_idx] else img.shape[-1]-1
-        for f in frames_to_augment:
-            loc = 0
-            if self.channels_prev[chan_idx] and f<n_frames:
-                loc = -1
-            elif self.channels_next[chan_idx]:
-                if self.channels_prev[chan_idx]:
-                    if f>n_frames:
-                        loc=1
-                elif f>0:
-                    loc=1
-            _aug_params = aug_params
-            if aug_params is not None:
-                if loc==-1:
-                    _aug_params = aug_params.get("aug_params_prev")
-                elif loc==1:
-                    _aug_params = aug_params.get("aug_params_next")
-            img[...,f:f+1] = super()._apply_augmentation(img[...,f:f+1], chan_idx, _aug_params)
-        return img
-
-    def _get_data_augmentation_parameters(self, chan_idx, ref_chan_idx, batch, idx, index_ds, index_array):
-        batch_chan_idx = 1 if self.channels_prev[chan_idx] else 0
-        params = super()._get_data_augmentation_parameters(chan_idx, ref_chan_idx, batch[...,batch_chan_idx:(batch_chan_idx+1)], idx, index_ds, index_array)
-        if chan_idx==ref_chan_idx and chan_idx in self.mask_channels:
-            if self.channels_prev[chan_idx] :
-                try:
-                    self.image_data_generators[chan_idx].adjust_augmentation_param_from_neighbor_mask(params, batch[idx,...,0])
-                except AttributeError: # data generator does not have this method
-                    pass
-            if self.channels_next[chan_idx]:
-                try:
-                    self.image_data_generators[chan_idx].adjust_augmentation_param_from_neighbor_mask(params, batch[idx,...,-1])
-                except AttributeError: # data generator does not have this method
-                    pass
-        if self.channels_prev[chan_idx] and params is not None:
-            params_prev = super()._get_data_augmentation_parameters(chan_idx, ref_chan_idx, batch[...,0:1], idx, index_ds, index_array)
-            try:
-                self.image_data_generators[chan_idx].transfer_parameters(params, params_prev)
-            except AttributeError:
-                pass
-            params["aug_params_prev"] = params_prev
-        if self.channels_next[chan_idx] and params is not None:
-            params_next = super()._get_data_augmentation_parameters(chan_idx, ref_chan_idx, batch[...,-1:], idx, index_ds, index_array)
-            try:
-                self.image_data_generators[chan_idx].transfer_parameters(params, params_next)
-            except AttributeError:
-                pass
-            params["aug_params_next"] = params_next
-        return params
+        if self.aug_all_frames:
+            return super()._apply_augmentation(img, chan_idx, aug_params)
+        else:
+            img[..., frames_to_augment] = super()._apply_augmentation(img[..., frames_to_augment], chan_idx, aug_params)
+            return img
 
     def _read_image_batch(self, index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, is_array=False, **kwargs):
         batch, index_a = super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, is_array=is_array, **kwargs)

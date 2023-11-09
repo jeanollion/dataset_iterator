@@ -4,14 +4,23 @@ from random import uniform, random, getrandbits
 from .utils import is_list, ensure_multiplicity
 from .pre_processing import get_center_scale_range, compute_histogram_range, adjust_histogram_range, add_poisson_noise, add_speckle_noise, add_gaussian_noise, gaussian_blur, get_histogram_elasticdeform_target_points_delta, histogram_elasticdeform, get_illumination_variation_target_points, illumination_variation
 
-def get_image_data_generator(scaling_parameters=None, illumination_parameters=None, keras_parameters=None):
+def get_image_data_generator(scaling_parameters=None, illumination_parameters=None, affine_transform_parameters=None):
     generators = []
     if scaling_parameters is not None:
-        generators.append(ScalingImageGenerator(**scaling_parameters))
+        if isinstance(scaling_parameters, dict):
+            generators.append(ScalingImageGenerator(**scaling_parameters))
+        else:
+            generators.append(None)
     if illumination_parameters is not None:
-        generators.append(IlluminationImageGenerator(**illumination_parameters))
-    if keras_parameters is not None:
-        generators.append(KerasImageDataGenerator(**keras_parameters))
+        if isinstance(illumination_parameters, dict):
+            generators.append(IlluminationImageGenerator(**illumination_parameters))
+        else:
+            generators.append(None)
+    if affine_transform_parameters is not None:
+        if isinstance(affine_transform_parameters, dict):
+            generators.append(KerasImageDataGenerator(**affine_transform_parameters))
+        else:
+            generators.append(None)
     if len(generators) == 1:
         return generators[0]
     else:
@@ -54,47 +63,52 @@ class ImageGeneratorList():
 
     def get_random_transform(self, image_shape:tuple):
         all_params = {}
-        for g in self.generators:
-            try:
-                params = g.get_random_transform(image_shape)
-                if params is not None:
-                    all_params.update(params)
-            except AttributeError:
-                pass
+        for i, g in enumerate(self.generators):
+            if g is not None:
+                try:
+                    params = g.get_random_transform(image_shape)
+                    if params is not None:
+                        all_params[i] = params
+                except AttributeError:
+                    pass
         return all_params
 
     def transfer_parameters(self, source:dict, destination:dict):
-        for g in self.generators:
-            try:
-                g.transfer_parameters(source, destination)
-            except AttributeError:
-                pass
+        for i, g in enumerate(self.generators):
+            if g is not None and i in source and i in destination:
+                try:
+                    g.transfer_parameters(source[i], destination[i])
+                except AttributeError:
+                    pass
 
     def adjust_augmentation_param_from_mask(self, parameters:dict, mask):
-        for g in self.generators:
-            try:
-                g.adjust_augmentation_param_from_mask(parameters, mask)
-            except AttributeError:
-                pass
+        for i, g in enumerate(self.generators):
+            if g is not None:
+                try:
+                    g.adjust_augmentation_param_from_mask(parameters[i], mask)
+                except AttributeError:
+                    pass
 
     def apply_transform(self, img, aug_params:dict):
-        for g in self.generators:
-            try:
-                im2 = g.apply_transform(img, aug_params)
-                if im2 is not None:
-                    img = im2
-            except AttributeError:
-                pass
+        for i, g in enumerate(self.generators):
+            if g is not None:
+                try:
+                    im2 = g.apply_transform(img, aug_params[i])
+                    if im2 is not None:
+                        img = im2
+                except AttributeError:
+                    pass
         return img
 
     def standardize(self, img):
         for g in self.generators:
-            try:
-                im2 = g.standardize(img)
-                if im2 is not None:
-                    img = im2
-            except AttributeError:
-                pass
+            if g is not None:
+                try:
+                    im2 = g.standardize(img)
+                    if im2 is not None:
+                        img = im2
+                except AttributeError:
+                    pass
         return img
 
 # image scaling
@@ -298,18 +312,18 @@ class KerasImageDataGenerator(tf.keras.preprocessing.image.ImageDataGenerator):
         super().__init__(**kwargs)
 
     def transfer_parameters(self, source, destination):
-        destination['flip_vertical'] = source.get('flip_vertical', False)  # flip must be the same
-        destination['flip_horizontal'] = source.get('flip_horizontal', False)  # flip must be the same
-        destination['zy'] = source.get('zy', 1)  # zoom should be the same so that cell aspect does not change too much
-        destination['zx'] = source.get('zx', 1)  # zoom should be the same so that cell aspect does not change too much
-        destination['shear'] = source.get('shear', 0)  # shear should be the same so that cell aspect does not change too much
+        destination['flip_vertical'] = source.get('flip_vertical', False)
+        destination['flip_horizontal'] = source.get('flip_horizontal', False)
+        destination['zy'] = source.get('zy', 1)
+        destination['zx'] = source.get('zx', 1)
+        destination['shear'] = source.get('shear', 0)
         if 'brightness' in source:
             destination['brightness'] = source['brightness']
         elif 'brightness' in destination:
             del destination['brightness']
         destination['theta'] = source.get('theta', 0)
-        #destination['tx'] = source.get('tx', 0)
-        #destination['ty'] = source.get('ty', 0)
+        destination['tx'] = source.get('tx', 0)
+        destination['ty'] = source.get('ty', 0)
 
 class PreProcessingImageGenerator():
     """Simple data generator that only applies a custom pre-processing function to each image.
