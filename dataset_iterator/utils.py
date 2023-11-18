@@ -17,6 +17,17 @@ def ensure_size(array, size:int, shuffle:bool = False):
         array = np.random.permutation(array)
     return array[:size]
 
+def ensure_same_shape(array_list):
+    rank = len(array_list[0].shape)
+    assert np.all([len(im.shape) == rank for im in array_list]), f"at least one array array have rank that differ from : {rank}"
+    shape = [np.max([im.shape[ax] for im in array_list]) for ax in range(rank)]
+    for i in range(len(array_list)):
+        if np.any(array_list[i].shape != shape):
+            array_list[i] = pad_to_shape(array_list[i], shape)
+def pad_to_shape(array, shape):
+    pad = [ (0, max(0, s - array.shape[i]))  for (i, s) in enumerate(shape)]
+    return np.pad(array, tuple(pad))
+
 def ensure_multiplicity(n, object):
     if object is None:
         return [None] * n

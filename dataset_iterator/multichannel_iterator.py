@@ -6,10 +6,9 @@ from .utils import remove_duplicates, pick_from_array
 from sklearn.model_selection import train_test_split
 import time
 import copy
-from math import copysign, ceil
+from math import ceil
 from .datasetIO import DatasetIO, get_datasetIO, MemoryIO
-from .utils import ensure_multiplicity, flatten_list, replace_last
-from itertools import groupby
+from .utils import ensure_multiplicity, flatten_list, replace_last, ensure_same_shape
 from .index_array_iterator import INCOMPLETE_LAST_BATCH_MODE
 try:
     import elasticdeform as ed
@@ -612,6 +611,8 @@ class MultiChannelIterator(IndexArrayIterator):
         # read all images # TODO read all image per ds at once.
         read_fun = self._read_array if is_array else self._read_image
         images = [read_fun(chan_idx, ds_idx, im_idx) for i, (ds_idx, im_idx) in enumerate(zip(index_ds, index_array))]
+        if is_array:
+            ensure_same_shape(images) # zero-pad if shape differs
         batch = np.stack(images)
         index_a = np.copy(index_array)[..., np.newaxis] if self.return_image_index else None
         return batch, index_a
