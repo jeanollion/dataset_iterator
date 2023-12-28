@@ -17,11 +17,11 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
 
     def set_allowed_indexes(self, indexes):
         if isinstance(indexes, int):
-            self.n = indexes
+            self._n = indexes
             self.allowed_indexes=np.arange(self.n)
         else:
             self.allowed_indexes=indexes
-            self.n=len(indexes)
+            self._n=len(indexes)
         self.index_array=None
 
     def __len__(self):

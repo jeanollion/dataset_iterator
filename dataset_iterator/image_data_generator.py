@@ -112,7 +112,7 @@ class ImageGeneratorList():
         return img
 
 # image scaling
-SCALING_MODES = ["RANDOM_CENTILES", "RANDOM_MIN_MAX", "FLUORESCENCE", "BRIGHT_FIELD"]
+SCALING_MODES = ["RANDOM_CENTILES", "RANDOM_MIN_MAX", "FLUORESCENCE", "BRIGHT_FIELD", "CONSTANT"]
 def get_random_scaling_function(mode="RANDOM_CENTILES", dataset=None, channel_name:str=None, **kwargs):
     data_gen = ScalingImageGenerator(mode, dataset, channel_name, **kwargs)
     def fun(img):
@@ -124,7 +124,18 @@ class ScalingImageGenerator():
     def __init__(self, mode="RANDOM_CENTILES", dataset=None, channel_name: str = None, **kwargs):
         assert mode in SCALING_MODES, f"invalid mode={mode}, should be in {SCALING_MODES}"
         self.mode = mode
-        if mode == "RANDOM_CENTILES":
+        if mode == "CONSTANT":
+            if "center_scale" in kwargs:
+                center_scale = kwargs["center_scale"]
+                assert len(center_scale)==2, "center_scale argument should be of length 2"
+                self.scale = center_scale[1]
+                self.center = center_scale[0]
+            else:
+                assert "scale" in kwargs, "scale should be in arguments"
+                assert "center" in kwargs, "center should be in arguments"
+                self.scale = kwargs["scale"]
+                self.center = kwargs["center"]
+        elif mode == "RANDOM_CENTILES":
             self.min_centile_range = kwargs.get("min_centile_range", [0.1, 5])
             self.max_centile_range = kwargs.get("max_centile_range", [95, 99.9])
             assert self.min_centile_range[0] <= self.min_centile_range[1], "invalid min range"
@@ -182,6 +193,8 @@ class ScalingImageGenerator():
             destination["scale"] = source["scale"]
 
     def apply_transform(self, img, aug_params):
+        if self.mode=="CONSTANT":
+            return (img - self.center) / self.scale
         if self.mode == "RANDOM_CENTILES":
             min0, min1, max0, max1 = np.percentile(img, self.min_centile_range + self.max_centile_range)
             cmin = min0 + (min1 - min0) * aug_params["cmin"]

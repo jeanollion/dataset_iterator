@@ -65,7 +65,7 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
     else:
         return tiles
 
-def extract_tile_random_zoom_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=True, augmentation_rotate=True, zoom_range=[0.9, 1.1], aspect_ratio_range=[0.9, 1.1], interpolation_order=1, random_channel_jitter_shape=None):
+def extract_tile_random_zoom_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=True, augmentation_rotate=True, zoom_range=[0.9, 1.1], aspect_ratio_range=[0.9, 1.1], zoom_probability:float=0.5, interpolation_order=1, random_channel_jitter_shape=None):
     if (is_null(zoom_range, 1) or is_null(zoom_range, 0)) and is_null(random_channel_jitter_shape, 0):
         return extract_tile_function(tile_shape, perform_augmentation=perform_augmentation, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, augmentation_rotate=augmentation_rotate)
     def func(batch, is_mask):
@@ -74,13 +74,13 @@ def extract_tile_random_zoom_function(tile_shape, perform_augmentation=True, ove
             order = [0 if m else interpolation_order for m in is_mask]
         else:
             order = 0 if is_mask else interpolation_order
-        tiles = extract_tiles_random_zoom(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, zoom_range=zoom_range, aspect_ratio_range=aspect_ratio_range, interpolation_order=order, random_channel_jitter_shape=random_channel_jitter_shape)
+        tiles = extract_tiles_random_zoom(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, zoom_range=zoom_range, aspect_ratio_range=aspect_ratio_range, zoom_probability=zoom_probability, interpolation_order=order, random_channel_jitter_shape=random_channel_jitter_shape)
         if perform_augmentation:
             tiles = augment_tiles_inplace(tiles, rotate=augmentation_rotate and all([s==tile_shape[0] for s in tile_shape]), n_dims=len(tile_shape))
         return tiles
     return func
 
-def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, zoom_range=[0.6, 1.6], aspect_ratio_range=[0.6, 1.6], interpolation_order=1, random_channel_jitter_shape=None):
+def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, zoom_range=[0.9, 1.1], aspect_ratio_range=[0.9, 1.1], zoom_probability:float=0.5, interpolation_order=1, random_channel_jitter_shape=None):
     """Extract tiles with random zoom.
 
     Parameters
@@ -105,6 +105,7 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
     aspect_ratio_range : list
         aspect ratio relative to the first axis.
         [min aspect ratio, max aspect ratio]
+    zoom_probability : float in [0,1] probability to perform random zoom
     interpolation_order : int
         The order of the spline interpolation passed to scipy.ndimage.zoom, range 0-5
     random_channel_jitter_range : list / tuple of ints or int
@@ -137,6 +138,13 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
     zoom = random(n_t) * (zoom_range_corrected[1] - zoom_range_corrected[0]) + zoom_range_corrected[0]
     aspect_ratio_fun = lambda ax : random(n_t) * (np.minimum(image_shape[ax] / (zoom * tile_shape[ax]), aspect_ratio_range[1]) - aspect_ratio_range[0]) + aspect_ratio_range[0]
     aspect_ratio = [ aspect_ratio_fun(ax) for ax in range(1, rank) ]
+    if zoom_probability < 1: # some tiles are not zoomed
+        no_zoom = random(n_t) >= zoom_probability
+        for i in range(n_t):
+            if no_zoom[i]:
+                zoom[i] = 1
+                for ax in range(1, rank):
+                    aspect_ratio[ax][i] = 1
     tile_size_fun = lambda ax : np.rint(zoom * tile_shape[ax]).astype(int) if ax==0 else np.rint(zoom * aspect_ratio[ax-1] * tile_shape[ax]).astype(int)
     r_tile_shape = [tile_size_fun(ax) for ax in range(rank)]
     for i in range(n_t): # translate coords if necessary so that tile is valid
