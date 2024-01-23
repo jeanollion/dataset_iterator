@@ -32,6 +32,7 @@ class MultiChannelIterator(IndexArrayIterator):
         keywords defining each channel.
         The path of each channel file within dataset should only differ by this keyword
         This list defines the indices of all channels: e.g if channel_keywords = ["/raw", "/labels"] : all datasets containing "/raw" in their path will be associated to the channel of index 0 and all datasets which path contains "/labels" instead of "/raw" will be associated to the channel of index 1.
+        A channel keyword that is null will be considered as a placeholder that should be created by a channels_postprocessing_function
     input_channels : list of ints
         index of returned input channels within channel_keywords
     output_channels : list of ints
