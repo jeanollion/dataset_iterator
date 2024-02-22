@@ -143,7 +143,7 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
         for i in range(n_t):
             if no_zoom[i]:
                 zoom[i] = 1
-                for ax in range(1, rank):
+                for ax in range(0, rank-1):
                     aspect_ratio[ax][i] = 1
     tile_size_fun = lambda ax : np.rint(zoom * tile_shape[ax]).astype(int) if ax==0 else np.rint(zoom * aspect_ratio[ax-1] * tile_shape[ax]).astype(int)
     r_tile_shape = [tile_size_fun(ax) for ax in range(rank)]
