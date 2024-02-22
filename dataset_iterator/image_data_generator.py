@@ -322,6 +322,10 @@ class IlluminationImageGenerator():
 
 class KerasImageDataGenerator(tf.keras.preprocessing.image.ImageDataGenerator):
     def __init__(self, **kwargs):
+        if "interpolation_order" in kwargs: # interpolation_order was introduced at version 2.9.0
+            tf_version = tuple(map(int, (tf.__version__.split("."))))
+            if tf_version < (2,9,0):
+                kwargs.pop("interpolation_order")
         super().__init__(**kwargs)
 
     def transfer_parameters(self, source, destination):
