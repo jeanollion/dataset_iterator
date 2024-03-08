@@ -4,6 +4,7 @@ import os
 from os import listdir
 from os.path import isfile, join
 from tensorflow.keras.utils import img_to_array
+from math import log10
 import numpy as np
 try:
     from PIL import Image as pil_image
@@ -162,7 +163,7 @@ class MultipleFileIO(DatasetIO):
         if self.n_image_per_file == 1:
             if not os.path.isdir(path):
                 os.makedirs(path)
-            n_zeros = int(math.log10( len(data) )) + 1
+            n_zeros = int(log10( len(data) )) + 1
             if dest_sel is None:
                 dest_sel = source_sel
             for i, j in zip(source_sel, dest_sel):
