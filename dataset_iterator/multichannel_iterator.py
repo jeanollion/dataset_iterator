@@ -670,16 +670,18 @@ class MultiChannelIterator(IndexArrayIterator):
         p = [self.paths[ii] for ii in i]
         return(a, i, p)
 
-    def predict(self, output, model, output_keys, write_every_n_batches = 100, n_output_channels=1, output_image_shapes = None, prediction_function=None, apply_to_prediction=None, close_outputIO=True, **create_dataset_options):
-        of = get_datasetIO(output, 'a')
+    def predict(self, output, output_channels, write_every_n_batches=100, n_output_channels=1, output_image_shapes=None, model=None, prediction_function=None, apply_to_prediction=None, close_outputIO=True, **create_dataset_options):
+        of = get_datasetIO(output, 'a') if output is not None else self.datasetIO
+        assert model is not None or prediction_function is not None, "either model or predict_function should be provided"
+
         if output_image_shapes is None:
             output_image_shapes = self.channel_image_shapes[0] if len(self.channel_image_shapes[0])==self.n_spatial_dims else self.channel_image_shapes[0][:-1]
-        if not isinstance(output_keys, (list, tuple)):
-            output_keys = [output_keys]
+        if not isinstance(output_channels, (list, tuple)):
+            output_channels = [output_channels]
         if not isinstance(output_image_shapes, list):
             output_image_shapes = [output_image_shapes]
-        output_image_shapes = ensure_multiplicity(len(output_keys), output_image_shapes)
-        n_output_channels = ensure_multiplicity(len(output_keys), n_output_channels)
+        output_image_shapes = ensure_multiplicity(len(output_channels), output_image_shapes)
+        n_output_channels = ensure_multiplicity(len(output_channels), n_output_channels)
         output_shapes = [ois+(nc,) for ois, nc in zip(output_image_shapes, n_output_channels)]
         # set iterators parameters for prediction & record them
         batch_index = self.batch_index
@@ -692,15 +694,15 @@ class MultiChannelIterator(IndexArrayIterator):
         if np.any(self.index_array[1:] < self.index_array[:-1]):
             raise ValueError('Index array should be monotonically increasing')
 
-        buffer = [np.zeros(shape = (min(len(self) * self.batch_size, write_every_n_batches*self.batch_size),)+output_shapes[oidx], dtype=self.dtype) for oidx,k in enumerate(output_keys)]
+        buffer = [np.zeros(shape = (min(len(self) * self.batch_size, write_every_n_batches*self.batch_size),)+output_shapes[oidx], dtype=self.dtype) for oidx,k in enumerate(output_channels)]
         if prediction_function is None:
-            pred_fun = lambda model, input : model.predict(input)
+            pred_fun = lambda input : model.predict(input)
         else:
             pred_fun = prediction_function
 
         for ds_i, ds_i_i, ds_i_len in zip(*np.unique(self._get_ds_idx(self.index_array), return_index=True, return_counts=True)):
-            self._ensure_dataset(of, output_shapes, output_keys, ds_i, **create_dataset_options)
-            paths = [replace_last(self.paths[ds_i], self.channel_keywords[0], output_key) for output_key in output_keys]
+            self._ensure_dataset(of, output_shapes, output_channels, ds_i, **create_dataset_options)
+            paths = [replace_last(self.paths[ds_i], self.channel_keywords[0], output_key) for output_key in output_channels]
             index_arrays = np.array_split(self.index_array[ds_i_i:(ds_i_i+ds_i_len)], ceil(ds_i_len/self.batch_size))
             print("predictions for dataset:", self.paths[ds_i])
             unsaved_batches = 0
@@ -710,23 +712,23 @@ class MultiChannelIterator(IndexArrayIterator):
             for i, index_array in enumerate(index_arrays):
                 batch_by_channel, aug_param_array, ref_chan_idx = self._get_batch_by_channel(index_array, perform_augmentation=self.perform_data_augmentation, input_only=True)
                 input = self._get_input_batch(batch_by_channel, ref_chan_idx, aug_param_array)
-                cur_pred = pred_fun(model, input)
+                cur_pred = pred_fun(input)
                 if apply_to_prediction is not None:
                     cur_pred = apply_to_prediction(cur_pred)
                 if not isinstance(cur_pred, (list, tuple)):
                     cur_pred = [cur_pred]
-                assert len(cur_pred)==len(output_keys), 'prediction should have as many output as output_keys argument. # output keys: {} # predictions: {}'.format(len(output_keys), len(cur_pred))
-                for oidx in range(len(output_keys)):
+                assert len(cur_pred)==len(output_channels), 'prediction should have as many output as output_keys argument. # output keys: {} # predictions: {}'.format(len(output_channels), len(cur_pred))
+                for oidx in range(len(output_channels)):
                     assert cur_pred[oidx].shape[1:] == output_shapes[oidx], "prediction shape differs from output shape for output idx={} : prediction: {} target: {}".format(oidx, cur_pred[oidx].shape[1:], output_shapes[oidx])
                 #print("predicted: {}->{}".format(output_idx, cur_pred[0].shape[0]))
-                for oidx in range(len(output_keys)):
+                for oidx in range(len(output_channels)):
                     buffer[oidx][buffer_idx:(buffer_idx+cur_pred[oidx].shape[0])] = cur_pred[oidx]
                 buffer_idx+=cur_pred[0].shape[0] # assumes all outputs have same batch size
                 unsaved_batches +=1
                 if unsaved_batches==write_every_n_batches or i==len(index_arrays)-1:
                     start_save = time.time()
                     #print("dest sel: {} -> {}".format(output_idx, output_idx+buffer_idx))
-                    for oidx in range(len(output_keys)):
+                    for oidx in range(len(output_channels)):
                         of.write_direct(paths[oidx], buffer[oidx], source_sel=np.s_[0:buffer_idx], dest_sel=np.s_[output_idx:(output_idx+buffer_idx)])
                     end_save = time.time()
                     print("#{} batches ({} images) computed in {}s and saved in {}s".format(unsaved_batches, buffer_idx, start_save-start_pred, end_save-start_save))
@@ -734,7 +736,7 @@ class MultiChannelIterator(IndexArrayIterator):
                     output_idx+=buffer_idx
                     buffer_idx=0
                     start_pred = time.time()
-        if close_outputIO:
+        if close_outputIO and output is not None:
             of.close()
 
         # reset iterators parameters

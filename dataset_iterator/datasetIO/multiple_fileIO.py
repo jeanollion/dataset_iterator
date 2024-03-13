@@ -10,6 +10,10 @@ try:
     from PIL import Image as pil_image
 except ImportError:
     pil_image = None
+try:
+    from tifffile import imwrite as tiff_write
+except ImportError:
+    tiff_write = None
 
 if pil_image is not None:
     _PIL_INTERPOLATION_METHODS = {
@@ -31,8 +35,8 @@ class MultipleFileIO(DatasetIO):
     ----------
     directory : string
         Each subdirectory in this directory will be considered to contain images from one channel with the name of the channel corresponding to the name of the subdirectory
-    n_image_per_file : int
-        how many images contains each file.
+    one_image_per_file : boolean
+        whether each file contains a single frame or not.
         if n_image_per_file == 1 the following structure is expected :
             path
             ├── ...
@@ -87,21 +91,21 @@ class MultipleFileIO(DatasetIO):
     ----------
     image_shape : tuple
         target image shape
-    n_image_per_file
+    one_image_per_file
     supported_image_fun
     channel_map_interpolation : interpolation function for each channel, or None
     data_format
     data_type
 
     """
-    def __init__(self, directory, n_image_per_file, target_shape=None, channel_map_interpolation=None , data_format='channels_last', data_type='float32', supported_image_fun = lambda f : f.lower().endswith(('.png', '.tif', '.tiff'))):
+    def __init__(self, directory, one_image_per_file, target_shape=None, channel_map_interpolation=None, data_format='channels_last', data_type='float32', supported_image_fun = lambda f : f.lower().endswith(('.png', '.tif', '.tiff')), write_format='tif'):
         super().__init__()
         self.path = directory
         if pil_image is None:
             raise ImportError('Could not import PIL.Image. The use of `MultipleFilesIO` requires PIL.')
         if channel_map_interpolation is not None:
             assert target_shape is not None, "target_shape must be provided if channel_map_interpolation is provided"
-        self.n_image_per_file = n_image_per_file
+        self.one_image_per_file = one_image_per_file
         self.image_shape = target_shape
         self.supported_image_fun = supported_image_fun
         self.channel_map_interpolation = {c:get_interpolation_function(target_shape, i) for c,i in channel_map_interpolation.items()} if channel_map_interpolation is not None else None
@@ -109,6 +113,7 @@ class MultipleFileIO(DatasetIO):
         self.data_format = data_format
         self.dtype = data_type
         self.crop_function = get_crop_function(target_shape) if target_shape is not None else None
+        self.write_format = write_format.lower().replace('.', '')
 
     def close(self):
         pass
@@ -116,7 +121,7 @@ class MultipleFileIO(DatasetIO):
     def get_dataset_paths(self, channel_keyword, group_keyword=None):
         channel_keyword = fix_keyword(channel_keyword)
         all_dirs = scandir(self.path)
-        if self.n_image_per_file==1:
+        if self.one_image_per_file:
             return [d for d in all_dirs if os.path.basename(d) == channel_keyword and (group_keyword is None or group_keyword in d) ]
         else:
             if len(all_dirs)==0:
@@ -132,7 +137,7 @@ class MultipleFileIO(DatasetIO):
         return self.get_dataset(path)
 
     def get_dataset(self, path):
-        if self.n_image_per_file==1:
+        if self.one_image_per_file:
             channel_keyword = os.path.basename(os.path.normpath(path))
             return ImageListWrapper(path, self, channel_keyword)
         else:
@@ -146,7 +151,7 @@ class MultipleFileIO(DatasetIO):
         pass
 
     def __contains__(self, key):
-        if self.n_image_per_file==1: # datasets are channel folders
+        if self.one_image_per_file: # datasets are channel folders
             for root, dirs, files in os.walk(self.path):
                 if key in dirs:
                     return True
@@ -158,20 +163,50 @@ class MultipleFileIO(DatasetIO):
             return False
 
     def write_direct(self, path, data, source_sel=None, dest_sel=None):
-        if source_sel is not None or dest_sel is not None:
-            assert self.n_image_per_file == 1, "index selection is only supported if n_image_per_file==1"
-        if self.n_image_per_file == 1:
+        if (source_sel is not None or dest_sel is not None) and not self.one_image_per_file:
+            assert (source_sel is None or source_sel == np.s_[0:data.shape[0]]) and (dest_sel is None or dest_sel == np.s_[0:data.shape[0]]), "index selection is only supported if one_image_per_file is True"
+        if not os.path.isabs(path):
+            path = os.path.join(self.path, path)
+        if self.one_image_per_file:
             if not os.path.isdir(path):
                 os.makedirs(path)
             n_zeros = int(log10( len(data) )) + 1
             if dest_sel is None:
                 dest_sel = source_sel
             for i, j in zip(source_sel, dest_sel):
-                np.save(os.path.join(path, str(j).zfill(n_zeros)), data[i], allow_pickle=True)
+                self.write(os.path.join(path, str(j).zfill(n_zeros)), data[i])
         else:
             if not os.path.isdir(get_parent_path(path)):
                 os.makedirs(get_parent_path(path))
-            np.save(path, data)
+            self.write(path, data)
+
+    def write(self, path, data):
+        if self.write_format == 'tif' or self.write_format == 'tiff' or self.write_format == "ome.tif" or self.write_format == "ome.tiff" and tiff_write is not None:
+            if len(data.shape) == 2:
+                dimorder = "YX"
+            elif len(data.shape) == 3:
+                if self.data_format=='channels_last':
+                    data = np.transpose(data, axes=[2, 0, 1])
+                dimorder = "CYX"
+            elif len(data.shape) == 4:
+                if self.one_image_per_file:
+                    if self.data_format == 'channels_last':
+                        data = np.transpose(data, axes=[3, 0, 1, 2])
+                    dimorder = "CZYX"
+                else:
+                    if self.data_format == 'channels_last':
+                        data = np.transpose(data, axes=[0, 3, 1, 2])
+                    dimorder = "TCYX"
+            elif len(data.shape) == 5:
+                if self.data_format == 'channels_last':
+                    data = np.transpose(data, axes=[0, 4, 1, 2, 3])
+                dimorder = "TCZYX"
+            else :
+                raise ValueError("Rank >5 not supported")
+            format = "ome.tif" if len(data.shape)>3 else self.write_format # force OME-TIFF
+            tiff_write(f"{path}.{format}", data=data, ome=True, metadata={'axes': dimorder})
+        else: # fallback to numpy
+            np.save(path, data, allow_pickle=True)
 
     def get_images(self, path, name = None, npy=False):
         if npy:
@@ -224,7 +259,7 @@ class ImageWrapper():
         self.path = path
         self.mfileIO=mfileIO
         self.npy = path.endswith('.npy')
-        if mfileIO.n_image_per_file==0 or mfileIO.image_shape is None: # get shape from image file
+        if not mfileIO.one_image_per_file or mfileIO.image_shape is None: # get shape from image file
             if self.npy:
                 img = np.load(self.path, mmap_mode='r')
                 self.shape = img.shape
@@ -232,7 +267,7 @@ class ImageWrapper():
                 self.image = pil_image.open(self.path)
                 self.shape = (self.image.n_frames,) + (mfileIO.image_shape if mfileIO.image_shape is not None else self.image.size[::-1])
         else:
-            self.shape = (mfileIO.n_image_per_file,)+mfileIO.image_shape
+            self.shape = (1,) + mfileIO.image_shape
         self.image = None
         self.interpolator = self.mfileIO.channel_map_interpolation[channel_keyword] if self.mfileIO.channel_map_interpolation is not None else None
         if self.interpolator is None and self.mfileIO.crop_function is not None:
