@@ -71,6 +71,10 @@ class ConcatIterator(IndexArrayIterator):
     def _close_datasetIO(self):
         for it in self.iterators:
             it._close_datasetIO()
+
+    def _open_datasetIO(self):
+        for it in self.iterators:
+            it._open_datasetIO()
             
 def concat_numpy_arrays(arrays):
     if isinstance(arrays[0], (list, tuple)):
