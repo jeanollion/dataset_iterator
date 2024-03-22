@@ -15,7 +15,7 @@ class H5pyIO(DatasetIO):
         if self.h5py_file is None:
             with self.__lock__:
                 if self.h5py_file is None:
-                    self.h5py_file = h5py.File(self.path, self.mode, libver='latest', swmr=True) # use https://docs.h5py.org/en/stable/swmr.html
+                    self.h5py_file = h5py.File(self.path, self.mode, libver='latest', swmr=True, locking=False, driver=None) # use https://docs.h5py.org/en/stable/swmr.html
         return self.h5py_file
 
     def close(self):
