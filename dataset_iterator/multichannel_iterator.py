@@ -49,7 +49,7 @@ class MultiChannelIterator(IndexArrayIterator):
         input is a dict mapping channel index to batch
         applied after image_data_generators and before weight_map_functions / output_postprocessing_functions if any.
     extract_tile_function : callable
-        function that inputs a batch and a bool (that is true if the batch is a mask), splits it into tiles and concatenate along batch axis.
+        function that inputs a batch and 2 bool (1st is true if the batch is a mask, 2nd is true if tiling can be random False if it should be constant), splits it into tiles and concatenate along batch axis.
         when the iterator has several channels, the function must handle a list of batches (and a list of bool) to tile them simultaneously.
         Applied before channels_postprocessing_function and after image_data_generators
     mask_channels : list of ints
@@ -331,6 +331,25 @@ class MultiChannelIterator(IndexArrayIterator):
     def close(self):
         self._close_datasetIO()
 
+    def disable_random_transforms(self, data_augmentation:bool=True, channels_postprocessing:bool=False):
+        params = dict()
+        if data_augmentation:
+            params["perform_data_augmentation"] = self.perform_data_augmentation
+            self.perform_data_augmentation = False
+            params["elasticdeform_parameters"] = self.elasticdeform_parameters
+            self.elasticdeform_parameters = None
+        if channels_postprocessing:
+            params["channels_postprocessing_function"] = self.channels_postprocessing_function
+            self.channels_postprocessing_function = None
+        return params
+
+    def enable_random_transforms(self, parameters):
+        if "perform_data_augmentation" in parameters:
+            self.perform_data_augmentation = parameters.get("perform_data_augmentation", True)
+        if "elasticdeform_parameters" in parameters:
+            self.elasticdeform_parameters = parameters.get("elasticdeform_parameters", None)
+        if "channels_postprocessing_function" in parameters:
+            self.channels_postprocessing_function = parameters["channels_postprocessing_function"]
     def train_test_split(self, **options):
         """Split this iterator in two distinct iterators
 
@@ -424,10 +443,10 @@ class MultiChannelIterator(IndexArrayIterator):
                     input = [input]
                 input.append(batch_by_channel[-1])
             output = _apply_multiplicity(output, self.output_multiplicity) # removes None batches
-            return (input, output)
+            return input, output
 
     def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False, perform_elasticdeform=True, perform_tiling=True, **kwargs):
-        if self.datasetIO is None: # for concurency issues: file is open lazyly by each worker
+        if self.datasetIO is None: # each worker opens file is open file
             self._open_datasetIO()
         index_array = np.copy(index_array) # so that main index array is not modified
         index_ds = self._get_ds_idx(index_array) # modifies index_array
@@ -524,7 +543,7 @@ class MultiChannelIterator(IndexArrayIterator):
             channels = [c for c in batch_by_channel.keys() if not isinstance(c, str) and c>=0]
             batches = [batch_by_channel[chan_idx] for chan_idx in channels]
             is_mask = [chan_idx in self.mask_channels for chan_idx in channels]
-            batches = self.extract_tile_function(batches, is_mask)
+            batches = self.extract_tile_function(batches, is_mask, allow_random=self.perform_data_augmentation)
             n_tiles = batches[0].shape[0]//batch_by_channel[channels[0]].shape[0]
             for i, chan_idx in enumerate(channels):
                 batch_by_channel[chan_idx] = batches[i]
@@ -583,19 +602,19 @@ class MultiChannelIterator(IndexArrayIterator):
 
         batch, index_a = self._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, **kwargs)
         # apply augmentation
-        image_data_generator = self.image_data_generators[chan_idx] if self.perform_data_augmentation and perform_augmentation and self.image_data_generators!=None else None
-        for i in range(batch.shape[0]):
-            if image_data_generator!=None:
-                params = self._get_data_augmentation_parameters(chan_idx, ref_chan_idx, batch, i, index_ds, index_array)
-                if aug_param_array is not None and params is not None:
-                    if chan_idx!=ref_chan_idx:
-                        try:
-                            self.image_data_generators[chan_idx].transfer_parameters(aug_param_array[i][ref_chan_idx], params)
-                        except AttributeError:
-                            pass
-                    for k,v in params.items():
-                        aug_param_array[i][chan_idx][k]=v
-                batch[i] = self._apply_augmentation(batch[i], chan_idx, params)
+        if self.image_data_generators is not None and self.image_data_generators[chan_idx] is not None:
+            for i in range(batch.shape[0]):
+                params = self._get_data_augmentation_parameters(chan_idx, ref_chan_idx, batch, i, constant=not (perform_augmentation and self.perform_data_augmentation))
+                if params is not None:
+                    if aug_param_array is not None:
+                        if chan_idx!=ref_chan_idx:
+                            try:
+                                self.image_data_generators[chan_idx].transfer_parameters(aug_param_array[i][ref_chan_idx], params)
+                            except AttributeError:
+                                pass
+                        for k,v in params.items():
+                            aug_param_array[i][chan_idx][k]=v
+                    batch[i] = self._apply_augmentation(batch[i], chan_idx, params)
         if chan_idx==ref_chan_idx and self.return_image_index:
             return batch, index_a
         else:
@@ -618,11 +637,17 @@ class MultiChannelIterator(IndexArrayIterator):
         index_a = np.copy(index_array)[..., np.newaxis] if self.return_image_index else None
         return batch, index_a
 
-    def _get_data_augmentation_parameters(self, chan_idx, ref_chan_idx, batch, idx, index_ds, index_array):
+    def _get_data_augmentation_parameters(self, chan_idx, ref_chan_idx, batch, idx, constant:bool = False):
         if self.image_data_generators is None or self.image_data_generators[chan_idx] is None:
             return None
-        params = self.image_data_generators[chan_idx].get_random_transform(batch.shape[1:])
-        if  params is not None and chan_idx==ref_chan_idx and chan_idx in self.mask_channels:
+        if constant:
+            if hasattr(self.image_data_generators[chan_idx], "get_constant_transform"):
+                params = self.image_data_generators[chan_idx].get_constant_transform(batch.shape[1:])
+            else:
+                params = None
+        else:
+            params = self.image_data_generators[chan_idx].get_random_transform(batch.shape[1:])
+        if params is not None and chan_idx==ref_chan_idx and chan_idx in self.mask_channels:
             try:
                 self.image_data_generators[chan_idx].adjust_augmentation_param_from_mask(params, batch[idx,...,0])
             except AttributeError: # data generator does not have this method
@@ -797,9 +822,10 @@ class MultiChannelIterator(IndexArrayIterator):
                 self.void_masks = self._get_void_masks()
                 void_masks = self.void_masks
             bins = np.bincount(void_masks) #[not void ; void]
+            index_a = self._get_index_array()
             if len(bins)==2:
                 if self.void_mask_proportion[0]==0 and self.void_mask_proportion[1]==0: # remove all void masks
-                    index_a = np.delete(self.allowed_indexes, np.flatnonzero(void_masks))
+                    index_a = np.delete(index_a, np.flatnonzero(void_masks))
                 else:
                     # test right bound
                     target_void_count = int( (self.void_mask_proportion[1] / (1 - self.void_mask_proportion[1]) ) * bins[0] )
@@ -808,39 +834,32 @@ class MultiChannelIterator(IndexArrayIterator):
                         idx_void = np.flatnonzero(void_masks)
                         to_rem = np.random.choice(idx_void, n_rem, replace=False)
                         print(f"adjust void mask prop: from {bins[0]/(bins[0]+bins[1])} to max {self.void_mask_proportion[1]} remove : {to_rem.shape[0]/self.allowed_indexes.shape[0]} ")
-                        index_a = np.delete(self.allowed_indexes, to_rem)
+                        index_a = np.delete(index_a, to_rem)
                     else: # test left bound
                         target_void_count = int( (self.void_mask_proportion[0] / (1 - self.void_mask_proportion[0])) * bins[0])
                         n_add = target_void_count - bins[1]
                         if n_add>0:
                             idx_void = np.flatnonzero(void_masks)
                             to_add = np.random.choice(idx_void, n_add, replace=False)
-                            index_a = np.append(self.allowed_indexes, to_add)
-                        else:
-                            index_a = self.allowed_indexes
-            else:  # only void or only not void
-                #print("void mask bins: ", bins)
-                index_a = self.allowed_indexes
+                            index_a = np.append(index_a, to_add)
         elif self.group_proportion is not None: # generate a batch with user-defined proportion in each group
             # pick indices for each group
-            if self.allowed_indexes is None:
-                indices_per_group = [np.random.randint(low=self.grp_off[i], high=self.grp_len[i], size=int((self.grp_len[i] - self.grp_off[i])*self.group_proportion[i]+0.5) ) for i in range(len(self.group_map_paths))]
-                index_a = np.concatenate(indices_per_group)
-            else:
-                index_array = np.copy(self.allowed_indexes) # index within group
-                index_grp = self._get_grp_idx(index_array) # group index
-                allowed_indexes_per_group = [self.allowed_indexes[index_grp==i] for i in range(len(self.group_map_paths))]
-                indexes_per_group = [ pick_from_array(allowed_indexes_per_group[i], self.group_proportion[i]) for i in range(len(self.group_map_paths)) ]
-                index_a = np.concatenate(indexes_per_group)
+            index_array = self._get_index_array(choice=False) # index within group
+            index_grp = self._get_grp_idx(index_array) # group index
+            allowed_indexes_per_group = [index_array[index_grp==i] for i in range(len(self.group_map_paths))]
+            proba_per_group = [self.index_probability[index_grp==i] if self.index_probability is not None else None for i in range(len(self.group_map_paths))]
+            if self.index_probability is not None: # sum to one
+                proba_per_group = [p / np.sum(p) for p in proba_per_group]
+            indexes_per_group = [ pick_from_array(allowed_indexes_per_group[i], self.group_proportion[i], p=proba_per_group[i]) for i in range(len(self.group_map_paths)) ]
+            index_a = np.concatenate(indexes_per_group)
             self.group_proportion_init = True
         else:
-            index_a = self.allowed_indexes
+            index_a = self._get_index_array()
         if self.shuffle:
             self.index_array = np.random.permutation(index_a)
         else:
             self.index_array = np.copy(index_a)
-        self._ensure_step_number()
-        self._n = len(self.index_array)
+        self._ensure_step_number() # also sets n
 
     def evaluate(self, model, metrics, perform_data_augmentation=True, reset_allowed_indices=False, progress_callback=None, return_metadata=False):
         """Evaluates model on this iterator.

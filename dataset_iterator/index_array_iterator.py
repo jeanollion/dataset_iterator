@@ -1,4 +1,4 @@
-from math import ceil
+from math import ceil, isclose
 import tensorflow as tf
 import numpy as np
 from .utils import ensure_size
@@ -14,6 +14,7 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
             assert incomplete_last_batch_mode in [0, 1, 2], "Invalid incomplete_last_batch_mode"
             self.incomplete_last_batch_mode = incomplete_last_batch_mode
         self.step_number = step_number
+        self.index_probability = None
 
     def set_allowed_indexes(self, indexes):
         if isinstance(indexes, int):
@@ -23,6 +24,17 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
             self.allowed_indexes=indexes
             self._n=len(indexes)
         self.index_array=None
+        if self.index_probability is not None and len(self.index_probability) != len(self.allowed_indexes):
+            self.index_probability = None
+
+    def _get_index_array(self, choice:bool = True):
+        array = self.allowed_indexes
+        if choice and self.index_probability is not None:
+            array = np.random.choice(array, size=array.shape[0], replace=True, p=self.index_probability)
+            #print(f"set index array with proba factor: [{np.min(self.index_probability) * self.index_probability.shape[0]}; {np.max(self.index_probability) * self.index_probability.shape[0]}] ")
+        else:
+            array = np.copy(array)
+        return array
 
     def __len__(self):
         if self.step_number > 0:
@@ -48,10 +60,11 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
         return self._get_batches_of_transformed_samples(index_array)
 
     def _get_batches_of_transformed_samples(self, index_array):
-        pass
+        raise NotImplementedError("Not implemented")
 
     def _set_index_array(self):
-        pass # called at on_epoch_end
+        self.index_array = np.copy(self._get_index_array())
+        self._ensure_step_number() # also sets n
 
     def _ensure_step_number(self):
         if self.index_array is None:
@@ -64,6 +77,13 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
                 return
         self.index_array = ensure_size(self.index_array, step_number * self.batch_size, shuffle=self.shuffle)
         self._n = len(self.index_array)
+
+    def disable_random_transforms(self, data_augmentation:bool=True, channels_postprocessing:bool=False):
+        return {}
+
+    def enable_random_transforms(self, parameters):
+        pass
+
     @property
     def batch_size(self):
         return self._batch_size
@@ -95,3 +115,14 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
         if hasattr(self, "allowed_indexes"):
             raise AttributeError("Cannot set n after initialization")
         self._n = value
+
+    @property
+    def index_probability(self):
+        return self._index_probability
+
+    @index_probability.setter
+    def index_probability(self, value):
+        if value is not None:
+            assert len(self.allowed_indexes) == len(value), f"invalid index_probability length: expected: {len(self.allowed_indexes)} actual {len(value)}"
+            assert isclose(np.sum(value), 1.), "probabilities do not sum to 1"
+        self._index_probability = value

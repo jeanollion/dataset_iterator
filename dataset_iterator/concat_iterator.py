@@ -16,7 +16,6 @@ class ConcatIterator(IndexArrayIterator):
         if proportion is None:
             proportion = [1.]
         self.proportion = ensure_multiplicity(len(iterators), proportion)
-
         it_len = np.array([len(it) for it in self.iterators])
         for i in range(1, len(it_len)):
             it_len[i]=it_len[i-1]+it_len[i]
@@ -24,13 +23,23 @@ class ConcatIterator(IndexArrayIterator):
         self.it_off=np.insert(self.it_cumlen[:-1], 0, 0)
         super().__init__(-1, batch_size, shuffle, seed, incomplete_last_batch_mode, step_number=step_number)
 
+    def _get_index_array(self, choice:bool = True): # return concatenated indices for all iterators. not used by _set_index_array
+        array = np.arange(self.it_cumlen[-1])
+        if choice and self.index_probability is not None:
+            array = np.random.choice(array, size=array.shape[0], replace=True, p=self.index_probability)
+        return array
+
     def _set_index_array(self):
         indices_per_iterator = []
         for i, it in enumerate(self.iterators):
             if self.proportion[i] > 0:
                 index_array = np.arange(self.it_off[i], self.it_cumlen[i])
                 size = max(1, int((self.it_cumlen[i] - self.it_off[i]) * self.proportion[i] + 0.5))
-                index_array = np.copy(ensure_size(index_array, size, shuffle=self.shuffle))
+                if self.index_probability is not None:
+                    index_array = np.random.choice(index_array, size=size, replace=True, p=self.index_probability[self.it_off[i]:self.it_cumlen[i]])
+                    #print( f"concat it: set index array for it {i} with proba factor: [{np.min(self.index_probability[self.it_off[i]:self.it_cumlen[i]]) * (self.it_cumlen[i] - self.it_off[i] + 1) }; {np.max(self.index_probability[self.it_off[i]:self.it_cumlen[i]]) * (self.it_cumlen[i] - self.it_off[i] + 1)}] ")
+                else:
+                    index_array = ensure_size(index_array, size, shuffle=self.shuffle)
                 indices_per_iterator.append(index_array)
         index_a = np.concatenate(indices_per_iterator)
         if self.shuffle:
@@ -68,6 +77,9 @@ class ConcatIterator(IndexArrayIterator):
     def set_allowed_indexes(self, indexes):
         raise NotImplementedError("Not supported yet")
 
+    def close(self):
+        self._close_datasetIO()
+
     def _close_datasetIO(self):
         for it in self.iterators:
             it._close_datasetIO()
@@ -75,6 +87,13 @@ class ConcatIterator(IndexArrayIterator):
     def _open_datasetIO(self):
         for it in self.iterators:
             it._open_datasetIO()
+
+    def disable_random_transforms(self, data_augmentation:bool=True, channels_postprocessing:bool=False):
+        return [it.disable_random_transforms(data_augmentation, channels_postprocessing) for it in self.iterators]
+
+    def enable_random_transforms(self, parameters):
+        for it, params in zip(self.iterators, parameters):
+            it.enable_random_transforms(params)
             
 def concat_numpy_arrays(arrays):
     if isinstance(arrays[0], (list, tuple)):

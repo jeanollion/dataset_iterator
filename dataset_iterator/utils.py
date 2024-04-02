@@ -1,5 +1,6 @@
 import numpy as np
 from math import ceil
+
 def replace_last(s, old, new):
     # return (s[::-1].replace(old[::-1], new[::-1], 1))[::-1]
     return new.join(s.rsplit(old, 1))
@@ -61,68 +62,19 @@ def transpose_list(l):
         return l
     n_inner = len(l[0])
     return [[l[i][j] for i in range(len(l))] for j in range(n_inner)]
-def pick_from_array(array, proportion):
+
+def pick_from_array(array, proportion, p=None):
     if proportion<=0:
         return []
     elif proportion<1:
-        return np.random.choice(array, replace=False, size=int(len(array)*proportion+0.5))
+        return np.random.choice(array, replace=False, size=int(len(array)*proportion+0.5), p=p)
     elif proportion==1:
         return array
-    else:
+    elif p is None: # do not use choice here to ensure more diversity
         rep = int(proportion)
         return np.concatenate( [array]*rep + [pick_from_array(array, proportion - rep) ]).astype(np.int, copy=False)
-
-def enrich_with_hardest_indices(evaluation_result, metrics_weights, hardest_example_percentage:float, enrichment_factor:float, minimize_metric=True):
-    """Generates an array of indices that contains enriched hard examples (for active learning).
-
-    Parameters
-    ----------
-    evaluation_result : ndarray of rank 2
-        evaluation_result[:,0] are image indices
-        evaluation_result[:,1:] are metric values
-    metrics_weights : None or tuple of floats
-        for each image index, the weighted average of metrics will be computed using those weights
-    hardest_example_percentage : float
-        Description of parameter `hardest_example_percentage`.
-    enrichment_factor : float
-        hardest examples will be enriched by this factor. e.g. if enrichment_factor, their occurence will be x2, i.e. there will be 2x chances to pick them
-    minimize_metric : type
-        if true, hardest examples are associated with lowest metric value
-
-    Returns
-    -------
-    ndarray of in, rank 1
-        shuffled indices with enriched hard exmaples to set with method set_allowed_indexes
-
-    """
-    assert evaluation_result.shape[1]==2 or evaluation_result.shape[1] == len(metrics_weights)+1
-    if evaluation_result.shape[1]>2:
-        eval = np.zeros(shape=(evaluation_result.shape[0], 2), dtype=evaluation_result.dtype)
-        eval[:,0] = evaluation_result[:,0]
-        for midx in range(1, evaluation_result.shape[1]):
-            if metrics_weights[midx-1]!=0:
-                eval[:, 1] += evaluation_result[:, midx] * metrics_weights[midx-1]
-        eval[:, 1]/=np.sum(metrics_weights)
     else:
-        eval = evaluation_result
-    sorted_indices = eval.T[0][np.argsort(eval.T[-1])]
-    n = int(hardest_example_percentage * evaluation_result.shape[0] + 0.5)
-    hardest_indices = (sorted_indices[:n] if minimize_metric else sorted_indices[-n:]).astype(np.int)
-    other_indices = (sorted_indices[n:] if minimize_metric else sorted_indices[:-n]).astype(np.int)
-    rep = int(enrichment_factor)
-    remain = int((enrichment_factor-rep) * n + 0.5)
-    if rep>1 and remain>0:
-        indices = np.concatenate([other_indices, np.repeat(hardest_indices, rep), (hardest_indices[:remain] if minimize_metric else hardest_indices[-remain:])])
-    elif remain>0:
-        indices = np.concatenate([other_indices, hardest_indices, (hardest_indices[:remain] if minimize_metric else hardest_indices[-remain:])])
-    elif rep>1 and remain==0:
-        indices = np.concatenate([other_indices, hardest_indices])
-    else:
-        indices = sorted_indices
-        warning.warn("no enrichment in hardest indices")
-    np.random.shuffle(indices)
-    return indices
-
+        return np.random.choice(array, replace=True, size=int(len(array) * proportion + 0.5), p=p)
 
 def is_null(param, null_value):
     if param is None:

@@ -60,6 +60,22 @@ class TrackingIterator(MultiChannelIterator):
                 return frame_subsampling
             self.frame_subsampling = fs
 
+    def disable_random_transforms(self, data_augmentation:bool=True, channels_postprocessing:bool=False):
+        params = super().disable_random_transforms(data_augmentation, channels_postprocessing)
+        params["frame_subsampling"] = self.frame_subsampling
+        params["aug_remove_prob"] = self.aug_remove_prob
+        self.aug_remove_prob = 0
+        def fs():
+            return 1
+        self.frame_subsampling = fs
+        return params
+
+    def enable_random_transforms(self, parameters):
+        super().enable_random_transforms(parameters)
+        if "frame_subsampling" in parameters:
+            self.frame_subsampling = parameters["frame_subsampling"]
+        if "aug_remove_prob" in parameters:
+            self.aug_remove_prob = parameters["aug_remove_prob"]
 
     def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False, perform_elasticdeform=True, perform_tiling=True, **kwargs):
         if "n_frames" not in kwargs:

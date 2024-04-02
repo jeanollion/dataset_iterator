@@ -24,7 +24,7 @@ def random_histogram_range(img, min_range=0.1, range=[0,1]):
     min, max = compute_histogram_range(min_range, range)
     return adjust_histogram_range(img, min, max)
 
-def get_histogram_normalization_center_scale_ranges(histogram, bins, center_percentile_extent, scale_percentile_range, verbose=False):
+def get_histogram_normalization_center_scale_ranges(histogram, bins, center_percentile_extent, scale_percentile_range, return_mode:bool=False, verbose=False):
     mode_value = get_modal_value(histogram, bins)
     mode_percentile = get_percentile_from_value(histogram, bins, mode_value)
     print("mode value={}, mode percentile={}".format(mode_value, mode_percentile))
@@ -40,12 +40,14 @@ def get_histogram_normalization_center_scale_ranges(histogram, bins, center_perc
     percentiles = percentiles + scale_percentile_range
     values = get_percentile(histogram, bins, percentiles)
     mode_range = [values[0], values[1] ]
+    if return_mode:
+        mode_range.append(mode_value)
     scale_range = [values[2] - mode_value, values[3] - mode_value]
     if verbose:
         print("normalization_center_scale: modal value: {}, center_range: [{}; {}] scale_range: [{}; {}]".format(mode_value, mode_range[0], mode_range[1], scale_range[0], scale_range[1]))
     return mode_range, scale_range
 
-def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool = False, bf_sd_factor:float=3., fluo_scale_centile_range:list=[75, 99.9], fluo_center_centile_extent:list=[20, 30], per_image:bool=True, verbose:bool=True):
+def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool = False, bf_sd_factor:float=3., fluo_scale_centile_range:list=[75, 99.9], fluo_center_centile_extent:list=[20, 30], per_image:bool=True, return_center:bool=False, verbose:bool=True):
     """Computes a range for center and for scale factor for data augmentation.
     Image can then be normalized using a random center C in the center range and a random scaling factor in the scale range: I -> (I - C) / S
 
@@ -87,7 +89,7 @@ def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool
         else:
             bins = get_histogram_bins_IPR(*get_histogram(dataset, channel_name, bins=1000), n_bins=256, percentiles=[0, 95], verbose=verbose)
             histo, _ = get_histogram(dataset, channel_name, bins=bins)
-            center_range, scale_range = get_histogram_normalization_center_scale_ranges(histo, bins, fluo_center_centile_extent, fluo_scale_centile_range, verbose=True)
+            center_range, scale_range = get_histogram_normalization_center_scale_ranges(histo, bins, fluo_center_centile_extent, fluo_scale_centile_range, return_mode=return_center, verbose=True)
             if verbose:
                 print("center: [{}; {}] / scale: [{}; {}]".format(center_range[0], center_range[1], scale_range[0], scale_range[1]))
         return center_range, scale_range
@@ -102,6 +104,8 @@ def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool
             center_range, scale_range = [mean - bf_sd_factor * sd, mean + bf_sd_factor * sd], [sd / bf_sd_factor, sd * bf_sd_factor]
             if verbose:
                 print("center: [{}; {}] / scale: [{}; {}]".format(center_range[0], center_range[1], scale_range[0], scale_range[1]))
+            if return_center:
+                center_range.append(mean)
         return center_range, scale_range
 
 

@@ -7,10 +7,10 @@ from scipy.ndimage import zoom
 OVERLAP_MODE = ["NO_OVERLAP", "ALLOW", "FORCE"]
 
 def extract_tile_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, augmentation_rotate=True):
-    def func(batch, is_mask):
-        tiles = extract_tiles(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, return_coords=False)
-        if perform_augmentation:
-            tiles = augment_tiles_inplace(tiles, rotate = augmentation_rotate and all([s==tile_shape[0] for s in tile_shape]), n_dims=len(tile_shape))
+    def func(batch, is_mask:bool, allow_random:bool=True):
+        tiles = extract_tiles(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride if allow_random else False, return_coords=False)
+        if perform_augmentation and allow_random:
+            tiles = augment_tiles_inplace(tiles, rotate=augmentation_rotate and all([s==tile_shape[0] for s in tile_shape]), n_dims=len(tile_shape))
         return tiles
     return func
 
@@ -68,14 +68,14 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
 def extract_tile_random_zoom_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=True, augmentation_rotate=True, zoom_range=[0.9, 1.1], aspect_ratio_range=[0.9, 1.1], zoom_probability:float=0.5, interpolation_order=1, random_channel_jitter_shape=None):
     if (is_null(zoom_range, 1) or is_null(zoom_range, 0)) and is_null(random_channel_jitter_shape, 0):
         return extract_tile_function(tile_shape, perform_augmentation=perform_augmentation, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, augmentation_rotate=augmentation_rotate)
-    def func(batch, is_mask):
+    def func(batch, is_mask:bool, allow_random:bool=True):
         if isinstance(batch, (list, tuple)):
             is_mask = ensure_multiplicity(len(batch), is_mask)
             order = [0 if m else interpolation_order for m in is_mask]
         else:
             order = 0 if is_mask else interpolation_order
-        tiles = extract_tiles_random_zoom(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, zoom_range=zoom_range, aspect_ratio_range=aspect_ratio_range, zoom_probability=zoom_probability, interpolation_order=order, random_channel_jitter_shape=random_channel_jitter_shape)
-        if perform_augmentation:
+        tiles = extract_tiles_random_zoom(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride if allow_random else False, zoom_range=zoom_range if allow_random else [1., 1.], aspect_ratio_range=aspect_ratio_range if allow_random else [1., 1.], zoom_probability=zoom_probability if allow_random else 0., interpolation_order=order, random_channel_jitter_shape=random_channel_jitter_shape if allow_random else None)
+        if perform_augmentation and allow_random:
             tiles = augment_tiles_inplace(tiles, rotate=augmentation_rotate and all([s==tile_shape[0] for s in tile_shape]), n_dims=len(tile_shape))
         return tiles
     return func

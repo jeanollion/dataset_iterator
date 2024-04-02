@@ -61,6 +61,18 @@ class ImageGeneratorList():
         assert is_list(generators), "generator must be a list"
         self.generators = generators
 
+    def get_constant_transform(self, image_shape: tuple):
+        all_params = {}
+        for i, g in enumerate(self.generators):
+            if g is not None:
+                try:
+                    params = g.get_constant_transform(image_shape)
+                    if params is not None:
+                        all_params[i] = params
+                except AttributeError:
+                    pass
+        return all_params
+
     def get_random_transform(self, image_shape:tuple):
         all_params = {}
         for i, g in enumerate(self.generators):
@@ -91,7 +103,7 @@ class ImageGeneratorList():
 
     def apply_transform(self, img, aug_params:dict):
         for i, g in enumerate(self.generators):
-            if g is not None:
+            if g is not None and i in aug_params:
                 try:
                     im2 = g.apply_transform(img, aug_params[i])
                     if im2 is not None:
@@ -110,6 +122,7 @@ class ImageGeneratorList():
                 except AttributeError:
                     pass
         return img
+
 
 # image scaling
 SCALING_MODES = ["RANDOM_CENTILES", "RANDOM_MIN_MAX", "FLUORESCENCE", "BRIGHT_FIELD", "CONSTANT"]
@@ -142,6 +155,8 @@ class ScalingImageGenerator():
             assert self.max_centile_range[0] <= self.max_centile_range[1], "invalid max range"
             assert self.min_centile_range[0] < self.max_centile_range[1], "invalid min and max range"
             self.saturate = kwargs.get("saturate", True)
+            self.min_centile = kwargs.get("min_centile", np.mean(self.min_centile_range))
+            self.max_centile = kwargs.get("max_centile", np.mean(self.max_centile_range))
         elif mode == "RANDOM_MIN_MAX":
             self.min_range = kwargs.get("min_range", 0.1)
             self.range = kwargs.get("range", [0, 1])
@@ -154,10 +169,29 @@ class ScalingImageGenerator():
                 assert "scale_range" in kwargs and "center_range" in kwargs, "if no dataset is provided, scale_range and center_range must be provided"
                 self.scale_range = kwargs["scale_range"]
                 self.center_range = kwargs["center_range"]
+                self.center = kwargs.get("center", np.mean(self.center_range))
+                self.scale = kwargs.get("scale", np.mean(self.scale_range))
             else:
-                center_range, scale_range = get_center_scale_range(dataset, channel_name=channel_name, fluorescence=fluo, **kwargs)
+                center_range, scale_range = get_center_scale_range(dataset, channel_name=channel_name, fluorescence=fluo, return_center=True, **kwargs)
+                if len(center_range)==3:
+                    self.center = center_range[-1]
+                    center_range = center_range[:2]
+                else:
+                    self.center = np.mean(center_range)
                 self.scale_range = scale_range
                 self.center_range = center_range
+                self.scale = np.mean(scale_range)
+
+    def get_constant_transform(self, image_shape):
+        params = {"constant":True}
+        if self.mode == "RANDOM_MIN_MAX":
+            params["vmin"] = 0.
+            params["vmax"] = 1.
+        elif self.mode == "FLUORESCENCE" or self.mode == "BRIGHT_FIELD":
+            params["center"] = self.center
+            params["scale"] = self.scale
+        return params
+
     def get_random_transform(self, image_shape):
         params = {}
         if self.mode == "RANDOM_CENTILES":
@@ -196,9 +230,12 @@ class ScalingImageGenerator():
         if self.mode=="CONSTANT":
             return (img - self.center) / self.scale
         if self.mode == "RANDOM_CENTILES":
-            min0, min1, max0, max1 = np.percentile(img, self.min_centile_range + self.max_centile_range)
-            cmin = min0 + (min1 - min0) * aug_params["cmin"]
-            cmax = max0 + (max1 - max0) * aug_params["cmax"]
+            if aug_params.get("constant", False):
+                cmin, cmax = np.percentile(img, [self.min_centile, self.max_centile])
+            else: # random
+                min0, min1, max0, max1 = np.percentile(img, self.min_centile_range + self.max_centile_range)
+                cmin = min0 + (min1 - min0) * aug_params["cmin"]
+                cmax = max0 + (max1 - max0) * aug_params["cmax"]
             if self.saturate:
                 img = adjust_histogram_range(img, min=0, max=1, initial_range=[cmin,  cmax])  # will saturate values under cmin or over cmax, as in real life.
             else:

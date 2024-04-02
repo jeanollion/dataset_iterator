@@ -7,5 +7,5 @@ from .tile_utils import extract_tiles, augment_tiles, extract_tile_function, ext
 from .image_data_generator import get_image_data_generator
 
 from .datasetIO import DatasetIO, H5pyIO, MultipleFileIO, MultipleDatasetIO, ConcatenateDatasetIO, MemoryIO
-from .utils import enrich_with_hardest_indices
+from .active_learning import get_index_probability, compute_loss
 from .concat_iterator import ConcatIterator
