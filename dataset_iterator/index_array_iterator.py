@@ -36,6 +36,15 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
             array = np.copy(array)
         return array
 
+    def get_sample_number(self):
+        return len(self.allowed_indexes)
+
+    def get_batch_size(self):
+        return self.batch_size
+
+    def set_index_probability(self, value):
+        self.index_probability = value
+
     def __len__(self):
         if self.step_number > 0:
             return self.step_number
@@ -123,6 +132,7 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
     @index_probability.setter
     def index_probability(self, value):
         if value is not None:
-            assert len(self.allowed_indexes) == len(value), f"invalid index_probability length: expected: {len(self.allowed_indexes)} actual {len(value)}"
+            size = self.get_sample_number()
+            assert size == len(value), f"invalid index_probability length: expected: {size} actual {len(value)}"
             assert isclose(np.sum(value), 1.), "probabilities do not sum to 1"
         self._index_probability = value

@@ -102,13 +102,18 @@ def get_histogram(dataset, channel_keyword:str, bins, bin_size=None, sum_to_one:
     if bins is None:
         assert bin_size is not None
         vmin, vmax = get_min_and_max(dataset, channel_keyword, batch_size=batch_size)
-        n_bins = round( (vmax - vmin) / bin_size )
-        bin_size = (vmax - vmin) / n_bins
-        bins = np.linspace(vmin, vmax, num=n_bins+1)
-    if isinstance(bins, int):
+        n_bins = int( 1 + (vmax - vmin ) / bin_size )
+        bin_size = (vmax - vmin ) / (n_bins - 1)
+        bins = np.linspace(vmin, vmax + bin_size, num=n_bins+1)
+        #print(f"range: [{vmin}; {vmax}] nbins: {n_bins} binsize: {bin_size} bins: {bins}")
+    elif isinstance(bins, int):
+        assert bins>1, "at least 2 bins"
         vmin, vmax = get_min_and_max(dataset, channel_keyword, batch_size=batch_size)
-        bin_size = (vmax - vmin)/bins
-        bins = np.linspace(vmin, vmax, num=bins+1)
+        bin_size = (vmax - vmin)/(bins-1)
+        bins = np.linspace(vmin, vmax + bin_size, num=bins+1)
+    else:
+        assert isinstance(bins, (list, tuple))
+        vmin = bins[0]
     histogram = None
     for i in range(len(iterator)):
         batch = iterator[i]

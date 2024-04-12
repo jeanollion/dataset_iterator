@@ -1,3 +1,4 @@
+from math import isclose
 import numpy as np
 from .index_array_iterator import IndexArrayIterator, INCOMPLETE_LAST_BATCH_MODE
 from .utils import ensure_multiplicity, ensure_size
@@ -12,7 +13,23 @@ class ConcatIterator(IndexArrayIterator):
                  incomplete_last_batch_mode:str=INCOMPLETE_LAST_BATCH_MODE[1],
                  step_number:int=0):
         assert isinstance(iterators, (list, tuple)), "iterators must be either list or tuple"
-        self.iterators = iterators
+        self.iterators = []
+        def append_it(iterator): # unroll concat iterators
+            if isinstance(iterator, (list, tuple)):
+                for subit in iterator:
+                    append_it(subit)
+            elif isinstance(iterator, ConcatIterator):
+                for subit in iterator.iterators:
+                    append_it(subit)
+            else:
+                self.iterators.append(iterator)
+
+        append_it(iterators)
+        bs = [it.get_batch_size() for it in self.iterators]
+        assert np.all(np.array(bs) == bs[0] ), "all sub iterator batch_size must be equal"
+        for it in self.iterators:
+            it.incomplete_last_batch_mode = incomplete_last_batch_mode
+        self.sub_iterator_batch_size = bs[0]
         if proportion is None:
             proportion = [1.]
         self.proportion = ensure_multiplicity(len(iterators), proportion)
@@ -28,6 +45,12 @@ class ConcatIterator(IndexArrayIterator):
         if choice and self.index_probability is not None:
             array = np.random.choice(array, size=array.shape[0], replace=True, p=self.index_probability)
         return array
+
+    def get_sample_number(self):
+        return self.it_cumlen[-1]
+
+    def get_batch_size(self):
+        return self.batch_size * self.sub_iterator_batch_size
 
     def _set_index_array(self):
         indices_per_iterator = []
@@ -56,8 +79,8 @@ class ConcatIterator(IndexArrayIterator):
 
     def _get_batches_of_transformed_samples(self, index_array):
         index_array = np.copy(index_array) # so that main index array is not modified
-        index_it = self._get_it_idx(index_array) # modifies index_array
-
+        index_it = self._get_it_idx(index_array) # modifies index_array so that indices are relative to each iterator
+        #batches = [self.iterators[it_idx]._get_batches_of_transformed_samples(index_array[index_it==it_idx]) for it_idx in np.unique(index_it)]
         batches = [self.iterators[it][i] for i, it in zip(index_array, index_it)]
         for i in range(1, len(batches)):
             assert len(batches[i])==len(batches[0]), f"Iterators have different outputs: batch from iterator {index_it[0]} has length {len(batches[0])} whereas batch from iterator {index_it[i]} has length {batches[i]}"
@@ -65,7 +88,7 @@ class ConcatIterator(IndexArrayIterator):
         if len(batches[0]) == 2:
             inputs = [b[0] for b in batches]
             outputs = [b[1] for b in batches]
-            return (concat_numpy_arrays(inputs), concat_numpy_arrays(outputs))
+            return concat_numpy_arrays(inputs), concat_numpy_arrays(outputs)
         else:
             return concat_numpy_arrays(batches)
 
@@ -94,7 +117,16 @@ class ConcatIterator(IndexArrayIterator):
     def enable_random_transforms(self, parameters):
         for it, params in zip(self.iterators, parameters):
             it.enable_random_transforms(params)
-            
+
+    def set_index_probability(self, value): # set to sub_iterators/ expects a concatenated vector in the order of sub iterators
+        cur_idx = 0
+        for it in self.iterators:
+            size = it.get_sample_number()
+            proba = value[cur_idx:cur_idx+size]
+            it.index_probability = proba / np.sum(proba)
+            cur_idx+=size
+        assert cur_idx == value.shape[0], f"invalid index_probability length expected: {cur_idx} actual {value.shape[0]}"
+
 def concat_numpy_arrays(arrays):
     if isinstance(arrays[0], (list, tuple)):
         n = len(arrays[0])
