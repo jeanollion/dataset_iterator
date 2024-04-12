@@ -1,4 +1,4 @@
-name: Publish Python distribution 📦 to TestPyPI
+name: Publish Python distribution 📦 to PyPI
 
 on: push
 
@@ -93,6 +93,7 @@ jobs:
 
   publish-to-testpypi:
     name: Publish Python distribution 📦 to TestPyPI
+    if: startsWith(github.ref, 'test')
     needs:
       - build
     runs-on: ubuntu-latest
