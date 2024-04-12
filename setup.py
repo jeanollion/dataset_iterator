@@ -5,14 +5,14 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="dataset_iterator",
-    version="0.3.9",
+    version="0.4.0",
     author="Jean Ollion",
     author_email="jean.ollion@polytechnique.org",
     description="Keras-style data iterator for images contained in dataset files such as hdf5 or PIL readable files. Images can be contained in several files.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/jeanollion/dataset_iterator.git",
-    download_url='https://files.pythonhosted.org/packages/b3/1c/6383e70b8d6e409fe1e3a774d659ff0fc7fa7933a88dd199a6e48319df8b/dataset_iterator-0.3.9.tar.gz',
+    download_url='https://github.com/jeanollion/dataset_iterator/releases/download/v0.4.0/dataset_iterator-0.4.0.tar.gz',
     keywords=['Iterator', 'Dataset', 'Image', 'Numpy'],
     packages=setuptools.find_packages(),
     classifiers=[ #https://pypi.org/classifiers/
@@ -25,5 +25,5 @@ setuptools.setup(
         'Programming Language :: Python :: 3',
     ],
     python_requires='>=3',
-    install_requires=['h5py>=2.9', 'numpy', 'scipy', 'scikit-learn', 'scikit-image', 'tensorflow', 'keras']
+    install_requires=['h5py>=2.9', 'numpy', 'scipy', 'scikit-learn', 'scikit-image', 'tensorflow>=2.7.1', 'keras']
 )
