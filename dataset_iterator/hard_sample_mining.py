@@ -3,6 +3,7 @@ import os
 import numpy as np
 import tensorflow as tf
 from .index_array_iterator import IndexArrayIterator, INCOMPLETE_LAST_BATCH_MODE
+from dataset_iterator.ordered_enqueuer_cf import OrderedEnqueuerCF
 
 class HardSampleMiningCallback(tf.keras.callbacks.Callback):
     def __init__(self, iterator, target_iterator, predict_fun, metrics_fun, period:int=10, start_epoch:int=0, skip_first:bool=False, enrich_factor:float=10., quantile_max:float=0.99, quantile_min:float=None, disable_channel_postprocessing:bool=False, workers=None, verbose:int=1):
@@ -27,7 +28,8 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         simple_iterator = SimpleIterator(self.iterator)
         self.batch_size = self.iterator.get_batch_size()
         self.n_batches = len(simple_iterator)
-        self.enq = tf.keras.utils.OrderedEnqueuer(simple_iterator, use_multiprocessing=True, shuffle=False)
+        #self.enq = tf.keras.utils.OrderedEnqueuer(simple_iterator, use_multiprocessing=True, shuffle=False)
+        self.enq = OrderedEnqueuerCF(simple_iterator, single_epoch=True, shuffle=False)
 
     def close(self):
         self.enq.stop()
@@ -35,8 +37,8 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             self.iterator.enable_random_transforms(self.data_aug_param)
         self.iterator.close()
 
-    def on_epoch_begin(self, epoch, logs=None):
-        if self.period==1 or (epoch + self.start_epoch) % self.period == 0:
+    def on_epoch_end(self, epoch, logs=None):
+        if self.period==1 or (epoch + 1 + self.start_epoch) % self.period == 0:
             if epoch == 0 and self.skip_first:
                 return
             metrics = self.compute_metrics()
@@ -62,19 +64,30 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         self.enq.start(workers=workers, max_queue_size=max(3, min(self.n_batches, workers)))
         gen = self.enq.get()
         compute_metrics_fun = get_compute_metrics_fun(self.predict_fun, self.metrics_fun, self.batch_size)
-        metrics = compute_metrics_loop(compute_metrics_fun, gen, self.batch_size, self.n_batches, self.verbose)
+        computed = False
+        metrics = None
+        while not computed:
+            try:
+                metrics = compute_metrics_loop(compute_metrics_fun, gen, self.batch_size, self.n_batches, self.verbose)
+            except BrokenPipeError as e:
+                print("broken pipe error, will re-try metric computation")
+                self.enq.stop()
+                self.enq.start(workers=workers, max_queue_size=max(3, min(self.n_batches, workers)))
+                gen = self.enq.get()
+            else:
+                computed = True
         self.enq.stop()
+        #self.iterator.close()
         return metrics
 
 
 def get_index_probability_1d(metric, enrich_factor:float=10., quantile_min:float=0.01, quantile_max:float=None, max_power:int=10, power_accuracy:float=0.1, verbose:int=1):
     assert 0.5 > quantile_min >= 0, f"invalid min quantile: {quantile_min}"
+    if 1. / enrich_factor < quantile_min: # incompatible enrich factor and quantile
+        quantile_min = 1. / enrich_factor
+        #print(f"modified quantile_min to : {quantile_min}")
     if quantile_max is None:
         quantile_max = 1 - quantile_min
-    assert 1 >= quantile_max > 0.5, f"invalid max quantile: {quantile_max}"
-    if 1. / enrich_factor < (1 - quantile_max): # incompatible enrich factor and quantile
-        quantile_max = 1. - 1 / enrich_factor
-        #print(f"modified quantile_max to : {quantile_max}")
     metric_quantiles = np.quantile(metric, [quantile_min, quantile_max])
 
     Nh = metric[metric <= metric_quantiles[0]].shape[0] # hard examples (low metric)
@@ -114,8 +127,8 @@ def get_index_probability_1d(metric, enrich_factor:float=10., quantile_min:float
     proba = vget_proba(metric)
     p_sum = float(np.sum(proba))
     proba /= p_sum
-    if verbose > 1:
-        print(f"metric proba range: [{np.min(proba) * metric.shape[0]}, {np.max(proba) * metric.shape[0]}] (target range: [{p_min}; {p_max}]) power: {power} sum: {p_sum} quantiles: [{quantile_min}; {quantile_max}]", flush=True)
+    #if verbose > 1:
+    #    print(f"metric proba range: [{np.min(proba) * metric.shape[0]}, {np.max(proba) * metric.shape[0]}] (target range: [{p_min}; {p_max}]) power: {power} sum: {p_sum} quantiles: [{quantile_min}; {quantile_max}]", flush=True)
     return proba
 
 def get_index_probability(metrics, enrich_factor:float=10., quantile_max:float=0.99, quantile_min:float=None, verbose:int=1):
@@ -137,7 +150,8 @@ def compute_metrics(iterator, predict_function, metrics_function, disable_augmen
 
     if workers is None:
         workers = os.cpu_count()
-    enq = tf.keras.utils.OrderedEnqueuer(simple_iterator, use_multiprocessing=True, shuffle=False)
+    #enq = tf.keras.utils.OrderedEnqueuer(simple_iterator, use_multiprocessing=True, shuffle=False)
+    enq = OrderedEnqueuerCF(simple_iterator, single_epoch=True, shuffle=False)
     enq.start(workers=workers, max_queue_size=max(3, min(n_batches, workers)))
     gen = enq.get()
     metrics = compute_metrics_loop(compute_metrics_fun, gen, batch_size, n_batches, verbose)
