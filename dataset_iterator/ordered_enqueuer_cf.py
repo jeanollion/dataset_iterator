@@ -157,73 +157,12 @@ class OrderedEnqueuerCF():
         _SHARED_SEQUENCES[self.uid] = None
 
 
-def to_shm(shm_manager, tensors):
-    if multiple(tensors):
-        inputs, outputs = tensors
-    else:
-        inputs = tensors
-        outputs = []
-    if not multiple(inputs):
-        inputs = [inputs]
-    if not multiple(outputs):
-        outputs = [outputs]
-    size = np.sum([a.nbytes for a in inputs] + [a.nbytes for a in outputs])
-    shm = shm_manager.SharedMemory(size=size)
-    i_shapes = []
-    i_dtypes = []
-    o_shapes = []
-    o_dtypes = []
-    offset = 0
-    for a in inputs:
-        shm_a = np.ndarray(a.shape, dtype=a.dtype, buffer=shm.buf, offset=offset)
-        shm_a[:] = a[:]
-        i_shapes.append(a.shape)
-        i_dtypes.append(a.dtype)
-        offset += a.nbytes
-    for a in outputs:
-        shm_a = np.ndarray(a.shape, dtype=a.dtype, buffer=shm.buf, offset=offset)
-        shm_a[:] = a[:]
-        o_shapes.append(a.shape)
-        o_dtypes.append(a.dtype)
-        offset += a.nbytes
-    tensors = (i_shapes, i_dtypes, o_shapes, o_dtypes, shm.name)
-    shm.close()
-    del shm
-    return tensors
-
-
-def from_shm(i_shapes, i_dtypes, o_shapes, o_dtypes, shm_name):
-    existing_shm = ErasingSharedMemory(shm_name)
-    offset = 0
-    inputs = []
-    outputs = []
-    for shape, dtype in zip(i_shapes, i_dtypes):
-        a = ShmArray(shape, dtype=dtype, buffer=existing_shm.buf, offset=offset, shm=existing_shm)
-        inputs.append(a)
-        offset += a.nbytes
-    for shape, dtype in zip(o_shapes, o_dtypes):
-        a = ShmArray(shape, dtype=dtype, buffer=existing_shm.buf, offset=offset, shm=existing_shm)
-        outputs.append(a)
-        offset += a.nbytes
-
-    if len(inputs) == 1:
-        inputs = inputs[0]
-    elif len(inputs) > 1:
-        inputs = tuple(inputs)
-    if len(outputs) == 0:
-        return inputs
-    elif len(outputs) == 1:
-        outputs = outputs[0]
-    elif len(outputs) > 1:
-        outputs = tuple(outputs)
-    return inputs, outputs
-
-
 def init_pool_generator(gen, uid, shm_manager):
     global _SHARED_SEQUENCES
     _SHARED_SEQUENCES[uid] = gen
     global _SHARED_SHM_MANAGER
     _SHARED_SHM_MANAGER[uid] = shm_manager
+
 
 def get_item_shm(uid, i):
     tensors = _SHARED_SEQUENCES[uid][i]
@@ -234,8 +173,78 @@ def get_item(uid, i):
     return _SHARED_SEQUENCES[uid][i]
 
 
+def to_shm(shm_manager, tensors):
+    flatten_tensor_list, nested_structure = get_flatten_list(tensors)
+    size = np.sum([a.nbytes for a in flatten_tensor_list])
+    shm = shm_manager.SharedMemory(size=size)
+    shapes = []
+    dtypes = []
+    offset = 0
+    for a in flatten_tensor_list:
+        shm_a = np.ndarray(a.shape, dtype=a.dtype, buffer=shm.buf, offset=offset)
+        shm_a[:] = a[:]
+        shapes.append(a.shape)
+        dtypes.append(a.dtype)
+        offset += a.nbytes
+    tensor_ref = (shapes, dtypes, shm.name, nested_structure)
+    shm.close()
+    del shm
+    return tensor_ref
+
+
+def from_shm(shapes, dtypes, shm_name, nested_structure):
+    existing_shm = ErasingSharedMemory(shm_name)
+    offset = 0
+    tensor_list = []
+    for shape, dtype in zip(shapes, dtypes):
+        a = ShmArray(shape, dtype=dtype, buffer=existing_shm.buf, offset=offset, shm=existing_shm)
+        tensor_list.append(a)
+        offset += a.nbytes
+    return get_nested_structure(tensor_list, nested_structure)
+
+
 def multiple(item):
     return isinstance(item, (list, tuple))
+
+
+def get_flatten_list(item):
+    flatten_list = []
+    nested_structure = []
+    _flatten(item, 0, flatten_list, nested_structure)
+    return flatten_list, nested_structure[0]
+
+
+def _flatten(item, offset, flatten_list, nested_structure):
+    if multiple(item):
+        nested_structure.append([])
+        for sub_item in item:
+            offset = _flatten(sub_item, offset, flatten_list, nested_structure[-1])
+        return offset
+    else:
+        nested_structure.append(offset)
+        flatten_list.append(item)
+        return offset + 1
+
+
+def get_nested_structure(flatten_list, nested_structure):
+    if multiple(nested_structure):
+        result = []
+        _get_nested(flatten_list, nested_structure, 0, result)
+        return result[0]
+    else:
+        return flatten_list[0]
+
+
+def _get_nested(flatten_list, nested_structure, offset, result):
+    if multiple(nested_structure):
+        result.append([])
+        for sub_nested in nested_structure:
+            offset = _get_nested(flatten_list, sub_nested, offset, result[-1])
+        return offset
+    else:
+        result.append(flatten_list[offset])
+        return offset + 1
+
 
 # code from: https://muditb.medium.com/speed-up-your-keras-sequence-pipeline-f5d158359f46
 class ShmArray(np.ndarray):

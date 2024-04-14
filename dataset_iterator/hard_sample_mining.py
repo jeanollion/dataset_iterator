@@ -170,7 +170,7 @@ def compute_metrics(iterator, predict_function, metrics_function, disable_augmen
 def compute_metrics_loop(compute_metrics_fun, gen, batch_size, n_batches, verbose):
     metrics = []
     if verbose>=1:
-        print(f"Hard Sample Mining: computing metrics...")
+        print(f"Hard Sample Mining: computing metrics...", flush=True)
         progbar = tf.keras.utils.Progbar(n_batches)
     n_tiles = None
     for i in range(n_batches):
@@ -184,8 +184,6 @@ def compute_metrics_loop(compute_metrics_fun, gen, batch_size, n_batches, verbos
         metrics.append(batch_metrics)
         if verbose >= 1:
             progbar.update(i + 1)
-    if verbose >= 1:
-        print("metrics computed", flush=True)
     metrics = tf.concat(metrics, axis=0).numpy()
     # metrics = tf.concat([indices[:, np.newaxis].astype(metrics.dtype), metrics], axis=1)
     return metrics
