@@ -4,6 +4,7 @@ import numpy as np
 import tensorflow as tf
 from .index_array_iterator import IndexArrayIterator, INCOMPLETE_LAST_BATCH_MODE
 from dataset_iterator.ordered_enqueuer_cf import OrderedEnqueuerCF
+import threading
 
 class HardSampleMiningCallback(tf.keras.callbacks.Callback):
     def __init__(self, iterator, target_iterator, predict_fun, metrics_fun, period:int=10, start_epoch:int=0, skip_first:bool=False, enrich_factor:float=10., quantile_max:float=0.99, quantile_min:float=None, disable_channel_postprocessing:bool=False, workers=None, verbose:int=1):
@@ -30,12 +31,16 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         self.n_batches = len(simple_iterator)
         #self.enq = tf.keras.utils.OrderedEnqueuer(simple_iterator, use_multiprocessing=True, shuffle=False)
         self.enq = OrderedEnqueuerCF(simple_iterator, single_epoch=True, shuffle=False)
+        self.wait_for_me = threading.Event()
 
     def close(self):
         self.enq.stop()
         if self.data_aug_param is not None:
             self.iterator.enable_random_transforms(self.data_aug_param)
         self.iterator.close()
+
+    def on_epoch_begin(self, epoch, logs=None):
+        self.wait_for_me.clear() # will block
 
     def on_epoch_end(self, epoch, logs=None):
         if self.period==1 or (epoch + 1 + self.start_epoch) % self.period == 0:
@@ -55,13 +60,14 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
                 proba = self.proba_per_metric
             # set probability to iterator in case of multiprocessing iwth OrderedEnqueeur this will be taken into account only a next epoch has iterator has already been sent to processes at this stage
             self.target_iterator.set_index_probability(proba)
+        self.wait_for_me.set() # release block
 
     def on_train_end(self, logs=None):
         self.close()
 
     def compute_metrics(self):
         workers = os.cpu_count() if self.workers is None else self.workers
-        self.enq.start(workers=workers, max_queue_size=max(3, min(self.n_batches, workers)))
+        self.enq.start(workers=workers, max_queue_size=max(2, min(self.n_batches, workers)))
         gen = self.enq.get()
         compute_metrics_fun = get_compute_metrics_fun(self.predict_fun, self.metrics_fun, self.batch_size)
         computed = False
@@ -72,7 +78,7 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             except BrokenPipeError as e:
                 print("broken pipe error, will re-try metric computation")
                 self.enq.stop()
-                self.enq.start(workers=workers, max_queue_size=max(3, min(self.n_batches, workers)))
+                self.enq.start(workers=workers, max_queue_size=max(2, min(self.n_batches, workers)))
                 gen = self.enq.get()
             else:
                 computed = True
@@ -163,13 +169,12 @@ def compute_metrics(iterator, predict_function, metrics_function, disable_augmen
 
 def compute_metrics_loop(compute_metrics_fun, gen, batch_size, n_batches, verbose):
     metrics = []
-    indices = []
     if verbose>=1:
         print(f"Hard Sample Mining: computing metrics...")
         progbar = tf.keras.utils.Progbar(n_batches)
     n_tiles = None
     for i in range(n_batches):
-        current_indices, x, y_true = next(gen)
+        x, y_true = next(gen)
         batch_metrics = compute_metrics_fun(x, y_true)
         if x.shape[0] > batch_size or n_tiles is not None:  # tiling: keep hardest tile per sample
             if n_tiles is None:  # record n_tile which is constant but last batch may have fewer elements
@@ -177,22 +182,15 @@ def compute_metrics_loop(compute_metrics_fun, gen, batch_size, n_batches, verbos
             batch_metrics = tf.reshape(batch_metrics, shape=(n_tiles, -1, batch_metrics.shape[1]))
             batch_metrics = tf.reduce_max(batch_metrics, axis=0, keepdims=False)  # record hardest tile per sample
         metrics.append(batch_metrics)
-        indices.append(current_indices)
         if verbose >= 1:
             progbar.update(i + 1)
     if verbose >= 1:
         print("metrics computed", flush=True)
-    indices = tf.concat(indices, axis=0).numpy()
     metrics = tf.concat(metrics, axis=0).numpy()
-    if len(metrics.shape) == 1:
-        metrics = indices[:, np.newaxis]
     # metrics = tf.concat([indices[:, np.newaxis].astype(metrics.dtype), metrics], axis=1)
-    if not np.all(indices[1:] - indices[:-1] == 1):
-        indices = np.argsort(indices)
-        metrics = metrics[indices, :]
-        if verbose >= 1:
-            print("some indices where not in order!!", flush=True)
     return metrics
+
+
 def get_compute_metrics_fun(predict_function, metrics_function, batch_size):
     @tf.function
     def compute_metrics(x, y_true):
@@ -219,11 +217,11 @@ class SimpleIterator(IndexArrayIterator):
         batch = self.iterator._get_batches_of_transformed_samples(index_array)
         if isinstance(batch, (list, tuple)):
             x, y = batch
-            batch = index_array, x, y
+            batch = x, y
         else:
             if self.input_scaling_function is not None:
                 x = self.input_scaling_function(batch)
-            batch = index_array, x
+            batch = x
         return batch
 
 def batchwise_inplace(function):

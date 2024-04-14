@@ -1,24 +1,27 @@
-from tensorflow.keras.utils import OrderedEnqueuer
+import os
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
-from keras.src.utils import data_utils
 import queue
 import random
-from contextlib import closing
 import numpy as np
 import threading
 import time
+from multiprocessing import Queue, managers, shared_memory
 
 # Global variables to be shared across processes
 _SHARED_SEQUENCES = {}
+_SHARED_SHM_MANAGER = {}
 # We use a Value to provide unique id to different processes.
 _SEQUENCE_COUNTER = None
-
+# adapted from https://github.com/keras-team/keras/blob/v2.13.1/keras/utils/data_utils.py#L651-L776
+# uses cncurrent.futures  + shared memory + overcome a memory leak in case of hard sample mining run as callback
 class OrderedEnqueuerCF():
-    def __init__(self, sequence, shuffle=False, single_epoch:bool=False):
+    def __init__(self, sequence, shuffle=False, single_epoch:bool=False, use_shm:bool=True, wait_for_me=None):
         self.sequence = sequence
         self.shuffle = shuffle
         self.single_epoch=single_epoch
+        self.use_shm=use_shm
+        self.wait_for_me = wait_for_me
         global _SEQUENCE_COUNTER
         if _SEQUENCE_COUNTER is None:
             try:
@@ -42,6 +45,7 @@ class OrderedEnqueuerCF():
         self.queue = None
         self.run_thread = None
         self.stop_signal = None
+        self.shm_manager = None
 
     def is_running(self):
         return self.stop_signal is not None and not self.stop_signal.is_set()
@@ -57,6 +61,9 @@ class OrderedEnqueuerCF():
         self.workers = workers
         self.queue = queue.Queue(max_queue_size)
         self.stop_signal = threading.Event()
+        if self.use_shm:
+            self.shm_manager = managers.SharedMemoryManager()
+            self.shm_manager.start()
         self.run_thread = threading.Thread(target=self._run)
         self.run_thread.daemon = True
         self.run_thread.start()
@@ -70,25 +77,26 @@ class OrderedEnqueuerCF():
 
     def _run(self):
         """Submits request to the executor and queue the `Future` objects."""
+
         sequence = list(range(len(self.sequence)))
         self._send_sequence()  # Share the initial sequence
         while True:
             if self.shuffle:
                 random.shuffle(sequence)
-
-            with ProcessPoolExecutor(max_workers=self.workers, initializer=init_pool_generator, initargs=(self.sequence, self.uid)) as executor:
+            task = get_item_shm if self.use_shm else get_item
+            with ProcessPoolExecutor(max_workers=self.workers, initializer=init_pool_generator, initargs=(self.sequence, self.uid, self.shm_manager)) as executor:
                 for i in sequence:
                     if self.stop_signal.is_set():
                         return
-                    self.queue.put( executor.submit(get_index, self.uid, i), block=True)
-
+                    self.queue.put(executor.submit(task, self.uid, i), block=True)
                 # Done with the current epoch, waiting for the final batches
                 self._wait_queue()
 
             if self.stop_signal.is_set() or self.single_epoch:
                 # We're done
                 return
-
+            if self.wait_for_me is not None:
+                self.wait_for_me.wait()
             # Call the internal on epoch end.
             self.sequence.on_epoch_end()
             self._send_sequence()  # Update the pool
@@ -98,6 +106,8 @@ class OrderedEnqueuerCF():
         # For new processes that may spawn
         global _SHARED_SEQUENCES
         _SHARED_SEQUENCES[self.uid] = self.sequence
+        global _SHARED_SHM_MANAGER
+        _SHARED_SHM_MANAGER[self.uid] = self.shm_manager
 
     def get(self):
         """Creates a generator to extract data from the queue.
@@ -115,6 +125,8 @@ class OrderedEnqueuerCF():
                 if self.is_running():
                     self.queue.task_done()
                 if inputs is not None:
+                    if self.use_shm:
+                        inputs = from_shm(*inputs)
                     yield inputs
             except queue.Empty:
                 pass
@@ -136,27 +148,107 @@ class OrderedEnqueuerCF():
             self.queue.unfinished_tasks = 0
             self.queue.not_full.notify()
         self.run_thread.join(timeout)
+        if self.use_shm is not None:
+            self.shm_manager.shutdown()
+            self.shm_manager.join()
+        global _SHARED_SHM_MANAGER
+        _SHARED_SHM_MANAGER[self.uid] = None
         global _SHARED_SEQUENCES
         _SHARED_SEQUENCES[self.uid] = None
 
 
-def init_pool_generator(gen, uid):
+def to_shm(shm_manager, tensors):
+    if multiple(tensors):
+        inputs, outputs = tensors
+    else:
+        inputs = tensors
+        outputs = []
+    if not multiple(inputs):
+        inputs = [inputs]
+    if not multiple(outputs):
+        outputs = [outputs]
+    size = np.sum([a.nbytes for a in inputs] + [a.nbytes for a in outputs])
+    shm = shm_manager.SharedMemory(size=size)
+    i_shapes = []
+    i_dtypes = []
+    o_shapes = []
+    o_dtypes = []
+    offset = 0
+    for a in inputs:
+        shm_a = np.ndarray(a.shape, dtype=a.dtype, buffer=shm.buf, offset=offset)
+        shm_a[:] = a[:]
+        i_shapes.append(a.shape)
+        i_dtypes.append(a.dtype)
+        offset += a.nbytes
+    for a in outputs:
+        shm_a = np.ndarray(a.shape, dtype=a.dtype, buffer=shm.buf, offset=offset)
+        shm_a[:] = a[:]
+        o_shapes.append(a.shape)
+        o_dtypes.append(a.dtype)
+        offset += a.nbytes
+    tensors = (i_shapes, i_dtypes, o_shapes, o_dtypes, shm.name)
+    shm.close()
+    del shm
+    return tensors
+
+
+def from_shm(i_shapes, i_dtypes, o_shapes, o_dtypes, shm_name):
+    existing_shm = ErasingSharedMemory(shm_name)
+    offset = 0
+    inputs = []
+    outputs = []
+    for shape, dtype in zip(i_shapes, i_dtypes):
+        a = ShmArray(shape, dtype=dtype, buffer=existing_shm.buf, offset=offset, shm=existing_shm)
+        inputs.append(a)
+        offset += a.nbytes
+    for shape, dtype in zip(o_shapes, o_dtypes):
+        a = ShmArray(shape, dtype=dtype, buffer=existing_shm.buf, offset=offset, shm=existing_shm)
+        outputs.append(a)
+        offset += a.nbytes
+
+    if len(inputs) == 1:
+        inputs = inputs[0]
+    elif len(inputs) > 1:
+        inputs = tuple(inputs)
+    if len(outputs) == 0:
+        return inputs
+    elif len(outputs) == 1:
+        outputs = outputs[0]
+    elif len(outputs) > 1:
+        outputs = tuple(outputs)
+    return inputs, outputs
+
+
+def init_pool_generator(gen, uid, shm_manager):
     global _SHARED_SEQUENCES
     _SHARED_SEQUENCES[uid] = gen
+    global _SHARED_SHM_MANAGER
+    _SHARED_SHM_MANAGER[uid] = shm_manager
+
+def get_item_shm(uid, i):
+    tensors = _SHARED_SEQUENCES[uid][i]
+    return to_shm(_SHARED_SHM_MANAGER[uid], tensors)
 
 
-def get_index(uid, i):
-    """Get the value from the Sequence `uid` at index `i`.
-
-    To allow multiple Sequences to be used at the same time, we use `uid` to
-    get a specific one. A single Sequence would cause the validation to
-    overwrite the training Sequence.
-
-    Args:
-        uid: int, Sequence identifier
-        i: index
-
-    Returns:
-        The value at index `i`.
-    """
+def get_item(uid, i):
     return _SHARED_SEQUENCES[uid][i]
+
+
+def multiple(item):
+    return isinstance(item, (list, tuple))
+
+# code from: https://muditb.medium.com/speed-up-your-keras-sequence-pipeline-f5d158359f46
+class ShmArray(np.ndarray):
+    def __new__(cls, shape, dtype=float, buffer=None, offset=0, strides=None, order=None, shm=None):
+        obj = super(ShmArray, cls).__new__(cls, shape, dtype, buffer, offset, strides,  order)
+        obj.shm = shm
+        return obj
+
+    def __array_finalize__(self, obj):
+        if obj is None: return
+        self.shm = getattr(obj, 'shm', None)
+
+class ErasingSharedMemory(shared_memory.SharedMemory):
+    def __del__(self):
+        super(ErasingSharedMemory, self).__del__()
+        self.unlink()
