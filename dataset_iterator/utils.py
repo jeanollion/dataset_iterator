@@ -1,5 +1,9 @@
+import tensorflow as tf
 import numpy as np
 from math import ceil
+
+def get_tf_version():
+    return tuple(map(int, (tf.__version__.split("."))))
 
 def replace_last(s, old, new):
     # return (s[::-1].replace(old[::-1], new[::-1], 1))[::-1]

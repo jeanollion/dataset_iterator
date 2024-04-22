@@ -6,21 +6,24 @@ import random
 import numpy as np
 import threading
 import time
-from multiprocessing import Queue, managers, shared_memory
+from multiprocessing import managers, shared_memory
+
+# adapted from https://github.com/keras-team/keras/blob/v2.13.1/keras/utils/data_utils.py#L651-L776
+# uses concurrent.futures, solves a memory leak in case of hard sample mining run as callback with regular orderedEnqueur. Option to pass tensors through shared memory
+
 
 # Global variables to be shared across processes
 _SHARED_SEQUENCES = {}
 _SHARED_SHM_MANAGER = {}
 # We use a Value to provide unique id to different processes.
 _SEQUENCE_COUNTER = None
-# adapted from https://github.com/keras-team/keras/blob/v2.13.1/keras/utils/data_utils.py#L651-L776
-# uses cncurrent.futures  + shared memory + overcome a memory leak in case of hard sample mining run as callback
+
 class OrderedEnqueuerCF():
-    def __init__(self, sequence, shuffle=False, single_epoch:bool=False, use_shm:bool=True, wait_for_me=None):
+    def __init__(self, sequence, shuffle=False, single_epoch:bool=False, use_shm:bool=True, wait_for_me:threading.Event=None):
         self.sequence = sequence
         self.shuffle = shuffle
-        self.single_epoch=single_epoch
-        self.use_shm=use_shm
+        self.single_epoch = single_epoch
+        self.use_shm = use_shm
         self.wait_for_me = wait_for_me
         global _SEQUENCE_COUNTER
         if _SEQUENCE_COUNTER is None:
@@ -88,7 +91,8 @@ class OrderedEnqueuerCF():
                 for i in sequence:
                     if self.stop_signal.is_set():
                         return
-                    self.queue.put(executor.submit(task, self.uid, i), block=True)
+                    future = executor.submit(task, self.uid, i)
+                    self.queue.put(future, block=True)
                 # Done with the current epoch, waiting for the final batches
                 self._wait_queue()
 
@@ -132,6 +136,7 @@ class OrderedEnqueuerCF():
                 pass
             except Exception as e:
                 self.stop()
+                print("Exception raised while getting future", flush=True)
                 raise e
 
     def stop(self, timeout=None):
@@ -260,4 +265,7 @@ class ShmArray(np.ndarray):
 class ErasingSharedMemory(shared_memory.SharedMemory):
     def __del__(self):
         super(ErasingSharedMemory, self).__del__()
-        self.unlink()
+        try:
+            self.unlink() # manager can delete the file before array is finalized
+        except FileNotFoundError:
+            pass

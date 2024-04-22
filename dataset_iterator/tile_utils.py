@@ -6,6 +6,34 @@ from scipy.ndimage import zoom
 
 OVERLAP_MODE = ["NO_OVERLAP", "ALLOW", "FORCE"]
 
+
+def extract_single_tile(tensor_slice=None, tile_shape=None, contraction_factor=None, return_none_for_identity:bool=True):
+    if tensor_slice is not None:
+        def extract_tiles_fun(batch, is_mask: bool, allow_random: bool = False):
+            if isinstance(batch, (list, tuple)):
+                return [b[tensor_slice] for b in batch]
+            else:
+                return batch[tensor_slice]
+    elif tile_shape is not None: # fixed patch shape
+        def extract_tiles_fun(batch, is_mask: bool, allow_random: bool = False):
+            if isinstance(batch, (list, tuple)):
+                return [crop(b, tile_shape) for b in batch]
+            else:
+                return crop(batch, tile_shape)
+    elif contraction_factor is not None: # honor contraction factor
+        assert contraction_factor is not None, "either tensor_slice, tile_shape or contraction factor must be provided"
+        def extract_tiles_fun(batch, is_mask:bool, allow_random:bool=False):
+            if isinstance(batch, (list, tuple)):
+                return [crop_to_contraction(b, contraction_factor) for b in batch]
+            else:
+                return crop_to_contraction(batch, contraction_factor)
+    else: # identity
+        if return_none_for_identity:
+            return None
+        def extract_tiles_fun(batch, is_mask: bool, allow_random: bool = False):
+            return batch
+    return extract_tiles_fun
+
 def extract_tile_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, augmentation_rotate=True):
     def func(batch, is_mask:bool, allow_random:bool=True):
         tiles = extract_tiles(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride if allow_random else False, return_coords=False)
@@ -357,3 +385,29 @@ def augment_tiles_inplace(tiles, rotate, n_dims=2):
                 tiles[b] = aug_fun[aug[b]](tiles[b])
     return tiles
 
+def crop_to_contraction(batch, contraction_factor):
+    if len(batch.shape) == 4:
+        contraction_factor = ensure_multiplicity(2, contraction_factor)
+        _, Y, X, _ = batch.shape
+        newY = contraction_factor[0] * int(Y / contraction_factor[0])
+        newX = contraction_factor[1] * int(X / contraction_factor[1])
+        return batch if newY==Y and newX==X else batch[:, :newY, :newX]
+    elif len(batch.shape) == 5:
+        contraction_factor = ensure_multiplicity(3, contraction_factor)
+        _, Z, Y, X, _ = batch.shape
+        newZ = contraction_factor[0] * int(Z / contraction_factor[0])
+        newY = contraction_factor[1] * int(Y / contraction_factor[1])
+        newX = contraction_factor[2] * int(X / contraction_factor[2])
+        return batch if newZ == Z and newY == Y and newX == X else batch[:, :newZ, newY, :newX]
+
+def crop(batch, target_shape=None):
+    if len(batch.shape) == 4:
+        target_shape = ensure_multiplicity(2, target_shape)
+        _, Y, X, _ = batch.shape
+        assert target_shape[0] <= Y and target_shape[1] <= X, "target shape is larger than tensor to crop"
+        return batch if target_shape[0]==Y and target_shape[1]==X else batch[:, :target_shape[0], :target_shape[1]]
+    elif len(batch.shape) == 5:
+        target_shape = ensure_multiplicity(3, target_shape)
+        _, Z, Y, X, _ = batch.shape
+        assert target_shape[0] <= Z and target_shape[1] <= Y and target_shape[0] <= X, "target shape is larger than tensor to crop"
+        return batch if target_shape[0] == Z and target_shape[1] == Y and target_shape[2] == X else batch[:, :target_shape[0], :target_shape[1], :target_shape[2]]

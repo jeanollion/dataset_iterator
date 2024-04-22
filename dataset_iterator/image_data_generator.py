@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 from random import uniform, random, getrandbits
-from .utils import is_list, ensure_multiplicity
+from .utils import is_list, ensure_multiplicity, get_tf_version
 from .pre_processing import get_center_scale_range, compute_histogram_range, adjust_histogram_range, add_poisson_noise, add_speckle_noise, add_gaussian_noise, gaussian_blur, get_histogram_elasticdeform_target_points_delta, histogram_elasticdeform, get_illumination_variation_target_points, illumination_variation
 
 def get_image_data_generator(scaling_parameters=None, illumination_parameters=None, affine_transform_parameters=None):
@@ -360,7 +360,7 @@ class IlluminationImageGenerator():
 class KerasImageDataGenerator(tf.keras.preprocessing.image.ImageDataGenerator):
     def __init__(self, **kwargs):
         if "interpolation_order" in kwargs: # interpolation_order was introduced at version 2.9.0
-            tf_version = tuple(map(int, (tf.__version__.split("."))))
+            tf_version = get_tf_version()
             if tf_version < (2,9,0):
                 kwargs.pop("interpolation_order")
         super().__init__(**kwargs)

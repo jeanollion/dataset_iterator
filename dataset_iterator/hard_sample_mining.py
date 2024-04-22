@@ -7,10 +7,11 @@ from dataset_iterator.ordered_enqueuer_cf import OrderedEnqueuerCF
 import threading
 
 class HardSampleMiningCallback(tf.keras.callbacks.Callback):
-    def __init__(self, iterator, target_iterator, predict_fun, metrics_fun, period:int=10, start_epoch:int=0, skip_first:bool=False, enrich_factor:float=10., quantile_max:float=0.99, quantile_min:float=None, disable_channel_postprocessing:bool=False, workers=None, verbose:int=1):
+    def __init__(self, iterator, target_iterator, predict_fun, metrics_fun, period:int=10, start_epoch:int=0, skip_first:bool=False, start_from_epoch:int=0, enrich_factor:float=10., quantile_max:float=0.99, quantile_min:float=None, disable_channel_postprocessing:bool=False, workers=None, verbose:int=1):
         super().__init__()
         self.period = period
         self.start_epoch = start_epoch
+        self.start_from_epoch = start_from_epoch
         self.skip_first = skip_first
         self.iterator = iterator
         self.target_iterator = target_iterator
@@ -29,7 +30,6 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         simple_iterator = SimpleIterator(self.iterator)
         self.batch_size = self.iterator.get_batch_size()
         self.n_batches = len(simple_iterator)
-        #self.enq = tf.keras.utils.OrderedEnqueuer(simple_iterator, use_multiprocessing=True, shuffle=False)
         self.enq = OrderedEnqueuerCF(simple_iterator, single_epoch=True, shuffle=False)
         self.wait_for_me = threading.Event()
 
@@ -44,14 +44,13 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         if self.period==1 or (epoch + 1 + self.start_epoch) % self.period == 0:
-            if epoch == 0 and self.skip_first:
-                return
-            metrics = self.compute_metrics()
-            first = self.proba_per_metric is None
-            self.proba_per_metric = get_index_probability(metrics, enrich_factor=self.enrich_factor, quantile_max=self.quantile_max, quantile_min=self.quantile_min, verbose=self.verbose)
-            self.n_metrics = self.proba_per_metric.shape[0] if len(self.proba_per_metric.shape) == 2 else 1
-            if first and self.n_metrics > self.period:
-                warnings.warn(f"Hard sample mining period = {self.period} should be greater than metric number = {self.n_metrics}")
+            if (epoch > 0 or not self.skip_first) and epoch + self.start_epoch >= self.start_from_epoch:
+                metrics = self.compute_metrics()
+                first = self.proba_per_metric is None
+                self.proba_per_metric = get_index_probability(metrics, enrich_factor=self.enrich_factor, quantile_max=self.quantile_max, quantile_min=self.quantile_min, verbose=self.verbose)
+                self.n_metrics = self.proba_per_metric.shape[0] if len(self.proba_per_metric.shape) == 2 else 1
+                if first and self.n_metrics > self.period:
+                    warnings.warn(f"Hard sample mining period = {self.period} should be greater than metric number = {self.n_metrics}")
         if self.proba_per_metric is not None:
             if len(self.proba_per_metric.shape) == 2:
                 self.metric_idx = (self.metric_idx + 1) % self.n_metrics
