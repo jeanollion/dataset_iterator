@@ -1,13 +1,13 @@
 import os
+import traceback
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
-import queue
 import random
-import numpy as np
 import threading
 import time
-from multiprocessing import managers, shared_memory
+from multiprocessing import managers
 from threading import BoundedSemaphore
+from .shared_memory import to_shm, from_shm
 
 # adapted from https://github.com/keras-team/keras/blob/v2.13.1/keras/utils/data_utils.py#L651-L776
 # uses concurrent.futures, solves a memory leak in case of hard sample mining run as callback with regular orderedEnqueur. Option to pass tensors through shared memory
@@ -97,18 +97,20 @@ class OrderedEnqueuerCF():
                 random.shuffle(sequence)
             task = get_item_shm if self.use_shm else get_item
             executor = ProcessPoolExecutor(max_workers=self.workers, initializer=init_pool_generator, initargs=(self.sequence, self.uid, self.shm_manager))
+            #print(f"executor started", flush=True)
             for idx, i in enumerate(sequence):
                 if self.stop_signal.is_set():
                     return
                 self.semaphore.acquire()
                 future = executor.submit(task, self.uid, i)
                 self.queue.append((future, i))
+                #print(f"sumit task: {i} {idx+1}/{len(sequence)}")
             # Done with the current epoch, waiting for the final batches
             self._wait_queue(True) # safer to wait before calling shutdown than calling directly shutdown with wait=True
-            print("exiting from ProcessPoolExecutor...", flush=True)
+            #print("exiting from ProcessPoolExecutor...", flush=True)
             time.sleep(0.1)
             executor.shutdown(wait=False, cancel_futures=True)
-            print("exiting from ProcessPoolExecutor done", flush=True)
+            #print("exiting from ProcessPoolExecutor done", flush=True)
             if self.stop_signal.is_set() or self.single_epoch:
                 # We're done
                 return
@@ -140,19 +142,20 @@ class OrderedEnqueuerCF():
             self._wait_queue(False)
             if len(self.queue) > 0:
                 future, i = self.queue[0]
-                try:
+                #print(f"processing task: {i}")
+                ex = future.exception()
+                if ex is None:
                     inputs = future.result()
-                    self.queue.pop(0)  # only remove after result() is called to avoid terminating pool while a process is still running
                     if self.use_shm:
                         inputs = from_shm(*inputs)
-                    self.semaphore.release() # release is done here and not as a future callback to limit effective number of samples in memory
-                except Exception as e:
-                    self.stop()
-                    print(f"Exception raised while getting future result from task: {i}", flush=True)
-                    raise e
-                finally:
-                    future.cancel()
-                    del future
+                else:
+                    traceback.print_exception(ex)
+                    print(f"Exception raised while getting future result from task: {i}. Task will be re-computed.", flush=True)
+                    inputs = get_item(self.uid, i)
+                self.queue.pop(0)  # only remove after result() is called to avoid terminating pool while a process is still running
+                self.semaphore.release()  # release is done here and not as a future callback to limit effective number of samples in memory
+                future.cancel()
+                del future
                 yield inputs
 
     def stop(self, timeout=None):
@@ -165,7 +168,7 @@ class OrderedEnqueuerCF():
         """
         self.stop_signal.set()
         self.run_thread.join(timeout)
-        if self.use_shm is not None:
+        if self.shm_manager is not None:
             self.shm_manager.shutdown()
             self.shm_manager.join()
         self.queue = None
@@ -191,95 +194,3 @@ def get_item_shm(uid, i):
 def get_item(uid, i):
     return _SHARED_SEQUENCES[uid][i]
 
-
-def to_shm(shm_manager, tensors):
-    flatten_tensor_list, nested_structure = get_flatten_list(tensors)
-    size = np.sum([a.nbytes for a in flatten_tensor_list])
-    shm = shm_manager.SharedMemory(size=size)
-    shapes = []
-    dtypes = []
-    offset = 0
-    for a in flatten_tensor_list:
-        shm_a = np.ndarray(a.shape, dtype=a.dtype, buffer=shm.buf, offset=offset)
-        shm_a[:] = a[:]
-        shapes.append(a.shape)
-        dtypes.append(a.dtype)
-        offset += a.nbytes
-    tensor_ref = (shapes, dtypes, shm.name, nested_structure)
-    shm.close()
-    del shm
-    return tensor_ref
-
-
-def from_shm(shapes, dtypes, shm_name, nested_structure):
-    existing_shm = ErasingSharedMemory(shm_name)
-    offset = 0
-    tensor_list = []
-    for shape, dtype in zip(shapes, dtypes):
-        a = ShmArray(shape, dtype=dtype, buffer=existing_shm.buf, offset=offset, shm=existing_shm)
-        tensor_list.append(a)
-        offset += a.nbytes
-    return get_nested_structure(tensor_list, nested_structure)
-
-
-def multiple(item):
-    return isinstance(item, (list, tuple))
-
-
-def get_flatten_list(item):
-    flatten_list = []
-    nested_structure = []
-    _flatten(item, 0, flatten_list, nested_structure)
-    return flatten_list, nested_structure[0]
-
-
-def _flatten(item, offset, flatten_list, nested_structure):
-    if multiple(item):
-        nested_structure.append([])
-        for sub_item in item:
-            offset = _flatten(sub_item, offset, flatten_list, nested_structure[-1])
-        return offset
-    else:
-        nested_structure.append(offset)
-        flatten_list.append(item)
-        return offset + 1
-
-
-def get_nested_structure(flatten_list, nested_structure):
-    if multiple(nested_structure):
-        result = []
-        _get_nested(flatten_list, nested_structure, 0, result)
-        return result[0]
-    else:
-        return flatten_list[0]
-
-
-def _get_nested(flatten_list, nested_structure, offset, result):
-    if multiple(nested_structure):
-        result.append([])
-        for sub_nested in nested_structure:
-            offset = _get_nested(flatten_list, sub_nested, offset, result[-1])
-        return offset
-    else:
-        result.append(flatten_list[offset])
-        return offset + 1
-
-
-# code from: https://muditb.medium.com/speed-up-your-keras-sequence-pipeline-f5d158359f46
-class ShmArray(np.ndarray):
-    def __new__(cls, shape, dtype=float, buffer=None, offset=0, strides=None, order=None, shm=None):
-        obj = super(ShmArray, cls).__new__(cls, shape, dtype, buffer, offset, strides,  order)
-        obj.shm = shm
-        return obj
-
-    def __array_finalize__(self, obj):
-        if obj is None: return
-        self.shm = getattr(obj, 'shm', None)
-
-class ErasingSharedMemory(shared_memory.SharedMemory):
-    def __del__(self):
-        super(ErasingSharedMemory, self).__del__()
-        try:
-            self.unlink() # manager can delete the file before array is finalized
-        except FileNotFoundError:
-            pass

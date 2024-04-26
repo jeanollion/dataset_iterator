@@ -228,7 +228,7 @@ class MultiChannelIterator(IndexArrayIterator):
         self.return_image_index=return_image_index
         self._open_datasetIO()
         # check that all ds have compatible length between input and output
-        indexes = np.array([ds.shape[0] for ds in self.ds_array[0]])
+        indexes = np.array([len(ds) for ds in self.ds_array[0]])
         if len(channel_keywords)>1:
             for c, ds_l in enumerate(self.ds_array):
                 if self.channel_keywords[c] is not None:
@@ -237,9 +237,9 @@ class MultiChannelIterator(IndexArrayIterator):
                         raise ValueError('Channels {}({}) has #{} datasets whereas first channel has #{} datasets'.format(c, channel_keywords[c], len(ds_l), len(self.ds_array[0])))
                     for ds_idx, ds in enumerate(ds_l):
                         if singleton:
-                            if ds.shape[0]!=1:
+                            if len(ds)!=1:
                                 raise ValueError("Channel {} is set as singleton but one dataset has more that one image".format(c))
-                        elif indexes[ds_idx] != ds.shape[0]:
+                        elif indexes[ds_idx] != len(ds):
                             raise ValueError('Channel {}({}) has at least one dataset with number of elements that differ from Channel 0'.format(c, channel_keywords[c]))
         if len(array_keywords)>1: # check that all array ds have compatible length
             for c, ds_l in enumerate(self.ads_array):
@@ -247,7 +247,7 @@ class MultiChannelIterator(IndexArrayIterator):
                     if len(self.ds_array[0])!=len(ds_l):
                         raise ValueError('Array {}({}) has #{} datasets whereas first channel has #{} datasets'.format(c, channel_keywords[c], len(ds_l), len(self.ds_array[0])))
                     for ds_idx, ds in enumerate(ds_l):
-                        if indexes[ds_idx] != ds.shape[0]:
+                        if indexes[ds_idx] != len(ds):
                             raise ValueError('Array {}({}) has at least one dataset with number of elements that differ from Channel 0'.format(c, channel_keywords[c]))
         # get offset for each dataset
         for i in range(1, len(indexes)):
@@ -281,7 +281,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 self.labels[i] = np.char.asarray(ds[()].astype('unicode')) # todo: check if necessary to convert to char array ? unicode is necessary
             if len(self.labels)!=len(self.ds_array[0]):
                 raise ValueError('Invalid input file: number of label array differ from dataset number')
-            if any(len(self.labels[i].shape)==0 or self.labels[i].shape[0]!=self.ds_array[0][i].shape[0] for i in range(len(self.labels))):
+            if any(len(self.labels[i].shape)==0 or len(self.labels[i]) != len(self.ds_array[0][i]) for i in range(len(self.labels))):
                 raise ValueError('Invalid input file: at least one dataset has element numbers that differ from corresponding label array')
         except:
             self.labels = None
@@ -320,6 +320,10 @@ class MultiChannelIterator(IndexArrayIterator):
         getAttribute = lambda a, def_val : def_val if a is None else (a[0] if isinstance(a, list) else a)
         self.ds_scaling_center = [[getAttribute(self.datasetIO.get_attribute(self._get_dataset_path(c, ds_idx), "scaling_center"), 0) for ds_idx in range(len(self.paths))]  if self.channel_keywords[c] is not None else None for c in range(len(self.channel_keywords))]
         self.ds_scaling_factor = [[getAttribute(self.datasetIO.get_attribute(self._get_dataset_path(c, ds_idx), "scaling_factor"), 1) for ds_idx in range(len(self.paths))]  if self.channel_keywords[c] is not None else None for c in range(len(self.channel_keywords))]
+
+    def open(self):
+        self._open_datasetIO()
+
 
     def _close_datasetIO(self):
         if self.datasetIO is not None:

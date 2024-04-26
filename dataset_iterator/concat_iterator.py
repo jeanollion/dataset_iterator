@@ -101,15 +101,22 @@ class ConcatIterator(IndexArrayIterator):
         raise NotImplementedError("Not supported yet")
 
     def close(self):
-        self._close_datasetIO()
+        for it in self.iterators:
+            it.close()
 
     def _close_datasetIO(self):
         for it in self.iterators:
             it._close_datasetIO()
 
+
     def _open_datasetIO(self):
         for it in self.iterators:
             it._open_datasetIO()
+
+
+    def open(self):
+        for it in self.iterators:
+            it.open()
 
     def disable_random_transforms(self, data_augmentation:bool=True, channels_postprocessing:bool=False):
         return [it.disable_random_transforms(data_augmentation, channels_postprocessing) for it in self.iterators]

@@ -45,7 +45,11 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
         if self.period==1 or (epoch + 1 + self.start_epoch) % self.period == 0:
             if (epoch > 0 or not self.skip_first) and epoch + self.start_epoch >= self.start_from_epoch:
+                self.target_iterator.close()
+                self.iterator.open()
                 metrics = self.compute_metrics()
+                self.iterator.close()
+                self.target_iterator.open()
                 first = self.proba_per_metric is None
                 self.proba_per_metric = get_index_probability(metrics, enrich_factor=self.enrich_factor, quantile_max=self.quantile_max, quantile_min=self.quantile_min, verbose=self.verbose)
                 self.n_metrics = self.proba_per_metric.shape[0] if len(self.proba_per_metric.shape) == 2 else 1
