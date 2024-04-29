@@ -40,11 +40,12 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         self.iterator.close()
 
     def on_epoch_begin(self, epoch, logs=None):
-        self.wait_for_me.clear() # will block
+        if self.proba_per_metric is not None:
+            self.wait_for_me.clear() # will block
 
     def on_epoch_end(self, epoch, logs=None):
-        if self.period==1 or (epoch + 1 + self.start_epoch) % self.period == 0:
-            if (epoch > 0 or not self.skip_first) and epoch + self.start_epoch >= self.start_from_epoch:
+        if self.period == 1 or (epoch + 1 + self.start_epoch) % self.period == 0:
+            if (epoch > 0 or not self.skip_first) and epoch + 1 + self.start_epoch >= self.start_from_epoch:
                 self.target_iterator.close()
                 self.iterator.open()
                 metrics = self.compute_metrics()
@@ -63,7 +64,7 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
                 proba = self.proba_per_metric
             # set probability to iterator in case of multiprocessing iwth OrderedEnqueeur this will be taken into account only a next epoch has iterator has already been sent to processes at this stage
             self.target_iterator.set_index_probability(proba)
-        self.wait_for_me.set() # release block
+            self.wait_for_me.set() # release block
 
     def on_train_end(self, logs=None):
         self.close()
