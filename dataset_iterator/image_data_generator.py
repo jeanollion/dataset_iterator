@@ -364,36 +364,36 @@ class KerasImageDataGenerator(tf.keras.preprocessing.image.ImageDataGenerator):
             if tf_version < (2,9,0):
                 kwargs.pop("interpolation_order")
         if "height_shift_range" in kwargs:
-            self.height_shift_range = kwargs.pop("height_shift_range")
-            if self.height_shift_range is not None:
-                print("hsr: {}", self.height_shift_range)
-                if isinstance(self.height_shift_range, (tuple, list)):
-                    assert len(self.height_shift_range) == 2, "height_shift_range should either be a number either a list or tuple of len 2"
+            self.x_shift_range = kwargs.pop("height_shift_range")
+            if self.x_shift_range is not None:
+                if isinstance(self.x_shift_range, (tuple, list)):
+                    assert len(self.x_shift_range) == 2, "height_shift_range should either be a number either a list or tuple of len 2"
                 else:
-                    self.height_shift_range = [-self.height_shift_range, self.height_shift_range]
+                    self.x_shift_range = [-self.x_shift_range, self.x_shift_range]
         else:
-            self.height_shift_range = None
+            self.x_shift_range = None
         if "width_shift_range" in kwargs:
-            self.width_shift_range = kwargs.pop("width_shift_range")
-            if self.width_shift_range is not None:
-                if isinstance(self.width_shift_range, (tuple, list)):
-                    assert len(self.width_shift_range) == 2, "width_shift_range should either be a number either a list or tuple of len 2"
+            self.y_shift_range = kwargs.pop("width_shift_range")
+            if self.y_shift_range is not None:
+                if isinstance(self.y_shift_range, (tuple, list)):
+                    assert len(self.y_shift_range) == 2, "width_shift_range should either be a number either a list or tuple of len 2"
                 else:
-                    self.width_shift_range = [-self.width_shift_range, self.width_shift_range]
+                    self.y_shift_range = [-self.y_shift_range, self.y_shift_range]
         else:
-            self.width_shift_range = None
+            self.y_shift_range = None
         super().__init__(**kwargs)
 
     def get_random_transform(self, img_shape, seed=None):
         random_transform = super().get_random_transform(img_shape, seed)
-        if self.height_shift_range is not None:
-            random_transform["tx"] = np.random.uniform(self.height_shift_range[0], self.height_shift_range[1])
-            if np.max(self.height_shift_range) < 1:
+        if self.x_shift_range is not None:
+            random_transform["tx"] = np.random.uniform(self.x_shift_range[0], self.x_shift_range[1])
+            if np.max(np.abs(self.x_shift_range)) < 1:
                 random_transform["tx"] = random_transform["tx"] * img_shape[self.row_axis - 1]
-        if self.width_shift_range is not None:
-            random_transform["ty"] = np.random.uniform(self.width_shift_range[0], self.width_shift_range[1])
-            if np.max(self.width_shift_range) < 1:
-                random_transform["ty"] = random_transform["ty"] * img_shape[self.row_axis - 1]
+        if self.y_shift_range is not None:
+            random_transform["ty"] = -np.random.uniform(self.y_shift_range[0], self.y_shift_range[1])
+            if np.max(np.abs(self.y_shift_range)) < 1:
+                random_transform["ty"] = random_transform["ty"] * img_shape[self.col_axis - 1]
+        return random_transform
 
     def transfer_parameters(self, source, destination):
         destination['flip_vertical'] = source.get('flip_vertical', False)
