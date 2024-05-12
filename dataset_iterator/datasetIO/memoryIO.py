@@ -36,7 +36,6 @@ class MemoryIO(DatasetIO):
         global _MEMORYIO_SHM_MANAGER
         _MEMORYIO_SHM_MANAGER[self.uid] = managers.SharedMemoryManager()
         _MEMORYIO_SHM_MANAGER[self.uid].start()
-        self.shm_manager_on = True
 
     def _stop_shm_manager(self):
         global _MEMORYIO_SHM_MANAGER
@@ -44,7 +43,6 @@ class MemoryIO(DatasetIO):
             _MEMORYIO_SHM_MANAGER[self.uid].shutdown()
             _MEMORYIO_SHM_MANAGER[self.uid].join()
             _MEMORYIO_SHM_MANAGER[self.uid] = None
-        self.shm_manager_on = False
 
     def _to_shm(self, array):
         global _MEMORYIO_SHM_MANAGER
@@ -57,7 +55,9 @@ class MemoryIO(DatasetIO):
                 shma.unlink()
         self.datasets.clear()
         self.datasetIO.close()
-        if self.use_shm and self.shm_manager_on:
+
+    def __del__(self):
+        if self.use_shm:
             self._stop_shm_manager()
 
     def get_dataset_paths(self, channel_keyword, group_keyword):
@@ -66,8 +66,6 @@ class MemoryIO(DatasetIO):
     def get_dataset(self, path):
         if path not in self.datasets:
             with self.__lock__:
-                if self.use_shm and not self.shm_manager_on:
-                    self._start_shm_manager()
                 if path not in self.datasets:
                     if self.use_shm:
                         self.datasets[path] = ShmArrayWrapper(*self._to_shm(self.datasetIO.get_dataset(path)[:]))
