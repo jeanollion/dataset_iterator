@@ -365,18 +365,21 @@ class KerasImageDataGenerator(tf.keras.preprocessing.image.ImageDataGenerator):
                 kwargs.pop("interpolation_order")
         if "height_shift_range" in kwargs:
             self.height_shift_range = kwargs.pop("height_shift_range")
-            if isinstance(self.height_shift_range, (tuple, list)):
-                assert len(self.height_shift_range) == 2
-            else:
-                self.height_shift_range = [-self.height_shift_range, self.height_shift_range]
+            if self.height_shift_range is not None:
+                print("hsr: {}", self.height_shift_range)
+                if isinstance(self.height_shift_range, (tuple, list)):
+                    assert len(self.height_shift_range) == 2, "height_shift_range should either be a number either a list or tuple of len 2"
+                else:
+                    self.height_shift_range = [-self.height_shift_range, self.height_shift_range]
         else:
             self.height_shift_range = None
         if "width_shift_range" in kwargs:
             self.width_shift_range = kwargs.pop("width_shift_range")
-            if isinstance(self.width_shift_range, (tuple, list)):
-                assert len(self.width_shift_range) == 2
-            else:
-                self.width_shift_range = [-self.width_shift_range, self.width_shift_range]
+            if self.width_shift_range is not None:
+                if isinstance(self.width_shift_range, (tuple, list)):
+                    assert len(self.width_shift_range) == 2, "width_shift_range should either be a number either a list or tuple of len 2"
+                else:
+                    self.width_shift_range = [-self.width_shift_range, self.width_shift_range]
         else:
             self.width_shift_range = None
         super().__init__(**kwargs)
