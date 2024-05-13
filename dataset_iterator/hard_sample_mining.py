@@ -75,20 +75,8 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         self.enq.start(workers=workers, max_queue_size=max(2, min(self.n_batches, workers)))
         gen = self.enq.get()
         compute_metrics_fun = get_compute_metrics_fun(self.predict_fun, self.metrics_fun, self.batch_size)
-        computed = False
-        metrics = None
-        while not computed:
-            try:
-                metrics = compute_metrics_loop(compute_metrics_fun, gen, self.batch_size, self.n_batches, self.verbose)
-            except BrokenPipeError as e:
-                print("broken pipe error, will re-try metric computation")
-                self.enq.stop()
-                self.enq.start(workers=workers, max_queue_size=max(2, min(self.n_batches, workers)))
-                gen = self.enq.get()
-            else:
-                computed = True
+        metrics = compute_metrics_loop(compute_metrics_fun, gen, self.batch_size, self.n_batches, self.verbose)
         self.enq.stop()
-        #self.iterator.close()
         return metrics
 
 
@@ -158,7 +146,6 @@ def compute_metrics(iterator, predict_function, metrics_function, disable_augmen
     n_batches = len(simple_iterator)
 
     compute_metrics_fun = get_compute_metrics_fun(predict_function, metrics_function, batch_size)
-
     if workers is None:
         workers = os.cpu_count()
     #enq = tf.keras.utils.OrderedEnqueuer(simple_iterator, use_multiprocessing=True, shuffle=False)
@@ -172,9 +159,10 @@ def compute_metrics(iterator, predict_function, metrics_function, disable_augmen
     iterator.close()
     return metrics
 
+
 def compute_metrics_loop(compute_metrics_fun, gen, batch_size, n_batches, verbose):
     metrics = []
-    if verbose>=1:
+    if verbose >= 1:
         print(f"Hard Sample Mining: computing metrics...", flush=True)
         progbar = tf.keras.utils.Progbar(n_batches)
     n_tiles = None

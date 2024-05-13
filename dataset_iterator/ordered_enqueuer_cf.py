@@ -1,4 +1,5 @@
 import os
+import gc
 import traceback
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
@@ -49,7 +50,9 @@ class OrderedEnqueuerCF():
         self.queue = None
         self.run_thread = None
         self.stop_signal = None
-        self.shm_manager = None
+        if self.use_shm:
+            self.shm_manager = managers.SharedMemoryManager()
+            self.shm_manager.start()
         self.semaphore = None
 
     def is_running(self):
@@ -69,15 +72,12 @@ class OrderedEnqueuerCF():
         self.semaphore = BoundedSemaphore(max_queue_size)
         self.queue = []
         self.stop_signal = threading.Event()
-        if self.use_shm:
-            self.shm_manager = managers.SharedMemoryManager()
-            self.shm_manager.start()
         self.run_thread = threading.Thread(target=self._run)
         self.run_thread.daemon = True
         self.run_thread.start()
 
     def _wait_queue(self, empty:bool):
-        """Wait for the queue to be empty."""
+        """Wait for the queue to be empty or not empty."""
         while True:
             if (empty and len(self.queue) == 0) or (not empty and len(self.queue) > 0) or self.stop_signal.is_set():
                 return
@@ -97,27 +97,26 @@ class OrderedEnqueuerCF():
                 random.shuffle(sequence)
             task = get_item_shm if self.use_shm else get_item
             executor = ProcessPoolExecutor(max_workers=self.workers, initializer=init_pool_generator, initargs=(self.sequence, self.uid, self.shm_manager))
-            #print(f"executor started", flush=True)
             for idx, i in enumerate(sequence):
                 if self.stop_signal.is_set():
                     return
                 self.semaphore.acquire()
                 future = executor.submit(task, self.uid, i)
                 self.queue.append((future, i))
-                #print(f"sumit task: {i} {idx+1}/{len(sequence)}")
             # Done with the current epoch, waiting for the final batches
             self._wait_queue(True) # safer to wait before calling shutdown than calling directly shutdown with wait=True
-            #print("exiting from ProcessPoolExecutor...", flush=True)
             time.sleep(0.1)
             executor.shutdown(wait=False, cancel_futures=True)
-            #print("exiting from ProcessPoolExecutor done", flush=True)
+            del executor
+            gc.collect()
             if self.stop_signal.is_set() or self.single_epoch:
-                # We're done
                 return
             if self.wait_for_me is not None:
                 self.wait_for_me.wait()
-            # Call the internal on epoch end.
-            self.sequence.on_epoch_end()
+            try:
+                self.sequence.on_epoch_end()
+            except AttributeError:
+                pass
             self._send_sequence()  # Update the pool
 
     def _send_sequence(self):
@@ -168,15 +167,18 @@ class OrderedEnqueuerCF():
         """
         self.stop_signal.set()
         self.run_thread.join(timeout)
-        if self.shm_manager is not None:
-            self.shm_manager.shutdown()
-            self.shm_manager.join()
         self.queue = None
         self.semaphore = None
         global _SHARED_SHM_MANAGER
         _SHARED_SHM_MANAGER[self.uid] = None
         global _SHARED_SEQUENCES
         _SHARED_SEQUENCES[self.uid] = None
+
+    def __del__(self):
+        if self.shm_manager is not None:
+            self.shm_manager.shutdown()
+            self.shm_manager.join()
+            self.shm_manager = None
 
 
 def init_pool_generator(gen, uid, shm_manager):
