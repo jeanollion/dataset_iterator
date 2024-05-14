@@ -2,7 +2,7 @@ import numpy as np
 from multiprocessing import shared_memory
 
 
-def to_shm(shm_manager, tensors):
+def to_shm(tensors, shm_manager=None):
     flatten_tensor_list, nested_structure = get_flatten_list(tensors)
     size = np.sum([a.nbytes for a in flatten_tensor_list])
     shm = shm_manager.SharedMemory(size=size) if shm_manager is not None else shared_memory.SharedMemory(create=True, size=size)
@@ -88,6 +88,18 @@ def _get_nested(flatten_list, nested_structure, offset, result):
         return offset + 1
 
 
+def unlink_tensor_ref(shapes, dtypes, shm_name, nested_structure):
+    unlink_shm_ref(shm_name)
+
+
+def unlink_shm_ref(shm_name):
+    try:
+        existing_shm = shared_memory.SharedMemory(shm_name)
+        existing_shm.unlink()
+    except FileExistsError | FileNotFoundError:
+        pass
+
+
 # code from: https://muditb.medium.com/speed-up-your-keras-sequence-pipeline-f5d158359f46
 class ShmArray(np.ndarray):
     def __new__(cls, shape, dtype=float, buffer=None, offset=0, strides=None, order=None, shm=None):
@@ -99,6 +111,7 @@ class ShmArray(np.ndarray):
         if obj is None:
             return
         self.shm = getattr(obj, 'shm', None)
+
 
 class ErasingSharedMemory(shared_memory.SharedMemory):
     def __del__(self):

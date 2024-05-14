@@ -1,11 +1,8 @@
 from .datasetIO import DatasetIO
 import threading
 import numpy as np
-from multiprocessing import managers, shared_memory, Value
-from ..shared_memory import to_shm, get_idx_from_shm
+from ..shared_memory import to_shm, get_idx_from_shm, unlink_shm_ref
 
-_MEMORYIO_SHM_MANAGER = {}
-_MEMORYIO_UID = None
 
 class MemoryIO(DatasetIO):
     def __init__(self, datasetIO: DatasetIO, use_shm: bool = True):
@@ -14,40 +11,6 @@ class MemoryIO(DatasetIO):
         self.__lock__ = threading.Lock()
         self.datasets = dict()
         self.use_shm = use_shm
-        global _MEMORYIO_UID
-        if _MEMORYIO_UID is None:
-            try:
-                _MEMORYIO_UID = Value("i", 0)
-            except OSError: # In this case the OS does not allow us to use multiprocessing. We resort to an int for indexing.
-                _MEMORYIO_UID = 0
-
-        if isinstance(_MEMORYIO_UID, int):
-            self.uid = _MEMORYIO_UID
-            _MEMORYIO_UID += 1
-        else:
-            # Doing Multiprocessing.Value += x is not process-safe.
-            with _MEMORYIO_UID.get_lock():
-                self.uid = _MEMORYIO_UID.value
-                _MEMORYIO_UID.value += 1
-        if use_shm:
-            self._start_shm_manager()
-
-    def _start_shm_manager(self):
-        global _MEMORYIO_SHM_MANAGER
-        _MEMORYIO_SHM_MANAGER[self.uid] = managers.SharedMemoryManager()
-        _MEMORYIO_SHM_MANAGER[self.uid].start()
-
-    def _stop_shm_manager(self):
-        global _MEMORYIO_SHM_MANAGER
-        if _MEMORYIO_SHM_MANAGER[self.uid] is not None:
-            _MEMORYIO_SHM_MANAGER[self.uid].shutdown()
-            _MEMORYIO_SHM_MANAGER[self.uid].join()
-            _MEMORYIO_SHM_MANAGER[self.uid] = None
-
-    def _to_shm(self, array):
-        global _MEMORYIO_SHM_MANAGER
-        shapes, dtypes, shm_name, _ = to_shm(_MEMORYIO_SHM_MANAGER[self.uid], array)
-        return shapes[0], dtypes[0], shm_name
 
     def close(self):
         if self.use_shm:
@@ -58,7 +21,8 @@ class MemoryIO(DatasetIO):
 
     def __del__(self):
         if self.use_shm:
-            self._stop_shm_manager()
+            for shma in self.datasets.values():
+                shma.unlink()
 
     def get_dataset_paths(self, channel_keyword, group_keyword):
         return self.datasetIO.get_dataset_paths(channel_keyword, group_keyword)
@@ -68,7 +32,7 @@ class MemoryIO(DatasetIO):
             with self.__lock__:
                 if path not in self.datasets:
                     if self.use_shm:
-                        self.datasets[path] = ShmArrayWrapper(*self._to_shm(self.datasetIO.get_dataset(path)[:]))
+                        self.datasets[path] = ShmArrayWrapper(*_to_shm(self.datasetIO.get_dataset(path)[:]))
                     else:
                         self.datasets[path] = ArrayWrapper(self.datasetIO.get_dataset(path)[:]) # load into memory
         return self.datasets[path]
@@ -87,6 +51,11 @@ class MemoryIO(DatasetIO):
 
     def get_parent_path(self, path):
         self.datasetIO.get_parent_path(path)
+
+
+def _to_shm(array):
+    shapes, dtypes, shm_name, _ = to_shm(array)
+    return shapes[0], dtypes[0], shm_name
 
 
 class ArrayWrapper:
@@ -115,8 +84,4 @@ class ShmArrayWrapper:
         return self.shape[0]
 
     def unlink(self):
-        try:
-            existing_shm = shared_memory.SharedMemory(self.shm_name)
-            existing_shm.unlink()
-        except Exception:
-            pass
+        unlink_shm_ref(self.shm_name)

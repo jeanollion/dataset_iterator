@@ -1,22 +1,18 @@
 import os
 import gc
 import traceback
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, CancelledError, TimeoutError
 import multiprocessing
 import random
 import threading
 import time
-from multiprocessing import managers
 from threading import BoundedSemaphore
-from .shared_memory import to_shm, from_shm
+from .shared_memory import to_shm, from_shm, unlink_tensor_ref
 
 # adapted from https://github.com/keras-team/keras/blob/v2.13.1/keras/utils/data_utils.py#L651-L776
 # uses concurrent.futures, solves a memory leak in case of hard sample mining run as callback with regular orderedEnqueur. Option to pass tensors through shared memory
-
-
 # Global variables to be shared across processes
 _SHARED_SEQUENCES = {}
-_SHARED_SHM_MANAGER = {}
 # We use a Value to provide unique id to different processes.
 _SEQUENCE_COUNTER = None
 
@@ -50,9 +46,7 @@ class OrderedEnqueuerCF():
         self.queue = None
         self.run_thread = None
         self.stop_signal = None
-        if self.use_shm:
-            self.shm_manager = managers.SharedMemoryManager()
-            self.shm_manager.start()
+        self.stop_signal = None
         self.semaphore = None
 
     def is_running(self):
@@ -89,16 +83,16 @@ class OrderedEnqueuerCF():
 
     def _run(self):
         """Submits request to the executor and queue the `Future` objects."""
-
+        task = get_item_shm if self.use_shm else get_item
         sequence = list(range(len(self.sequence)))
         self._send_sequence()  # Share the initial sequence
         while True:
             if self.shuffle:
                 random.shuffle(sequence)
-            task = get_item_shm if self.use_shm else get_item
-            executor = ProcessPoolExecutor(max_workers=self.workers, initializer=init_pool_generator, initargs=(self.sequence, self.uid, self.shm_manager))
+            executor = ProcessPoolExecutor(max_workers=self.workers)
             for idx, i in enumerate(sequence):
                 if self.stop_signal.is_set():
+                    executor.shutdown(wait=False, cancel_futures=True)
                     return
                 self.semaphore.acquire()
                 future = executor.submit(task, self.uid, i)
@@ -113,19 +107,17 @@ class OrderedEnqueuerCF():
                 return
             if self.wait_for_me is not None:
                 self.wait_for_me.wait()
-            try:
-                self.sequence.on_epoch_end()
-            except AttributeError:
-                pass
             self._send_sequence()  # Update the pool
 
     def _send_sequence(self):
         """Sends current Iterable to all workers."""
         # For new processes that may spawn
         global _SHARED_SEQUENCES
+        try:
+            self.sequence.on_epoch_end()
+        except AttributeError:
+            pass
         _SHARED_SEQUENCES[self.uid] = self.sequence
-        global _SHARED_SHM_MANAGER
-        _SHARED_SHM_MANAGER[self.uid] = self.shm_manager
 
     def get(self):
         """Creates a generator to extract data from the queue.
@@ -167,30 +159,25 @@ class OrderedEnqueuerCF():
         """
         self.stop_signal.set()
         self.run_thread.join(timeout)
+        if self.use_shm and self.queue is not None and len(self.queue) > 0:  # clean shm
+            for (future, _) in self.queue:
+                if future.exception() is None:
+                    try:
+                        unlink_tensor_ref(*future.result(timeout=0.1))
+                    except CancelledError | TimeoutError:  # save to shm is the last step, if task was not finished it is likely not saved to shm
+                        pass
         self.queue = None
         self.semaphore = None
-        global _SHARED_SHM_MANAGER
-        _SHARED_SHM_MANAGER[self.uid] = None
         global _SHARED_SEQUENCES
         _SHARED_SEQUENCES[self.uid] = None
 
     def __del__(self):
-        if self.shm_manager is not None:
-            self.shm_manager.shutdown()
-            self.shm_manager.join()
-            self.shm_manager = None
-
-
-def init_pool_generator(gen, uid, shm_manager):
-    global _SHARED_SEQUENCES
-    _SHARED_SEQUENCES[uid] = gen
-    global _SHARED_SHM_MANAGER
-    _SHARED_SHM_MANAGER[uid] = shm_manager
+        self.stop()
 
 
 def get_item_shm(uid, i):
     tensors = _SHARED_SEQUENCES[uid][i]
-    return to_shm(_SHARED_SHM_MANAGER[uid], tensors)
+    return to_shm(tensors)
 
 
 def get_item(uid, i):
