@@ -95,7 +95,7 @@ def get_index_probability_1d(metric, enrich_factor:float=10., quantile_min:float
     Nm = metric_sub.shape[0]
     S = np.sum( ((metric_sub - metric_quantiles[1]) / (metric_quantiles[0] - metric_quantiles[1])) )
     p_max = enrich_factor / metric.shape[0]
-    p_min = (1 - p_max * (Nh + S)) / (Nm + Ne - S) if (Nm + Ne - S)!=0 else -1
+    p_min = (1 - p_max * (Nh + S)) / (Nm + Ne - S) if (Nm + Ne - S) != 0 else -1
     if p_min<0:
         p_min = 0.
         target = 1./p_max - Nh
@@ -140,6 +140,7 @@ def get_index_probability(metrics, enrich_factor:float=10., quantile_max:float=0
     return probas_per_metric
 
 def compute_metrics(iterator, predict_function, metrics_function, disable_augmentation:bool=True, disable_channel_postprocessing:bool=False, workers:int=None, verbose:int=1):
+    iterator.open()
     data_aug_param = iterator.disable_random_transforms(disable_augmentation, disable_channel_postprocessing)
     simple_iterator = SimpleIterator(iterator)
     batch_size = iterator.get_batch_size()
@@ -148,8 +149,7 @@ def compute_metrics(iterator, predict_function, metrics_function, disable_augmen
     compute_metrics_fun = get_compute_metrics_fun(predict_function, metrics_function, batch_size)
     if workers is None:
         workers = os.cpu_count()
-    #enq = tf.keras.utils.OrderedEnqueuer(simple_iterator, use_multiprocessing=True, shuffle=False)
-    enq = OrderedEnqueuerCF(simple_iterator, single_epoch=True, shuffle=False)
+    enq = OrderedEnqueuerCF(simple_iterator, single_epoch=True, shuffle=False, use_shm=True)
     enq.start(workers=workers, max_queue_size=max(3, min(n_batches, workers)))
     gen = enq.get()
     metrics = compute_metrics_loop(compute_metrics_fun, gen, batch_size, n_batches, verbose)
@@ -157,6 +157,8 @@ def compute_metrics(iterator, predict_function, metrics_function, disable_augmen
     if data_aug_param is not None:
         iterator.enable_random_transforms(data_aug_param)
     iterator.close()
+    #for i in range(metrics.shape[1]):
+    #    print(f"metric: range: [{np.min(metrics[:,i])}, {np.max(metrics[:,i])}] mean: {np.mean(metrics[:,i])}")
     return metrics
 
 

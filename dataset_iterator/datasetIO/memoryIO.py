@@ -13,16 +13,11 @@ class MemoryIO(DatasetIO):
         self.use_shm = use_shm
 
     def close(self):
-        if self.use_shm:
-            for shma in self.datasets.values():
-                shma.unlink()
-        self.datasets.clear()
+        self.datasets.clear()  # if shm : del will unlink
         self.datasetIO.close()
 
     def __del__(self):
-        if self.use_shm:
-            for shma in self.datasets.values():
-                shma.unlink()
+        self.datasets.clear() # if shm : del will unlink
 
     def get_dataset_paths(self, channel_keyword, group_keyword):
         return self.datasetIO.get_dataset_paths(channel_keyword, group_keyword)
@@ -82,6 +77,9 @@ class ShmArrayWrapper:
 
     def __len__(self):
         return self.shape[0]
+
+    def __del__(self):
+        self.unlink()
 
     def unlink(self):
         unlink_shm_ref(self.shm_name)

@@ -171,10 +171,11 @@ class MultiChannelIterator(IndexArrayIterator):
                  seed=None,
                  dtype='float32',
                  convert_masks_to_dtype=True,
-                 memory_persistant=False,
+                 memory_persistent=False,
                  incomplete_last_batch_mode=INCOMPLETE_LAST_BATCH_MODE[1]):
         self.dataset = dataset
-        self.memory_persistant=memory_persistant
+        self.datasetIO = None
+        self.memory_persistent=memory_persistent
         self.n_spatial_dims=n_spatial_dims
         self.group_keyword=group_keyword
         self.group_proportion=group_proportion
@@ -286,8 +287,8 @@ class MultiChannelIterator(IndexArrayIterator):
         except:
             self.labels = None
 
-        if not memory_persistant:
-            self._close_datasetIO()
+        #if not memory_persistant:
+        #    self._close_datasetIO()
         self.void_mask_proportion = void_mask_proportion
         if self.void_mask_proportion is not None:
             assert self.group_proportion is None, "cannot define void mask proportion and group proportion simultaneously"
@@ -301,8 +302,10 @@ class MultiChannelIterator(IndexArrayIterator):
         super().__init__(self.total_n, batch_size, shuffle, seed, incomplete_last_batch_mode, step_number=step_number)
 
     def _open_datasetIO(self):
+        if self.datasetIO is not None:
+            self.datasetIO.close()
         self.datasetIO = get_datasetIO(self.dataset, 'r')
-        if self.memory_persistant:
+        if self.memory_persistent:
             self.datasetIO = MemoryIO(self.datasetIO)
         if self.paths is None:
             self.group_map_paths = dict()
@@ -322,8 +325,8 @@ class MultiChannelIterator(IndexArrayIterator):
         self.ds_scaling_factor = [[getAttribute(self.datasetIO.get_attribute(self._get_dataset_path(c, ds_idx), "scaling_factor"), 1) for ds_idx in range(len(self.paths))]  if self.channel_keywords[c] is not None else None for c in range(len(self.channel_keywords))]
 
     def open(self):
-        self._open_datasetIO()
-
+        if self.datasetIO is None:
+            self._open_datasetIO()
 
     def _close_datasetIO(self):
         if self.datasetIO is not None:
@@ -450,8 +453,7 @@ class MultiChannelIterator(IndexArrayIterator):
             return input, output
 
     def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False, perform_elasticdeform=True, perform_tiling=True, **kwargs):
-        if self.datasetIO is None: # each worker opens file is open file
-            self._open_datasetIO()
+        self.open()
         index_array = np.copy(index_array) # so that main index array is not modified
         index_ds = self._get_ds_idx(index_array) # modifies index_array
 
@@ -773,8 +775,7 @@ class MultiChannelIterator(IndexArrayIterator):
         self.batch_index = batch_index
 
     def _ensure_dataset(self, output_file, output_shapes, output_keys, ds_i, **create_dataset_options):
-        if self.datasetIO is None:
-            self._open_datasetIO()
+        self.open()
         if self.labels is not None:
             label_path = replace_last(self.paths[ds_i], self.channel_keywords[0], '/labels')
             if label_path not in output_file:
@@ -794,8 +795,7 @@ class MultiChannelIterator(IndexArrayIterator):
 
     def _get_void_masks(self):
         assert len(self.mask_channels)>0, "cannot compute void mask if no mask channel is defined"
-        if self.datasetIO is None: # for concurency issues: file is open lazyly by each worker
-            self._open_datasetIO()
+        self.open()
         mask_channel = self.void_mask_chan
         index_array = np.copy(self.allowed_indexes)
         index_ds = self._get_ds_idx(index_array)

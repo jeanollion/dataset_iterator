@@ -96,7 +96,7 @@ def unlink_shm_ref(shm_name):
     try:
         existing_shm = shared_memory.SharedMemory(shm_name)
         existing_shm.unlink()
-    except FileExistsError | FileNotFoundError:
+    except (FileExistsError, FileNotFoundError):
         pass
 
 
@@ -118,5 +118,5 @@ class ErasingSharedMemory(shared_memory.SharedMemory):
         super(ErasingSharedMemory, self).__del__()
         try:
             self.unlink()
-        except FileNotFoundError:  # manager can delete the file before array is finalized
+        except (FileExistsError, FileNotFoundError):  # manager can delete the file before array is finalized
             pass

@@ -60,6 +60,11 @@ class OrderedEnqueuerCF():
             max_queue_size: queue size
                 (when full, workers could block on `put()`)
         """
+        if self.use_shm:  # load in shared memory before spawning threads otherwise each thread will load in memory
+            try:
+                self.sequence.open()
+            except AttributeError:
+                pass
         self.workers = workers
         if max_queue_size <= 0:
             max_queue_size = self.workers
@@ -177,6 +182,7 @@ class OrderedEnqueuerCF():
 
 def get_item_shm(uid, i):
     tensors = _SHARED_SEQUENCES[uid][i]
+    #print(f"item {i} -> {_SHARED_SEQUENCES[uid].index_array[i]} process: {os.getpid()}", flush=True)
     return to_shm(tensors)
 
 
