@@ -43,7 +43,7 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         return epoch + 1 + self.start_epoch >= self.start_from_epoch and (self.period == 1 or (epoch + 1 + self.start_epoch - self.start_from_epoch) % self.period == 0)
 
     def on_epoch_begin(self, epoch, logs=None):
-        if self.proba_per_metric is not None or self.need_compute(epoch):
+        if self.n_metrics > 1 or self.need_compute(epoch):
             self.wait_for_me.clear()  # will lock
 
     def on_epoch_end(self, epoch, logs=None):
@@ -58,7 +58,7 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             self.n_metrics = self.proba_per_metric.shape[0] if len(self.proba_per_metric.shape) == 2 else 1
             if first and self.n_metrics > self.period:
                 warnings.warn(f"Hard sample mining period = {self.period} should be greater than metric number = {self.n_metrics}")
-        if self.proba_per_metric is not None:
+        if self.proba_per_metric is not None and not self.wait_for_me.is_set():
             if len(self.proba_per_metric.shape) == 2:
                 self.metric_idx = (self.metric_idx + 1) % self.n_metrics
                 proba = self.proba_per_metric[self.metric_idx]
@@ -135,9 +135,10 @@ def get_index_probability(metrics, enrich_factor:float=10., quantile_max:float=0
         return get_index_probability_1d(metrics, enrich_factor=enrich_factor, quantile_max=quantile_max, quantile_min=quantile_min, verbose=verbose)
     probas_per_metric = [get_index_probability_1d(metrics[:, i], enrich_factor=enrich_factor, quantile_max=quantile_max, quantile_min=quantile_min, verbose=verbose) for i in range(metrics.shape[1])]
     probas_per_metric = np.stack(probas_per_metric, axis=0)
-    #proba = np.max(probas_per_metric, axis=0)
-    #proba /= np.sum(proba)
-    return probas_per_metric
+    #return probas_per_metric
+    proba = np.mean(probas_per_metric, axis=0)
+    return proba / np.sum(proba)
+
 
 def compute_metrics(iterator, predict_function, metrics_function, disable_augmentation:bool=True, disable_channel_postprocessing:bool=False, workers:int=None, verbose:int=1):
     iterator.open()
