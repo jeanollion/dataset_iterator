@@ -1,6 +1,7 @@
-from .datasetIO import DatasetIO
+import os
 import threading
 import numpy as np
+from .datasetIO import DatasetIO
 from ..shared_memory import to_shm, get_idx_from_shm, unlink_shm_ref
 
 
@@ -16,8 +17,11 @@ class MemoryIO(DatasetIO):
         self.datasets.clear()  # if shm : del will unlink
         self.datasetIO.close()
 
+    def free_mem(self):
+        self.datasetIO.close()
+
     def __del__(self):
-        self.datasets.clear() # if shm : del will unlink
+        self.datasets.clear()  # if shm : del will unlink
 
     def get_dataset_paths(self, channel_keyword, group_keyword):
         return self.datasetIO.get_dataset_paths(channel_keyword, group_keyword)
@@ -27,7 +31,10 @@ class MemoryIO(DatasetIO):
             with self.__lock__:
                 if path not in self.datasets:
                     if self.use_shm:
-                        self.datasets[path] = ShmArrayWrapper(*_to_shm(self.datasetIO.get_dataset(path)[:]))
+                        tensor = self.datasetIO.get_dataset(path)[:]
+                        self.datasets[path] = ShmArrayWrapper(*_to_shm(tensor))
+                        del tensor
+                        #print(f"open path: {path} to shm by ps: {os.getpid()}", flush=True)
                     else:
                         self.datasets[path] = ArrayWrapper(self.datasetIO.get_dataset(path)[:]) # load into memory
         return self.datasets[path]

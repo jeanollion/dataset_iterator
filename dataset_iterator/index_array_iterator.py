@@ -45,14 +45,11 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
     def set_index_probability(self, value):
         self.index_probability = value
 
-
     def open(self):
         pass
 
-
-    def close(self):
+    def close(self, force:bool=False):
         pass
-
 
     def __len__(self):
         if self.step_number > 0:

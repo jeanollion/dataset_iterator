@@ -304,9 +304,9 @@ class MultiChannelIterator(IndexArrayIterator):
 
     def _open_datasetIO(self):
         if self.datasetIO is not None:
-            self.datasetIO.close()
+            self._close_datasetIO(force=False)
         self.datasetIO = get_datasetIO(self.dataset, 'r')
-        if self.memory_persistent:
+        if self.memory_persistent and not isinstance(self.datasetIO, MemoryIO):
             self.datasetIO = MemoryIO(self.datasetIO)
         if self.paths is None:
             self.group_map_paths = dict()
@@ -324,20 +324,25 @@ class MultiChannelIterator(IndexArrayIterator):
         getAttribute = lambda a, def_val : def_val if a is None else (a[0] if isinstance(a, list) else a)
         self.ds_scaling_center = [[getAttribute(self.datasetIO.get_attribute(self._get_dataset_path(c, ds_idx), "scaling_center"), 0) for ds_idx in range(len(self.paths))]  if self.channel_keywords[c] is not None else None for c in range(len(self.channel_keywords))]
         self.ds_scaling_factor = [[getAttribute(self.datasetIO.get_attribute(self._get_dataset_path(c, ds_idx), "scaling_factor"), 1) for ds_idx in range(len(self.paths))]  if self.channel_keywords[c] is not None else None for c in range(len(self.channel_keywords))]
+        try:
+            self.datasetIO.free_mem() # in case of nested datasetIO, this will free memory from the inner datasetIO
+        except AttributeError:
+            pass
 
     def open(self):
         if self.datasetIO is None:
             self._open_datasetIO()
 
-    def _close_datasetIO(self):
+    def _close_datasetIO(self, force:bool=True):
         if self.datasetIO is not None:
-            self.datasetIO.close()
+            if force or not isinstance(self.dataset, MemoryIO):
+                self.datasetIO.close()
             self.datasetIO = None
             self.ds_array = None
             self.ads_array = None
 
-    def close(self):
-        self._close_datasetIO()
+    def close(self, force:bool=False):
+        self._close_datasetIO(force)
 
     def disable_random_transforms(self, data_augmentation:bool=True, channels_postprocessing:bool=False):
         params = dict()

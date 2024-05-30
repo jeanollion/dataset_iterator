@@ -14,6 +14,7 @@ class ConcatIterator(IndexArrayIterator):
                  step_number:int=0):
         assert isinstance(iterators, (list, tuple)), "iterators must be either list or tuple"
         self.iterators = []
+
         def append_it(iterator): # unroll concat iterators
             if isinstance(iterator, (list, tuple)):
                 for subit in iterator:
@@ -26,10 +27,13 @@ class ConcatIterator(IndexArrayIterator):
 
         append_it(iterators)
         bs = [it.get_batch_size() for it in self.iterators]
-        assert np.all(np.array(bs) == bs[0] ), "all sub iterator batch_size must be equal"
+        if np.all(np.array(bs) == bs[0]):
+            self.sub_iterator_batch_size = bs[0]
+        else:
+            self.sub_iterator_batch_size = None
+
         for it in self.iterators:
             it.incomplete_last_batch_mode = incomplete_last_batch_mode
-        self.sub_iterator_batch_size = bs[0]
         if proportion is None:
             proportion = [1.]
         self.proportion = ensure_multiplicity(len(iterators), proportion)
@@ -50,6 +54,7 @@ class ConcatIterator(IndexArrayIterator):
         return self.it_cumlen[-1]
 
     def get_batch_size(self):
+        assert self.sub_iterator_batch_size is not None, "some subiterator have batch size that differ"
         return self.batch_size * self.sub_iterator_batch_size
 
     def _set_index_array(self):
@@ -100,9 +105,9 @@ class ConcatIterator(IndexArrayIterator):
     def set_allowed_indexes(self, indexes):
         raise NotImplementedError("Not supported yet")
 
-    def close(self):
+    def close(self, force:bool=False):
         for it in self.iterators:
-            it.close()
+            it.close(force)
 
     def _close_datasetIO(self):
         for it in self.iterators:

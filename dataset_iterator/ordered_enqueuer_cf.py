@@ -6,6 +6,7 @@ import multiprocessing
 import random
 import threading
 import time
+import subprocess
 from threading import BoundedSemaphore
 from .shared_memory import to_shm, from_shm, unlink_tensor_ref
 
@@ -88,6 +89,9 @@ class OrderedEnqueuerCF():
 
     def _run(self):
         """Submits request to the executor and queue the `Future` objects."""
+        if self.wait_for_me is not None:
+            self.wait_for_me.wait()
+        log_mem()
         task = get_item_shm if self.use_shm else get_item
         sequence = list(range(len(self.sequence)))
         self._send_sequence()  # Share the initial sequence
@@ -112,6 +116,7 @@ class OrderedEnqueuerCF():
                 return
             if self.wait_for_me is not None:
                 self.wait_for_me.wait()
+            log_mem()
             self._send_sequence()  # Update the pool
 
     def _send_sequence(self):
@@ -145,9 +150,16 @@ class OrderedEnqueuerCF():
                     if self.use_shm:
                         inputs = from_shm(*inputs)
                 else:
-                    traceback.print_exception(ex)
                     print(f"Exception raised while getting future result from task: {i}. Task will be re-computed.", flush=True)
-                    inputs = get_item(self.uid, i)
+                    traceback.print_exception(ex)
+                    try:
+                        inputs = get_item(self.uid, i)
+                        print(f"Task {i} successfully re-computed.", flush=True)
+                    except Exception as e:
+                        print(f"Exception raised while trying to re-compute task {i}. Stopping the pool.", flush=True)
+                        traceback.print_exception(e)
+                        self.stop()
+                        return
                 self.queue.pop(0)  # only remove after result() is called to avoid terminating pool while a process is still running
                 self.semaphore.release()  # release is done here and not as a future callback to limit effective number of samples in memory
                 future.cancel()
@@ -162,6 +174,8 @@ class OrderedEnqueuerCF():
         Args:
             timeout: maximum time to wait on `thread.join()`
         """
+        if self.run_thread is None: # was not started
+            return
         self.stop_signal.set()
         self.run_thread.join(timeout)
         if self.use_shm and self.queue is not None and len(self.queue) > 0:  # clean shm
@@ -189,3 +203,9 @@ def get_item_shm(uid, i):
 def get_item(uid, i):
     return _SHARED_SEQUENCES[uid][i]
 
+
+def log_mem():
+    result = subprocess.check_output(['bash', '-c', 'free -m'])
+    result = result.splitlines()
+    free_memory = int(result[1].split()[2])/1000
+    print(f"used memory: {free_memory:.1f}Gb", flush=True)

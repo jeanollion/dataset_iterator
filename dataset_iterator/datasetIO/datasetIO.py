@@ -26,9 +26,10 @@ class DatasetIO:
     def get_parent_path(self, path):
         raise NotImplementedError
 
+
 def get_datasetIO(dataset, mode='r'):
-    #print("type: {}, subclass: {}".format(type(dataset), issubclass(type(dataset), DatasetIO)))
-    if issubclass(type(dataset), DatasetIO):
+    #print("type: {}, subclass: {} instance: {}".format(type(dataset), issubclass(type(dataset), DatasetIO), isinstance(dataset, DatasetIO)))
+    if isinstance(dataset, DatasetIO):
         return dataset
     elif isinstance(dataset, str):
         if dataset.endswith(".h5") or dataset.endswith(".hdf5"):

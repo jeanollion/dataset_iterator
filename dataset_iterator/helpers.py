@@ -1,5 +1,6 @@
 from math import ceil
 import numpy as np
+from .datasetIO import DatasetIO
 from .multichannel_iterator import MultiChannelIterator
 from scipy.ndimage import gaussian_filter
 
@@ -31,13 +32,18 @@ def get_optimal_tiling(dataset, channel:str, target_batch_size:int, tile_shape:t
     for n_t in n_tile_candidates:
         if target_batch_size % n_t == 0:
             return target_batch_size//n_t, n_t
+    if not isinstance(dataset, DatasetIO):
+        it.close()
+    del it
     return target_batch_size, 1
+
 def open_channel(dataset, channel_keyword:str, group_keyword:str=None, size=None):
     iterator = MultiChannelIterator(dataset=dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=[0], output_channels=[], batch_size=1 if size is None else size, incomplete_last_batch_mode=0, shuffle=False)
     if size is None:
         iterator.batch_size=len(iterator)
     data = iterator[0]
-    iterator._close_datasetIO()
+    if not isinstance(dataset, DatasetIO):
+        iterator.close()
     return data
 
 def get_min_and_max(dataset, channel_keyword:str, group_keyword:str=None, batch_size=1):
@@ -48,7 +54,8 @@ def get_min_and_max(dataset, channel_keyword:str, group_keyword:str=None, batch_
         batch = iterator[i]
         vmin = min(batch.min(), vmin)
         vmax = max(batch.max(), vmax)
-    iterator._close_datasetIO()
+    if not isinstance(dataset, DatasetIO):
+        iterator.close()
     return vmin, vmax
 
 def get_min_max_range(dataset, channel_keyword:str = "/raw", group_keyword:str=None, min_centile_range:list=[0.01, 5.], max_centile_range:list=[95., 99.9], verbose:bool=False):
@@ -97,6 +104,7 @@ def get_min_max_range(dataset, channel_keyword:str = "/raw", group_keyword:str=N
         print(f"normalization: min_range: [{min_range[0]}; {min_range[1]}] max_range: [{max_range[0]}; {max_range[1]}]")
     return min_range, max_range
 
+
 def get_histogram(dataset, channel_keyword:str, bins, bin_size=None, sum_to_one:bool=False, group_keyword:str=None, batch_size:int=1, return_min_and_bin_size:bool=False, smooth_scale:float = 0., smooth_scale_in_bin_unit:bool=True):
     iterator = MultiChannelIterator(dataset=dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=[0], output_channels=[], batch_size=batch_size, incomplete_last_batch_mode=0)
     if bins is None:
@@ -122,7 +130,8 @@ def get_histogram(dataset, channel_keyword:str, bins, bin_size=None, sum_to_one:
             histogram = histo
         else:
             histogram += histo
-    iterator._close_datasetIO()
+    if not isinstance(dataset, DatasetIO):
+        iterator.close()
     if smooth_scale>0:
         if not smooth_scale_in_bin_unit:
             smooth_scale /= bin_size
@@ -133,6 +142,7 @@ def get_histogram(dataset, channel_keyword:str, bins, bin_size=None, sum_to_one:
         return histogram, vmin, bin_size
     else:
         return histogram, bins
+
 
 def get_histogram_bins_IPR(histogram, bins, n_bins, percentiles=[25, 75], min_bin_size=None, bin_range_percentiles=[0, 100], verbose = False):
     if isinstance(percentiles, (list, tuple)):
@@ -163,6 +173,7 @@ def get_histogram_bins_IPR(histogram, bins, n_bins, percentiles=[25, 75], min_bi
         print("histo IPR: percentiles: [{}%={}, {}%={}], final range:[{}%={}, {}%={}], binsize: {}, nbins: {}".format(percentiles[0], pmin, percentiles[1], pmax, bin_range_percentiles[0], vmin, bin_range_percentiles[1], vmax, bin_size, n_bins))
     return np.linspace(vmin, vmax, n_bins+1)
 
+
 def get_percentile(histogram, bins, percentile):
     assert np.shape(histogram)[0] == np.shape(bins)[0]-1, "invalid edges"
     cs = np.cumsum(histogram)
@@ -171,6 +182,7 @@ def get_percentile(histogram, bins, percentile):
     percentile = percentile * cs[-1] / 100
     bin_centers = ( bins[1:] + bins[:-1] ) / 2
     return np.interp(percentile, cs, bin_centers)
+
 
 def get_percentile_from_value(histogram, bins, value):
     assert np.shape(histogram)[0] == np.shape(bins)[0]-1, "invalid edges"
@@ -181,6 +193,7 @@ def get_percentile_from_value(histogram, bins, value):
     bin_centers = ( bins[1:] + bins[:-1] ) / 2
     return np.interp(value, bin_centers, cs) * 100
 
+
 def get_modal_value(histogram, bins, return_bin = False):
     bin_centers = ( bins[1:] + bins[:-1] ) / 2
     bin = np.argmax(histogram)
@@ -188,6 +201,7 @@ def get_modal_value(histogram, bins, return_bin = False):
         return bin_centers[bin], bin
     else:
         return bin_centers[bin]
+
 
 def get_mean_sd(dataset, channel_keyword:str, group_keyword:str=None, per_channel:bool=True): # TODO TEST
   params = dict(dataset=dataset,
@@ -210,7 +224,8 @@ def get_mean_sd(dataset, channel_keyword:str, group_keyword:str=None, per_channe
     for c in range(n_channels):
       sum_im[i,c] = np.sum(image[...,c])
       sum2_im[i,c] = np.sum(image[...,c]*image[...,c])
-  it._close_datasetIO()
+  if not isinstance(dataset, DatasetIO):
+      it.close()
   size = np.prod(shape[1:-1]) * ds_size * (1 if per_channel else shape[-1])
   sum_im /= size
   sum2_im /= size
@@ -218,6 +233,7 @@ def get_mean_sd(dataset, channel_keyword:str, group_keyword:str=None, per_channe
   mean_ = np.sum(sum_im, axis=axis)
   sd_ = np.sqrt(np.sum(sum2_im, axis=axis) - mean_ * mean_)
   return mean_, sd_
+
 
 def distribution_summary(dataset, channel_keyword:str, bins, group_keyword:str=None, percentiles = [5, 50, 95]):
     histogram, bins = get_histogram(dataset, channel_keyword, bins, group_keyword=group_keyword)

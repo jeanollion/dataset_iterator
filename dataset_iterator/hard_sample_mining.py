@@ -1,8 +1,11 @@
+import gc
+import time
 import warnings
 import os
 import numpy as np
 import tensorflow as tf
 from .index_array_iterator import IndexArrayIterator, INCOMPLETE_LAST_BATCH_MODE
+from .concat_iterator import ConcatIterator
 from dataset_iterator.ordered_enqueuer_cf import OrderedEnqueuerCF
 import threading
 
@@ -20,21 +23,35 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         self.quantile_max = quantile_max
         self.quantile_min = quantile_min
         self.disable_channel_postprocessing = disable_channel_postprocessing
-        self.workers = workers
+        self.workers = os.cpu_count() if workers is None or workers <= 0 else workers
         self.verbose = verbose
         self.metric_idx = -1
         self.proba_per_metric = None
         self.n_metrics = 0
         self.data_aug_param = self.iterator.disable_random_transforms(True, self.disable_channel_postprocessing)
-        simple_iterator = SimpleIterator(self.iterator)
-        self.batch_size = self.iterator.get_batch_size()
-        self.n_batches = len(simple_iterator)
-        self.enq = OrderedEnqueuerCF(simple_iterator, single_epoch=True, shuffle=False)
-        self.wait_for_me = threading.Event()
-        self.wait_for_me.set()
+        iterator_list = self.iterator.iterators if isinstance(self.iterator, ConcatIterator) else [self.iterator]
+        simple_iterator_list = [SimpleIterator(it) for it in iterator_list]
+        self.n_batches = [len(it) for it in simple_iterator_list]
+        self.batch_size = [it.get_batch_size() for it in iterator_list]
+        if self.workers > 1:
+            self.wait_for_me_main = [threading.Event() for _ in simple_iterator_list]
+            for wfm in self.wait_for_me_main:
+                wfm.clear()  # lock so that HSM enqueuer do not start right away
+            self.enq_list = [OrderedEnqueuerCF(it, single_epoch=False, shuffle=False, use_shm=True, wait_for_me=self.wait_for_me_main[i]) for i, it in enumerate(simple_iterator_list)]
+            for i in range(len(simple_iterator_list)):
+                self.enq_list[i].start(workers=self.workers, max_queue_size=max(2, min(self.n_batches[i], self.workers)))  # start but blocked by wait for me main
+            self.gen_list = [enq.get() for enq in self.enq_list]
+            self.wait_for_me_hsm = threading.Event()
+            self.wait_for_me_hsm.clear()  # will be set to the main iterator
+        else:
+            self.enq_list = []
+            self.wait_for_me_main=None
+            self.gen_list = simple_iterator_list
+            self.wait_for_me_hsm = None
 
     def close(self):
-        self.enq.stop()
+        for enq in self.enq_list:
+            enq.stop()
         if self.data_aug_param is not None:
             self.iterator.enable_random_transforms(self.data_aug_param)
         self.iterator.close()
@@ -42,9 +59,18 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
     def need_compute(self, epoch):
         return epoch + 1 + self.start_epoch >= self.start_from_epoch and (self.period == 1 or (epoch + 1 + self.start_epoch - self.start_from_epoch) % self.period == 0)
 
+    def initialize(self):
+        if self.need_compute(-1):
+            print("start with HSM", flush=True)
+            self.on_epoch_end(-1)
+        else:
+            print("dont start with HSM", flush=True)
+            if self.wait_for_me_hsm is not None:
+                self.wait_for_me_hsm.set()  # unlock main generator
+
     def on_epoch_begin(self, epoch, logs=None):
         if self.n_metrics > 1 or self.need_compute(epoch):
-            self.wait_for_me.clear()  # will lock
+            self.wait_for_me_hsm.clear()  # will lock main generator at end of epoch
 
     def on_epoch_end(self, epoch, logs=None):
         if self.need_compute(epoch):
@@ -53,31 +79,40 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             metrics = self.compute_metrics()
             self.iterator.close()
             self.target_iterator.open()
+            gc.collect()
             first = self.proba_per_metric is None
             self.proba_per_metric = get_index_probability(metrics, enrich_factor=self.enrich_factor, quantile_max=self.quantile_max, quantile_min=self.quantile_min, verbose=self.verbose)
             self.n_metrics = self.proba_per_metric.shape[0] if len(self.proba_per_metric.shape) == 2 else 1
             if first and self.n_metrics > self.period:
                 warnings.warn(f"Hard sample mining period = {self.period} should be greater than metric number = {self.n_metrics}")
-        if self.proba_per_metric is not None and not self.wait_for_me.is_set():
+        if self.proba_per_metric is not None and not self.wait_for_me_hsm.is_set():
             if len(self.proba_per_metric.shape) == 2:
                 self.metric_idx = (self.metric_idx + 1) % self.n_metrics
                 proba = self.proba_per_metric[self.metric_idx]
             else:
                 proba = self.proba_per_metric
             self.target_iterator.set_index_probability(proba)
-            self.wait_for_me.set()  # release lock
+            self.wait_for_me_hsm.set()  # release lock
 
     def on_train_end(self, logs=None):
         self.close()
 
     def compute_metrics(self):
-        workers = os.cpu_count() if self.workers is None else self.workers
-        self.enq.start(workers=workers, max_queue_size=max(2, min(self.n_batches, workers)))
-        gen = self.enq.get()
-        compute_metrics_fun = get_compute_metrics_fun(self.predict_fun, self.metrics_fun, self.batch_size)
-        metrics = compute_metrics_loop(compute_metrics_fun, gen, self.batch_size, self.n_batches, self.verbose)
-        self.enq.stop()
-        return metrics
+        metric_list = []
+        if self.verbose >=1:
+            print(f"Hard Sample Mining: computing metrics...", flush=True)
+        for i in range(len(self.enq_list)):
+            # unlock temporarily the corresponding enqueuer so that it starts
+            if self.wait_for_me_main is not None:
+                self.wait_for_me_main[i].set()
+                time.sleep(0.1)
+                self.wait_for_me_main[i].clear() # re-lock so that is stops at end of epoch
+            gen = self.gen_list[i]
+            compute_metrics_fun = get_compute_metrics_fun(self.predict_fun, self.metrics_fun)
+            metrics = compute_metrics_loop(compute_metrics_fun, gen, self.batch_size[i], self.n_batches[i], self.verbose)
+            print(f"metrics: {metrics}")
+            metric_list.append(metrics)
+        return np.concatenate(metric_list, axis=0)
 
 
 def get_index_probability_1d(metric, enrich_factor:float=10., quantile_min:float=0.01, quantile_max:float=None, max_power:int=10, power_accuracy:float=0.1, verbose:int=1):
@@ -130,6 +165,7 @@ def get_index_probability_1d(metric, enrich_factor:float=10., quantile_min:float
     #    print(f"metric proba range: [{np.min(proba) * metric.shape[0]}, {np.max(proba) * metric.shape[0]}] (target range: [{p_min}; {p_max}]) power: {power} sum: {p_sum} quantiles: [{quantile_min}; {quantile_max}]", flush=True)
     return proba
 
+
 def get_index_probability(metrics, enrich_factor:float=10., quantile_max:float=0.99, quantile_min:float=None, verbose:int=1):
     if len(metrics.shape) == 1:
         return get_index_probability_1d(metrics, enrich_factor=enrich_factor, quantile_max=quantile_max, quantile_min=quantile_min, verbose=verbose)
@@ -141,18 +177,23 @@ def get_index_probability(metrics, enrich_factor:float=10., quantile_max:float=0
 
 
 def compute_metrics(iterator, predict_function, metrics_function, disable_augmentation:bool=True, disable_channel_postprocessing:bool=False, workers:int=None, verbose:int=1):
+    if isinstance(iterator, ConcatIterator):
+        metric_list = [compute_metrics(it, predict_function, metrics_function, disable_augmentation, disable_channel_postprocessing, workers, verbose) for it in iterator.iterators]
+        return np.concatenate(metric_list, axis=0)
     iterator.open()
     data_aug_param = iterator.disable_random_transforms(disable_augmentation, disable_channel_postprocessing)
     simple_iterator = SimpleIterator(iterator)
     batch_size = iterator.get_batch_size()
     n_batches = len(simple_iterator)
 
-    compute_metrics_fun = get_compute_metrics_fun(predict_function, metrics_function, batch_size)
+    compute_metrics_fun = get_compute_metrics_fun(predict_function, metrics_function)
     if workers is None:
         workers = os.cpu_count()
     enq = OrderedEnqueuerCF(simple_iterator, single_epoch=True, shuffle=False, use_shm=True)
     enq.start(workers=workers, max_queue_size=max(3, min(n_batches, workers)))
     gen = enq.get()
+    if verbose >= 1:
+        print(f"Hard Sample Mining: computing metrics...", flush=True)
     metrics = compute_metrics_loop(compute_metrics_fun, gen, batch_size, n_batches, verbose)
     enq.stop()
     if data_aug_param is not None:
@@ -164,45 +205,38 @@ def compute_metrics(iterator, predict_function, metrics_function, disable_augmen
 
 
 def compute_metrics_loop(compute_metrics_fun, gen, batch_size, n_batches, verbose):
-    metrics = []
     if verbose >= 1:
-        print(f"Hard Sample Mining: computing metrics...", flush=True)
         progbar = tf.keras.utils.Progbar(n_batches)
     n_tiles = None
+    metrics = []
     for i in range(n_batches):
         x, y_true = next(gen)
         batch_metrics = compute_metrics_fun(x, y_true)
-        if x.shape[0] > batch_size or n_tiles is not None:  # tiling: keep hardest tile per sample
+        bs = x.shape[0]
+        if bs > batch_size or n_tiles is not None:
             if n_tiles is None:  # record n_tile which is constant but last batch may have fewer elements
-                n_tiles = x.shape[0] // batch_size
+                n_tiles = bs // batch_size
             batch_metrics = tf.reshape(batch_metrics, shape=(n_tiles, -1, batch_metrics.shape[1]))
             batch_metrics = tf.reduce_max(batch_metrics, axis=0, keepdims=False)  # record hardest tile per sample
         metrics.append(batch_metrics)
         if verbose >= 1:
             progbar.update(i + 1)
-    metrics = tf.concat(metrics, axis=0).numpy()
-    # metrics = tf.concat([indices[:, np.newaxis].astype(metrics.dtype), metrics], axis=1)
-    return metrics
+    return tf.concat(metrics, axis=0).numpy()
 
 
-def get_compute_metrics_fun(predict_function, metrics_function, batch_size):
+def get_compute_metrics_fun(predict_function, metrics_function):
     @tf.function
     def compute_metrics(x, y_true):
         y_pred = predict_function(x)
-        n_samples = tf.shape(x)[0]
-        def metrics_fun(j): # compute metric per batch item in case metric is reduced along batch size
-            y_t = [y_true[k][j:j+1] for k in range(len(y_true))]
-            y_p = [y_pred[k][j:j+1] for k in range(len(y_pred))]
-            metrics = metrics_function(y_t, y_p)
-            return tf.stack(metrics, 0)
-        return tf.map_fn(metrics_fun, elems=tf.range(n_samples), fn_output_signature=tf.float32, parallel_iterations=batch_size)
+        return metrics_function(y_true, y_pred)
 
     return compute_metrics
+
 
 class SimpleIterator(IndexArrayIterator):
     def __init__(self, iterator, input_scaling_function=None):
         index_array = iterator._get_index_array(choice=False)
-        super().__init__(len(index_array), iterator.batch_size, False, 0, incomplete_last_batch_mode=INCOMPLETE_LAST_BATCH_MODE[0], step_number = 0)
+        super().__init__(len(index_array), iterator.get_batch_size(), False, 0, incomplete_last_batch_mode=INCOMPLETE_LAST_BATCH_MODE[0], step_number=0)
         self.set_allowed_indexes(index_array)
         self.iterator = iterator
         self.input_scaling_function = batchwise_inplace(input_scaling_function) if input_scaling_function is not None else None
