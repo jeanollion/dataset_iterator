@@ -32,14 +32,21 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         self.simple_iterator_list = [SimpleIterator(it) for it in iterator_list]
         self.n_batches = [len(it) for it in self.simple_iterator_list]
         self.batch_size = [it.get_batch_size() for it in iterator_list]
-        self.wait_for_me = threading.Event()
-        self.wait_for_me.clear()  # will be set to the main iterator
+
+        self.wait_for_me_supplier = threading.Event()
+        self.wait_for_me_supplier.clear()  # will be set to the main iterator
+        self.wait_for_me_consumer = threading.Event()
+        self.wait_for_me_consumer.clear()
+        self.wait_for_me_consumer_hsm = threading.Event()
+        self.wait_for_me_consumer_hsm.clear()
         self.enqueuer = None
         self.generator = None
 
-    def set_enqueuer(self, enqueuer, generator):
+    def set_enqueuer(self, enqueuer):
         self.enqueuer = enqueuer
-        self.generator = generator
+        self.enqueuer.wait_for_me_supplier = self.wait_for_me_supplier
+        self.enqueuer.wait_for_me_consumer = self.wait_for_me_consumer
+        self.generator = self.enqueuer.get_wfm(self.wait_for_me_consumer_hsm)
 
     def close(self):
         if self.data_aug_param is not None:
@@ -55,12 +62,13 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             self.on_epoch_end(-1)
         else:
             print("dont start with HSM", flush=True)
-            if self.wait_for_me is not None:
-                self.wait_for_me.set()  # unlock main generator
+            if self.wait_for_me_supplier is not None:
+                self.wait_for_me_supplier.set()  # unlock main generator supplier
+                self.wait_for_me_consumer.set()  # unlock main generator consumer
 
     def on_epoch_begin(self, epoch, logs=None):
         if self.n_metrics > 1 or self.need_compute(epoch):
-            self.wait_for_me.clear()  # will lock main generator at end of epoch
+            self.wait_for_me_supplier.clear()  # will lock main generator at end of epoch
 
     def on_epoch_end(self, epoch, logs=None):
         if self.need_compute(epoch):
@@ -75,14 +83,14 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             self.n_metrics = self.proba_per_metric.shape[0] if len(self.proba_per_metric.shape) == 2 else 1
             if first and self.n_metrics > self.period:
                 warnings.warn(f"Hard sample mining period = {self.period} should be greater than metric number = {self.n_metrics}")
-        if self.proba_per_metric is not None and not self.wait_for_me.is_set():
+        if self.proba_per_metric is not None and not self.wait_for_me_supplier.is_set():
             if len(self.proba_per_metric.shape) == 2:
                 self.metric_idx = (self.metric_idx + 1) % self.n_metrics
                 proba = self.proba_per_metric[self.metric_idx]
             else:
                 proba = self.proba_per_metric
             self.target_iterator.set_index_probability(proba)
-            self.wait_for_me.set()  # release lock
+            self.wait_for_me_supplier.set()  # release lock
 
     def on_train_end(self, logs=None):
         self.close()
@@ -97,9 +105,11 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             # unlock temporarily the corresponding enqueuer so that it starts
             if self.enqueuer is not None:
                 self.enqueuer.sequence = self.simple_iterator_list[i]
-                self.wait_for_me.set()
+                self.wait_for_me_consumer.clear()  # lock the main generator consumer
+                self.wait_for_me_supplier.set()
                 time.sleep(0.1)
-                self.wait_for_me.clear()  # re-lock so that is stops at end of epoch
+                self.wait_for_me_supplier.clear()  # re-lock so that is stops at end of epoch
+                self.wait_for_me_consumer_hsm.set()  # unlock hsm consumer
                 gen = self.generator
             else:
                 gen = self.simple_iterator_list[i]
@@ -108,6 +118,8 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             metric_list.append(metrics)
         if self.enqueuer is not None:
             self.enqueuer.sequence = main_sequence
+            self.wait_for_me_consumer_hsm.clear()  # lock hsm consumer
+            self.wait_for_me_consumer.set()  # unlock the main generator consumer
         return np.concatenate(metric_list, axis=0)
 
 

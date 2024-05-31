@@ -18,12 +18,13 @@ _SHARED_SEQUENCES = {}
 _SEQUENCE_COUNTER = None
 
 class OrderedEnqueuerCF():
-    def __init__(self, sequence, shuffle=False, single_epoch:bool=False, use_shm:bool=True, wait_for_me:threading.Event=None):
+    def __init__(self, sequence, shuffle=False, single_epoch:bool=False, use_shm:bool=True):
         self.sequence = sequence
         self.shuffle = shuffle
         self.single_epoch = single_epoch
         self.use_shm = use_shm
-        self.wait_for_me = wait_for_me
+        self.wait_for_me_supplier = None
+        self.wait_for_me_consumer = None
         global _SEQUENCE_COUNTER
         if _SEQUENCE_COUNTER is None:
             try:
@@ -89,8 +90,8 @@ class OrderedEnqueuerCF():
 
     def _run(self):
         """Submits request to the executor and queue the `Future` objects."""
-        if self.wait_for_me is not None:
-            self.wait_for_me.wait()
+        if self.wait_for_me_supplier is not None:
+            self.wait_for_me_supplier.wait()
         log_mem()
         task = get_item_shm if self.use_shm else get_item
         sequence = list(range(len(self.sequence)))
@@ -115,8 +116,8 @@ class OrderedEnqueuerCF():
             gc.collect()
             if self.stop_signal.is_set() or self.single_epoch:
                 return
-            if self.wait_for_me is not None:
-                self.wait_for_me.wait()
+            if self.wait_for_me_supplier is not None:
+                self.wait_for_me_supplier.wait()
             log_mem()
             self._send_sequence()  # Update the pool
 
@@ -137,6 +138,9 @@ class OrderedEnqueuerCF():
         _SHARED_SEQUENCES[self.uid] = None
 
     def get(self):
+        return self.get_wfm(self.wait_for_me_consumer)
+
+    def get_wfm(self, wait_for_me:threading.Event):
         """Creates a generator to extract data from the queue.
 
         Skip the data if it is `None`.
@@ -148,6 +152,10 @@ class OrderedEnqueuerCF():
         """
         while self.is_running():
             self._wait_queue(False)
+            if wait_for_me is not None:
+                wait_for_me.wait()
+                self._wait_queue(False)
+
             if len(self.queue) > 0:
                 future, i = self.queue[0]
                 #print(f"processing task: {i}")
