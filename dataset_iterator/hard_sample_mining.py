@@ -110,7 +110,6 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             gen = self.gen_list[i]
             compute_metrics_fun = get_compute_metrics_fun(self.predict_fun, self.metrics_fun)
             metrics = compute_metrics_loop(compute_metrics_fun, gen, self.batch_size[i], self.n_batches[i], self.verbose)
-            print(f"metrics: {metrics}")
             metric_list.append(metrics)
         return np.concatenate(metric_list, axis=0)
 

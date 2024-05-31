@@ -111,6 +111,7 @@ class OrderedEnqueuerCF():
             time.sleep(0.1)
             executor.shutdown(wait=False, cancel_futures=True)
             del executor
+            self._clear_sequence()
             gc.collect()
             if self.stop_signal.is_set() or self.single_epoch:
                 return
@@ -128,6 +129,12 @@ class OrderedEnqueuerCF():
         except AttributeError:
             pass
         _SHARED_SEQUENCES[self.uid] = self.sequence
+
+    def _clear_sequence(self):
+        """Sends current Iterable to all workers."""
+        # For new processes that may spawn
+        global _SHARED_SEQUENCES
+        _SHARED_SEQUENCES[self.uid] = None
 
     def get(self):
         """Creates a generator to extract data from the queue.
