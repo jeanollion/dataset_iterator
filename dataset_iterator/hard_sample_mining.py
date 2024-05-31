@@ -10,7 +10,7 @@ from dataset_iterator.ordered_enqueuer_cf import OrderedEnqueuerCF
 import threading
 
 class HardSampleMiningCallback(tf.keras.callbacks.Callback):
-    def __init__(self, iterator, target_iterator, predict_fun, metrics_fun, period:int=10, start_epoch:int=0, start_from_epoch:int=0, enrich_factor:float=10., quantile_max:float=0.99, quantile_min:float=None, disable_channel_postprocessing:bool=False, workers=None, verbose:int=1):
+    def __init__(self, iterator, target_iterator, predict_fun, metrics_fun, period:int=10, start_epoch:int=0, start_from_epoch:int=0, enrich_factor:float=10., quantile_max:float=0.99, quantile_min:float=None, disable_channel_postprocessing:bool=False, verbose:int=1):
         super().__init__()
         self.period = period
         self.start_epoch = start_epoch
@@ -23,35 +23,25 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         self.quantile_max = quantile_max
         self.quantile_min = quantile_min
         self.disable_channel_postprocessing = disable_channel_postprocessing
-        self.workers = os.cpu_count() if workers is None or workers <= 0 else workers
         self.verbose = verbose
         self.metric_idx = -1
         self.proba_per_metric = None
         self.n_metrics = 0
         self.data_aug_param = self.iterator.disable_random_transforms(True, self.disable_channel_postprocessing)
         iterator_list = self.iterator.iterators if isinstance(self.iterator, ConcatIterator) else [self.iterator]
-        simple_iterator_list = [SimpleIterator(it) for it in iterator_list]
-        self.n_batches = [len(it) for it in simple_iterator_list]
+        self.simple_iterator_list = [SimpleIterator(it) for it in iterator_list]
+        self.n_batches = [len(it) for it in self.simple_iterator_list]
         self.batch_size = [it.get_batch_size() for it in iterator_list]
-        if self.workers > 1:
-            self.wait_for_me_main = [threading.Event() for _ in simple_iterator_list]
-            for wfm in self.wait_for_me_main:
-                wfm.clear()  # lock so that HSM enqueuer do not start right away
-            self.enq_list = [OrderedEnqueuerCF(it, single_epoch=False, shuffle=False, use_shm=True, wait_for_me=self.wait_for_me_main[i]) for i, it in enumerate(simple_iterator_list)]
-            for i in range(len(simple_iterator_list)):
-                self.enq_list[i].start(workers=self.workers, max_queue_size=max(2, min(self.n_batches[i], self.workers)))  # start but blocked by wait for me main
-            self.gen_list = [enq.get() for enq in self.enq_list]
-            self.wait_for_me_hsm = threading.Event()
-            self.wait_for_me_hsm.clear()  # will be set to the main iterator
-        else:
-            self.enq_list = []
-            self.wait_for_me_main=None
-            self.gen_list = simple_iterator_list
-            self.wait_for_me_hsm = None
+        self.wait_for_me = threading.Event()
+        self.wait_for_me.clear()  # will be set to the main iterator
+        self.enqueuer = None
+        self.generator = None
+
+    def set_enqueuer(self, enqueuer, generator):
+        self.enqueuer = enqueuer
+        self.generator = generator
 
     def close(self):
-        for enq in self.enq_list:
-            enq.stop()
         if self.data_aug_param is not None:
             self.iterator.enable_random_transforms(self.data_aug_param)
         self.iterator.close()
@@ -65,12 +55,12 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             self.on_epoch_end(-1)
         else:
             print("dont start with HSM", flush=True)
-            if self.wait_for_me_hsm is not None:
-                self.wait_for_me_hsm.set()  # unlock main generator
+            if self.wait_for_me is not None:
+                self.wait_for_me.set()  # unlock main generator
 
     def on_epoch_begin(self, epoch, logs=None):
         if self.n_metrics > 1 or self.need_compute(epoch):
-            self.wait_for_me_hsm.clear()  # will lock main generator at end of epoch
+            self.wait_for_me.clear()  # will lock main generator at end of epoch
 
     def on_epoch_end(self, epoch, logs=None):
         if self.need_compute(epoch):
@@ -85,14 +75,14 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             self.n_metrics = self.proba_per_metric.shape[0] if len(self.proba_per_metric.shape) == 2 else 1
             if first and self.n_metrics > self.period:
                 warnings.warn(f"Hard sample mining period = {self.period} should be greater than metric number = {self.n_metrics}")
-        if self.proba_per_metric is not None and not self.wait_for_me_hsm.is_set():
+        if self.proba_per_metric is not None and not self.wait_for_me.is_set():
             if len(self.proba_per_metric.shape) == 2:
                 self.metric_idx = (self.metric_idx + 1) % self.n_metrics
                 proba = self.proba_per_metric[self.metric_idx]
             else:
                 proba = self.proba_per_metric
             self.target_iterator.set_index_probability(proba)
-            self.wait_for_me_hsm.set()  # release lock
+            self.wait_for_me.set()  # release lock
 
     def on_train_end(self, logs=None):
         self.close()
@@ -101,16 +91,23 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         metric_list = []
         if self.verbose >=1:
             print(f"Hard Sample Mining: computing metrics...", flush=True)
-        for i in range(len(self.enq_list)):
+        if self.enqueuer is not None:
+            main_sequence = self.enqueuer.sequence
+        for i in range(len(self.simple_iterator_list)):
             # unlock temporarily the corresponding enqueuer so that it starts
-            if self.wait_for_me_main is not None:
-                self.wait_for_me_main[i].set()
+            if self.enqueuer is not None:
+                self.enqueuer.sequence = self.simple_iterator_list[i]
+                self.wait_for_me.set()
                 time.sleep(0.1)
-                self.wait_for_me_main[i].clear() # re-lock so that is stops at end of epoch
-            gen = self.gen_list[i]
+                self.wait_for_me.clear()  # re-lock so that is stops at end of epoch
+                gen = self.generator
+            else:
+                gen = self.simple_iterator_list[i]
             compute_metrics_fun = get_compute_metrics_fun(self.predict_fun, self.metrics_fun)
             metrics = compute_metrics_loop(compute_metrics_fun, gen, self.batch_size[i], self.n_batches[i], self.verbose)
             metric_list.append(metrics)
+        if self.enqueuer is not None:
+            self.enqueuer.sequence = main_sequence
         return np.concatenate(metric_list, axis=0)
 
 
