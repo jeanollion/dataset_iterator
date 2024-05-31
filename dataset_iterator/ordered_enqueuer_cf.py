@@ -99,7 +99,7 @@ class OrderedEnqueuerCF():
         while True:
             if self.shuffle:
                 random.shuffle(sequence)
-            executor = ProcessPoolExecutor(max_workers=self.workers)
+            executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=multiprocessing.get_context('fork'), initializer=init_pool_generator, initargs=(self.uid, self.sequence))
             for idx, i in enumerate(sequence):
                 if self.stop_signal.is_set():
                     executor.shutdown(wait=False, cancel_futures=True)
@@ -112,7 +112,7 @@ class OrderedEnqueuerCF():
             # Done with the current epoch, waiting for the final batches
             self._wait_queue(True) # safer to wait before calling shutdown than calling directly shutdown with wait=True
             time.sleep(0.1)
-            executor.shutdown(wait=False, cancel_futures=True)
+            executor.shutdown(wait=True, cancel_futures=True)
             del executor
             self._clear_sequence()
             gc.collect()
@@ -220,6 +220,11 @@ def get_item_shm(uid, i):
 
 def get_item(uid, i):
     return _SHARED_SEQUENCES[uid][i]
+
+
+def init_pool_generator(uid, seq):
+    global _SHARED_SEQUENCES
+    _SHARED_SEQUENCES = {uid:seq}
 
 
 def log_mem():
