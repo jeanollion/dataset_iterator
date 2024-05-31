@@ -72,11 +72,7 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         if self.need_compute(epoch):
-            self.target_iterator.close()
-            self.iterator.open()
             metrics = self.compute_metrics()
-            self.iterator.close()
-            self.target_iterator.open()
             gc.collect()
             first = self.proba_per_metric is None
             self.proba_per_metric = get_index_probability(metrics, enrich_factor=self.enrich_factor, quantile_max=self.quantile_max, quantile_min=self.quantile_min, verbose=self.verbose)
@@ -101,11 +97,13 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             print(f"Hard Sample Mining: computing metrics...", flush=True)
         if self.enqueuer is not None:
             main_sequence = self.enqueuer.sequence
+            self.wait_for_me_consumer.clear()  # lock the main generator consumer
+            main_sequence.close()
         for i in range(len(self.simple_iterator_list)):
             # unlock temporarily the corresponding enqueuer so that it starts
             if self.enqueuer is not None:
+                self.simple_iterator_list[i].open()
                 self.enqueuer.sequence = self.simple_iterator_list[i]
-                self.wait_for_me_consumer.clear()  # lock the main generator consumer
                 self.wait_for_me_supplier.set()
                 time.sleep(0.1)
                 self.wait_for_me_supplier.clear()  # re-lock so that is stops at end of epoch
@@ -116,7 +114,9 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             compute_metrics_fun = get_compute_metrics_fun(self.predict_fun, self.metrics_fun)
             metrics = compute_metrics_loop(compute_metrics_fun, gen, self.batch_size[i], self.n_batches[i], self.verbose)
             metric_list.append(metrics)
+            self.simple_iterator_list[i].close()
         if self.enqueuer is not None:
+            main_sequence.open()
             self.enqueuer.sequence = main_sequence
             self.wait_for_me_consumer_hsm.clear()  # lock hsm consumer
             self.wait_for_me_consumer.set()  # unlock the main generator consumer
