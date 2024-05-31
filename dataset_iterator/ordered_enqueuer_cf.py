@@ -103,6 +103,8 @@ class OrderedEnqueuerCF():
             for idx, i in enumerate(sequence):
                 if self.stop_signal.is_set():
                     executor.shutdown(wait=False, cancel_futures=True)
+                    del executor
+                    self._clear_sequence()
                     return
                 self.semaphore.acquire()
                 future = executor.submit(task, self.uid, i)
@@ -119,6 +121,7 @@ class OrderedEnqueuerCF():
             if self.wait_for_me_supplier is not None:
                 self.wait_for_me_supplier.wait()
             log_mem()
+            sequence = list(range(len(self.sequence)))
             self._send_sequence()  # Update the pool
 
     def _send_sequence(self):

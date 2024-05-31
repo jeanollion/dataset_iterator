@@ -101,14 +101,14 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             print(f"Hard Sample Mining: computing metrics...", flush=True)
         if self.enqueuer is not None:
             main_sequence = self.enqueuer.sequence
+            self.wait_for_me_consumer.clear()  # lock the main consumer
         for i in range(len(self.simple_iterator_list)):
             # unlock temporarily the corresponding enqueuer so that it starts
             if self.enqueuer is not None:
                 self.enqueuer.sequence = self.simple_iterator_list[i]
-                self.wait_for_me_consumer.clear()  # lock the main generator consumer
-                self.wait_for_me_supplier.set()
+                self.wait_for_me_supplier.set()  # unlock the supplier
                 time.sleep(0.1)
-                self.wait_for_me_supplier.clear()  # re-lock so that is stops at end of epoch
+                self.wait_for_me_supplier.clear()  # re-lock so that supplier stops at end of epoch (only one epoch for HSM)
                 self.wait_for_me_consumer_hsm.set()  # unlock hsm consumer
                 gen = self.generator
             else:
@@ -118,8 +118,8 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             metric_list.append(metrics)
         if self.enqueuer is not None:
             self.enqueuer.sequence = main_sequence
-            self.wait_for_me_consumer_hsm.clear()  # lock hsm consumer
-            self.wait_for_me_consumer.set()  # unlock the main generator consumer
+            self.wait_for_me_consumer_hsm.clear()  # lock the hsm consumer
+            self.wait_for_me_consumer.set()  # unlock the main consumer
         return np.concatenate(metric_list, axis=0)
 
 
