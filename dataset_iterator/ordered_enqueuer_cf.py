@@ -1,6 +1,18 @@
 import os
 import gc
 import traceback
+import concurrent.futures
+def join_executor_internals(self):
+    self.shutdown_workers()
+    # Release the queue's resources as soon as possible.
+    self.call_queue.close()
+    self.call_queue.join_thread()
+    with self.shutdown_lock:
+        self.thread_wakeup.close()
+    #print(f"terminating: {len(self.processes)} processes", flush=True)
+    for p in self.processes.values():
+        p.terminate()
+concurrent.futures.process._ExecutorManagerThread.join_executor_internals = join_executor_internals  # monkey patch -> executor shutdown easily hangs at join
 from concurrent.futures import ProcessPoolExecutor, CancelledError, TimeoutError
 import multiprocessing
 import random
@@ -110,7 +122,7 @@ class OrderedEnqueuerCF():
                 future = executor.submit(task, self.uid, i)
                 self.queue.append((future, i))
             # Done with the current epoch, waiting for the final batches
-            self._wait_queue(True) # safer to wait before calling shutdown than calling directly shutdown with wait=True
+            self._wait_queue(True)  # safer to wait before calling shutdown than calling directly shutdown with wait=True
             time.sleep(0.1)
             executor.shutdown(wait=True, cancel_futures=True)
             del executor
