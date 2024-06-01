@@ -1,7 +1,7 @@
-import os
+import os, psutil
+from psutil import NoSuchProcess, AccessDenied
 import gc
 import traceback
-import concurrent.futures
 def join_executor_internals(self):
     self.shutdown_workers()
     # Release the queue's resources as soon as possible.
@@ -9,10 +9,9 @@ def join_executor_internals(self):
     self.call_queue.join_thread()
     with self.shutdown_lock:
         self.thread_wakeup.close()
-    #print(f"terminating: {len(self.processes)} processes", flush=True)
     for p in self.processes.values():
-        p.terminate()
-concurrent.futures.process._ExecutorManagerThread.join_executor_internals = join_executor_internals  # monkey patch -> executor shutdown easily hangs at join
+        p.join(0.5)  # set a timeout to avoid hanging
+#concurrent.futures.process._ExecutorManagerThread.join_executor_internals = join_executor_internals  # monkey patch -> executor shutdown easily hangs at join
 from concurrent.futures import ProcessPoolExecutor, CancelledError, TimeoutError
 import multiprocessing
 import random
@@ -25,36 +24,36 @@ from .shared_memory import to_shm, from_shm, unlink_tensor_ref
 # adapted from https://github.com/keras-team/keras/blob/v2.13.1/keras/utils/data_utils.py#L651-L776
 # uses concurrent.futures, solves a memory leak in case of hard sample mining run as callback with regular orderedEnqueur. Option to pass tensors through shared memory
 # Global variables to be shared across processes
-_SHARED_SEQUENCES = {}
+_SHARED_ITERATOR = {}
 # We use a Value to provide unique id to different processes.
-_SEQUENCE_COUNTER = None
+_COUNTER = None
 
 class OrderedEnqueuerCF():
-    def __init__(self, sequence, shuffle=False, single_epoch:bool=False, use_shm:bool=True):
-        self.sequence = sequence
+    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=True):
+        self.iterator = iterator
         self.shuffle = shuffle
         self.single_epoch = single_epoch
         self.use_shm = use_shm
         self.wait_for_me_supplier = None
         self.wait_for_me_consumer = None
-        global _SEQUENCE_COUNTER
-        if _SEQUENCE_COUNTER is None:
+        global _COUNTER
+        if _COUNTER is None:
             try:
-                _SEQUENCE_COUNTER = multiprocessing.Value("i", 0)
+                _COUNTER = multiprocessing.Value("i", 0)
             except OSError:
                 # In this case the OS does not allow us to use
                 # multiprocessing. We resort to an int
                 # for enqueuer indexing.
-                _SEQUENCE_COUNTER = 0
+                _COUNTER = 0
 
-        if isinstance(_SEQUENCE_COUNTER, int):
-            self.uid = _SEQUENCE_COUNTER
-            _SEQUENCE_COUNTER += 1
+        if isinstance(_COUNTER, int):
+            self.uid = _COUNTER
+            _COUNTER += 1
         else:
             # Doing Multiprocessing.Value += x is not process-safe.
-            with _SEQUENCE_COUNTER.get_lock():
-                self.uid = _SEQUENCE_COUNTER.value
-                _SEQUENCE_COUNTER.value += 1
+            with _COUNTER.get_lock():
+                self.uid = _COUNTER.value
+                _COUNTER.value += 1
 
         self.workers = 0
         self.queue = None
@@ -76,7 +75,7 @@ class OrderedEnqueuerCF():
         """
         if self.use_shm:  # load in shared memory before spawning threads otherwise each thread will load in memory
             try:
-                self.sequence.open()
+                self.iterator.open()
             except AttributeError:
                 pass
         self.workers = workers
@@ -106,51 +105,55 @@ class OrderedEnqueuerCF():
             self.wait_for_me_supplier.wait()
         log_mem()
         task = get_item_shm if self.use_shm else get_item
-        sequence = list(range(len(self.sequence)))
-        self._send_sequence()  # Share the initial sequence
+        indices = list(range(len(self.iterator)))
+        self._send_iterator()  # Share the initial sequence
         while True:
             if self.shuffle:
-                random.shuffle(sequence)
-            executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=multiprocessing.get_context('fork'), initializer=init_pool_generator, initargs=(self.uid, self.sequence))
-            for idx, i in enumerate(sequence):
+                random.shuffle(indices)
+            executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=multiprocessing.get_context('fork'), initializer=init_pool_generator, initargs=(self.uid, self.iterator))
+            for idx, i in enumerate(indices):
                 if self.stop_signal.is_set():
+                    processes = list(executor._processes.keys())
                     executor.shutdown(wait=False, cancel_futures=True)
                     del executor
-                    self._clear_sequence()
+                    self.leaked_processes = kill_processes(processes, timeout=1, verbose=True)
+                    self._clear_iterator()
                     return
                 self.semaphore.acquire()
                 future = executor.submit(task, self.uid, i)
                 self.queue.append((future, i))
             # Done with the current epoch, waiting for the final batches
             self._wait_queue(True)  # safer to wait before calling shutdown than calling directly shutdown with wait=True
-            time.sleep(0.1)
-            executor.shutdown(wait=True, cancel_futures=True)
+            processes = list(executor._processes.keys())
+            executor.shutdown(wait=False, cancel_futures=True) # wait=True often hangs because not timeout is set to Process.join().
             del executor
-            self._clear_sequence()
+            time.sleep(0.1)
+            kill_processes(processes, timeout=3, verbose=True)
+            self._clear_iterator()
             gc.collect()
             if self.stop_signal.is_set() or self.single_epoch:
                 return
             if self.wait_for_me_supplier is not None:
                 self.wait_for_me_supplier.wait()
             log_mem()
-            sequence = list(range(len(self.sequence)))
-            self._send_sequence()  # Update the pool
+            indices = list(range(len(self.iterator)))
+            self._send_iterator()  # Update the pool
 
-    def _send_sequence(self):
+    def _send_iterator(self):
         """Sends current Iterable to all workers."""
         # For new processes that may spawn
-        global _SHARED_SEQUENCES
+        global _SHARED_ITERATOR
         try:
-            self.sequence.on_epoch_end()
+            self.iterator.on_epoch_end()
         except AttributeError:
             pass
-        _SHARED_SEQUENCES[self.uid] = self.sequence
+        _SHARED_ITERATOR[self.uid] = self.iterator
 
-    def _clear_sequence(self):
+    def _clear_iterator(self):
         """Sends current Iterable to all workers."""
         # For new processes that may spawn
-        global _SHARED_SEQUENCES
-        _SHARED_SEQUENCES[self.uid] = None
+        global _SHARED_ITERATOR
+        _SHARED_ITERATOR[self.uid] = None
 
     def get(self):
         return self.get_wfm(self.wait_for_me_consumer)
@@ -217,26 +220,26 @@ class OrderedEnqueuerCF():
                         pass
         self.queue = None
         self.semaphore = None
-        global _SHARED_SEQUENCES
-        _SHARED_SEQUENCES[self.uid] = None
+        global _SHARED_ITERATOR
+        _SHARED_ITERATOR[self.uid] = None
 
     def __del__(self):
         self.stop()
 
 
 def get_item_shm(uid, i):
-    tensors = _SHARED_SEQUENCES[uid][i]
+    tensors = _SHARED_ITERATOR[uid][i]
     #print(f"item {i} -> {_SHARED_SEQUENCES[uid].index_array[i]} process: {os.getpid()}", flush=True)
     return to_shm(tensors)
 
 
 def get_item(uid, i):
-    return _SHARED_SEQUENCES[uid][i]
+    return _SHARED_ITERATOR[uid][i]
 
 
 def init_pool_generator(uid, seq):
-    global _SHARED_SEQUENCES
-    _SHARED_SEQUENCES = {uid:seq}
+    global _SHARED_ITERATOR
+    _SHARED_ITERATOR = {uid:seq}
 
 
 def log_mem():
@@ -244,3 +247,28 @@ def log_mem():
     result = result.splitlines()
     free_memory = int(result[1].split()[2])/1000
     print(f"used memory: {free_memory:.1f}Gb", flush=True)
+
+
+def kill_processes(pids, timeout=3, verbose=False):
+    procs = get_procs(pids)
+    gone, alive = psutil.wait_procs(procs, timeout=timeout)
+    for p in alive:
+        p.kill()
+    time.sleep(0.1)
+    procs = get_procs(pids)
+    gone, alive = psutil.wait_procs(procs, timeout=timeout)
+    if verbose and len(alive)>0:
+        mem_leak = sum([p.memory_info().rss / float(2 ** 30) for p in alive])
+        print(f"memory leak: {mem_leak:.2f}Gb among {len(alive)} processes", flush=True)
+    return [p.pid for p in alive]
+
+
+def get_procs(pids):
+    procs = []
+    for pid in pids:
+        try:
+            p = psutil.Process(pid)
+            procs.append(p)
+        except (NoSuchProcess, AccessDenied):
+            pass
+    return procs

@@ -58,10 +58,8 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
 
     def initialize(self):
         if self.need_compute(-1):
-            print("start with HSM", flush=True)
             self.on_epoch_end(-1)
         else:
-            print("dont start with HSM", flush=True)
             if self.wait_for_me_supplier is not None:
                 self.wait_for_me_supplier.set()  # unlock main generator supplier
                 self.wait_for_me_consumer.set()  # unlock main generator consumer
@@ -96,14 +94,14 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         if self.verbose >=1:
             print(f"Hard Sample Mining: computing metrics...", flush=True)
         if self.enqueuer is not None:
-            main_sequence = self.enqueuer.sequence
+            main_sequence = self.enqueuer.iterator
             self.wait_for_me_consumer.clear()  # lock the main generator consumer
             main_sequence.close()
         for i in range(len(self.simple_iterator_list)):
             # unlock temporarily the corresponding enqueuer so that it starts
             if self.enqueuer is not None:
                 self.simple_iterator_list[i].open()
-                self.enqueuer.sequence = self.simple_iterator_list[i]
+                self.enqueuer.iterator = self.simple_iterator_list[i]
                 self.wait_for_me_supplier.set()
                 time.sleep(0.1)
                 self.wait_for_me_supplier.clear()  # re-lock so that supplier stops at end of epoch (only one epoch for HSM)
@@ -117,7 +115,7 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             self.simple_iterator_list[i].close()
         if self.enqueuer is not None:
             main_sequence.open()
-            self.enqueuer.sequence = main_sequence
+            self.enqueuer.iterator = main_sequence
             self.wait_for_me_consumer_hsm.clear()  # lock the hsm consumer
             self.wait_for_me_consumer.set()  # unlock the main consumer
         return np.concatenate(metric_list, axis=0)
