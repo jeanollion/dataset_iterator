@@ -1,23 +1,12 @@
-import os, psutil
-from psutil import NoSuchProcess, AccessDenied
 import gc
+import os
 import traceback
-def join_executor_internals(self):
-    self.shutdown_workers()
-    # Release the queue's resources as soon as possible.
-    self.call_queue.close()
-    self.call_queue.join_thread()
-    with self.shutdown_lock:
-        self.thread_wakeup.close()
-    for p in self.processes.values():
-        p.join(0.5)  # set a timeout to avoid hanging
-#concurrent.futures.process._ExecutorManagerThread.join_executor_internals = join_executor_internals  # monkey patch -> executor shutdown easily hangs at join
-from concurrent.futures import ProcessPoolExecutor, CancelledError, TimeoutError
+from .process_utils import kill_processes, log_used_mem  # this import needs to be before any import related to concurrent futures to pathc
+from concurrent.futures import ProcessPoolExecutor, CancelledError, TimeoutError, as_completed
 import multiprocessing
 import random
 import threading
 import time
-import subprocess
 from threading import BoundedSemaphore
 from .shared_memory import to_shm, from_shm, unlink_tensor_ref
 
@@ -28,8 +17,9 @@ _SHARED_ITERATOR = {}
 # We use a Value to provide unique id to different processes.
 _COUNTER = None
 
+
 class OrderedEnqueuerCF():
-    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=True):
+    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False):
         self.iterator = iterator
         self.shuffle = shuffle
         self.single_epoch = single_epoch
@@ -103,7 +93,7 @@ class OrderedEnqueuerCF():
         """Submits request to the executor and queue the `Future` objects."""
         if self.wait_for_me_supplier is not None:
             self.wait_for_me_supplier.wait()
-        log_mem()
+        log_used_mem()
         task = get_item_shm if self.use_shm else get_item
         indices = list(range(len(self.iterator)))
         self._send_iterator()  # Share the initial sequence
@@ -114,7 +104,7 @@ class OrderedEnqueuerCF():
             for idx, i in enumerate(indices):
                 if self.stop_signal.is_set():
                     processes = list(executor._processes.keys())
-                    executor.shutdown(wait=False, cancel_futures=True)
+                    executor.shutdown(wait=True, cancel_futures=True)
                     del executor
                     self.leaked_processes = kill_processes(processes, timeout=1, verbose=True)
                     self._clear_iterator()
@@ -124,10 +114,14 @@ class OrderedEnqueuerCF():
                 self.queue.append((future, i))
             # Done with the current epoch, waiting for the final batches
             self._wait_queue(True)  # safer to wait before calling shutdown than calling directly shutdown with wait=True
+
+            futures = [executor.submit(close_iterator, self.uid) for _ in range(self.workers)]  # close iterator in each process's memory
+            for _ in as_completed(futures, timeout=5):
+                pass
+            del futures
             processes = list(executor._processes.keys())
-            executor.shutdown(wait=False, cancel_futures=True) # wait=True often hangs because not timeout is set to Process.join().
+            executor.shutdown(wait=True, cancel_futures=True)  # wait=True often hangs because no timeout is set to Process.join().
             del executor
-            time.sleep(0.1)
             kill_processes(processes, timeout=3, verbose=True)
             self._clear_iterator()
             gc.collect()
@@ -135,7 +129,7 @@ class OrderedEnqueuerCF():
                 return
             if self.wait_for_me_supplier is not None:
                 self.wait_for_me_supplier.wait()
-            log_mem()
+            log_used_mem()
             indices = list(range(len(self.iterator)))
             self._send_iterator()  # Update the pool
 
@@ -199,7 +193,7 @@ class OrderedEnqueuerCF():
                 del future
                 yield inputs
 
-    def stop(self, timeout=None):
+    def stop(self, timeout=5):
         """Stops running threads and wait for them to exit, if necessary.
 
         Should be called by the same thread which called `start()`.
@@ -207,7 +201,7 @@ class OrderedEnqueuerCF():
         Args:
             timeout: maximum time to wait on `thread.join()`
         """
-        if self.run_thread is None: # was not started
+        if self.run_thread is None:  # has not been started
             return
         self.stop_signal.set()
         self.run_thread.join(timeout)
@@ -220,8 +214,7 @@ class OrderedEnqueuerCF():
                         pass
         self.queue = None
         self.semaphore = None
-        global _SHARED_ITERATOR
-        _SHARED_ITERATOR[self.uid] = None
+        self._clear_iterator()
 
     def __del__(self):
         self.stop()
@@ -237,38 +230,13 @@ def get_item(uid, i):
     return _SHARED_ITERATOR[uid][i]
 
 
+def close_iterator(uid):  # method intended to be called by each process to free memory related to iterator
+    if _SHARED_ITERATOR[uid] is not None:
+        _SHARED_ITERATOR[uid].close(force=True)
+        _SHARED_ITERATOR[uid] = None
+        time.sleep(0.1)
+
+
 def init_pool_generator(uid, seq):
     global _SHARED_ITERATOR
     _SHARED_ITERATOR = {uid:seq}
-
-
-def log_mem():
-    result = subprocess.check_output(['bash', '-c', 'free -m'])
-    result = result.splitlines()
-    free_memory = int(result[1].split()[2])/1000
-    print(f"used memory: {free_memory:.1f}Gb", flush=True)
-
-
-def kill_processes(pids, timeout=3, verbose=False):
-    procs = get_procs(pids)
-    gone, alive = psutil.wait_procs(procs, timeout=timeout)
-    for p in alive:
-        p.kill()
-    time.sleep(0.1)
-    procs = get_procs(pids)
-    gone, alive = psutil.wait_procs(procs, timeout=timeout)
-    if verbose and len(alive)>0:
-        mem_leak = sum([p.memory_info().rss / float(2 ** 30) for p in alive])
-        print(f"memory leak: {mem_leak:.2f}Gb among {len(alive)} processes", flush=True)
-    return [p.pid for p in alive]
-
-
-def get_procs(pids):
-    procs = []
-    for pid in pids:
-        try:
-            p = psutil.Process(pid)
-            procs.append(p)
-        except (NoSuchProcess, AccessDenied):
-            pass
-    return procs

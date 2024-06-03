@@ -31,9 +31,7 @@ class MemoryIO(DatasetIO):
             with self.__lock__:
                 if path not in self.datasets:
                     if self.use_shm:
-                        tensor = self.datasetIO.get_dataset(path)[:]
-                        self.datasets[path] = ShmArrayWrapper(*_to_shm(tensor))
-                        del tensor
+                        self.datasets[path] = ShmArrayWrapper(*_to_shm(self.datasetIO.get_dataset(path)))
                         #print(f"open path: {path} to shm by ps: {os.getpid()}", flush=True)
                     else:
                         self.datasets[path] = ArrayWrapper(self.datasetIO.get_dataset(path)[:]) # load into memory

@@ -22,13 +22,15 @@ def to_shm(tensors, shm_manager=None):
 
 
 def from_shm(shapes, dtypes, shm_name, nested_structure):
-    existing_shm = ErasingSharedMemory(shm_name)
+    existing_shm = shared_memory.SharedMemory(shm_name)
     offset = 0
     tensor_list = []
     for shape, dtype in zip(shapes, dtypes):
         a = ShmArray(shape, dtype=dtype, buffer=existing_shm.buf, offset=offset, shm=existing_shm)
         tensor_list.append(a)
         offset += a.nbytes
+    existing_shm.unlink()
+    #existing_shm.close()
     return get_nested_structure(tensor_list, nested_structure)
 
 

@@ -195,7 +195,7 @@ def compute_metrics(iterator, predict_function, metrics_function, disable_augmen
     compute_metrics_fun = get_compute_metrics_fun(predict_function, metrics_function)
     if workers is None:
         workers = os.cpu_count()
-    enq = OrderedEnqueuerCF(simple_iterator, single_epoch=True, shuffle=False, use_shm=True)
+    enq = OrderedEnqueuerCF(simple_iterator, single_epoch=True, shuffle=False)
     enq.start(workers=workers, max_queue_size=max(3, min(n_batches, workers)))
     gen = enq.get()
     if verbose >= 1:

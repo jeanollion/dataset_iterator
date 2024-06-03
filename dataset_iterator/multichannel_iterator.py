@@ -303,6 +303,7 @@ class MultiChannelIterator(IndexArrayIterator):
         super().__init__(self.total_n, batch_size, shuffle, seed, incomplete_last_batch_mode, step_number=step_number)
 
     def _open_datasetIO(self):
+        #print(f"open dataset IO: ps : {os.getpid()} existing: {self.datasetIO is not None}")
         if self.datasetIO is not None:
             self._close_datasetIO(force=False)
         self.datasetIO = get_datasetIO(self.dataset, 'r')

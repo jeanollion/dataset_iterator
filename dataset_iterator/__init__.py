@@ -1,5 +1,5 @@
 name = "dataset_iterator"
-
+from .process_utils import log_used_mem # also patches concurrent_futures
 from .index_array_iterator import IndexArrayIterator
 from .multichannel_iterator import MultiChannelIterator
 from .tracking_iterator import TrackingIterator
