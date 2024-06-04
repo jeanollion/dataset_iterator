@@ -19,7 +19,7 @@ _COUNTER = None
 
 
 class OrderedEnqueuerCF():
-    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False):
+    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=True):
         self.iterator = iterator
         self.shuffle = shuffle
         self.single_epoch = single_epoch

@@ -26,11 +26,12 @@ def from_shm(shapes, dtypes, shm_name, nested_structure):
     offset = 0
     tensor_list = []
     for shape, dtype in zip(shapes, dtypes):
-        a = ShmArray(shape, dtype=dtype, buffer=existing_shm.buf, offset=offset, shm=existing_shm)
+        a = np.copy(np.ndarray(shape, dtype=dtype, buffer=existing_shm.buf, offset=offset))
+        #a = ShmArray(shape, dtype=dtype, buffer=existing_shm.buf, offset=offset, shm=existing_shm)
         tensor_list.append(a)
         offset += a.nbytes
+    existing_shm.close()
     existing_shm.unlink()
-    #existing_shm.close()
     return get_nested_structure(tensor_list, nested_structure)
 
 
@@ -97,6 +98,7 @@ def unlink_tensor_ref(shapes, dtypes, shm_name, nested_structure):
 def unlink_shm_ref(shm_name):
     try:
         existing_shm = shared_memory.SharedMemory(shm_name)
+        existing_shm.close()
         existing_shm.unlink()
     except (FileExistsError, FileNotFoundError):
         pass
@@ -119,6 +121,7 @@ class ErasingSharedMemory(shared_memory.SharedMemory):
     def __del__(self):
         super(ErasingSharedMemory, self).__del__()
         try:
+            self.close()
             self.unlink()
         except (FileExistsError, FileNotFoundError):  # manager can delete the file before array is finalized
             pass
