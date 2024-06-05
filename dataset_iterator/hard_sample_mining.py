@@ -258,6 +258,12 @@ class SimpleIterator(IndexArrayIterator):
             batch = x
         return batch
 
+    def open(self):
+        self.iterator.open()
+
+    def close(self, force:bool=False):
+        self.iterator.close(force)
+
 def batchwise_inplace(function):
     def fun(batch):
         for i in range(batch.shape[0]):

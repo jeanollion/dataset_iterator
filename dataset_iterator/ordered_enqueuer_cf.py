@@ -19,11 +19,13 @@ _COUNTER = None
 
 
 class OrderedEnqueuerCF():
-    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=True):
+    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=True):
         self.iterator = iterator
         self.shuffle = shuffle
         self.single_epoch = single_epoch
         self.use_shm = use_shm
+        self.use_shared_array=use_shared_array
+        assert not self.use_shm and not self.use_shared_array or self.use_shm != self.use_shared_array, "either shm or shared_array or none of the 2"
         self.wait_for_me_supplier = None
         self.wait_for_me_consumer = None
         global _COUNTER
@@ -63,11 +65,10 @@ class OrderedEnqueuerCF():
             max_queue_size: queue size
                 (when full, workers could block on `put()`)
         """
-        if self.use_shm:  # load in shared memory before spawning threads otherwise each thread will load in memory
-            try:
-                self.iterator.open()
-            except AttributeError:
-                pass
+        try:
+            self.iterator.open()  # load in shared memory before spawning threads otherwise each thread will load in memory
+        except AttributeError:
+            pass
         self.workers = workers
         if max_queue_size <= 0:
             max_queue_size = self.workers
@@ -94,7 +95,12 @@ class OrderedEnqueuerCF():
         if self.wait_for_me_supplier is not None:
             self.wait_for_me_supplier.wait()
         log_used_mem()
-        task = get_item_shm if self.use_shm else get_item
+        if self.use_shm:
+            task = get_item_shm
+        elif self.use_shared_array:
+            task = get_item_shared_array
+        else:
+            task = get_item
         indices = list(range(len(self.iterator)))
         self._send_iterator()  # Share the initial sequence
         while True:
@@ -115,7 +121,7 @@ class OrderedEnqueuerCF():
             # Done with the current epoch, waiting for the final batches
             self._wait_queue(True)  # safer to wait before calling shutdown than calling directly shutdown with wait=True
 
-            futures = [executor.submit(close_iterator, self.uid) for _ in range(self.workers)]  # close iterator in each process's memory
+            futures = [executor.submit(close_iterator, self.uid) for _ in range(self.workers)]  #  close iterator in each process's memory TODO necesary ?
             for _ in as_completed(futures, timeout=5):
                 pass
             del futures
@@ -174,7 +180,7 @@ class OrderedEnqueuerCF():
                 ex = future.exception()
                 if ex is None:
                     inputs = future.result()
-                    if self.use_shm:
+                    if self.use_shm or self.use_shared_array:
                         inputs = from_shm(*inputs)
                 else:
                     print(f"Exception raised while getting future result from task: {i}. Task will be re-computed.", flush=True)
@@ -226,6 +232,12 @@ def get_item_shm(uid, i):
     return to_shm(tensors)
 
 
+def get_item_shared_array(uid, i):
+    tensors = _SHARED_ITERATOR[uid][i]
+    #print(f"item {i} -> {_SHARED_SEQUENCES[uid].index_array[i]} process: {os.getpid()}", flush=True)
+    return to_shm(tensors, use_shared_array=True)
+
+
 def get_item(uid, i):
     return _SHARED_ITERATOR[uid][i]
 
@@ -234,7 +246,7 @@ def close_iterator(uid):  # method intended to be called by each process to free
     if _SHARED_ITERATOR[uid] is not None:
         _SHARED_ITERATOR[uid].close(force=True)
         _SHARED_ITERATOR[uid] = None
-        time.sleep(0.1)
+        time.sleep(0.5)
 
 
 def init_pool_generator(uid, seq):

@@ -2,24 +2,24 @@ import os, time, subprocess
 from psutil import NoSuchProcess, AccessDenied, wait_procs, Process
 import concurrent.futures.process
 
-
-def join_executor_internals(self):
-    self.shutdown_workers()
-    # Release the queue's resources as soon as possible.
-    self.call_queue.close()
-    self.call_queue.join_thread()
-    with self.shutdown_lock:
-        self.thread_wakeup.close()
-    for p in self.processes.values():
-        p.join(0.5)  # set a timeout to avoid hanging
-        try:
-            p.close()
-        except:
-            p.terminate()
-
 # monkey patch -> executor shutdown easily hangs at join
-concurrent.futures.process._ExecutorManagerThread.join_executor_internals = join_executor_internals
-
+try:
+    def join_executor_internals(self):
+        self.shutdown_workers()
+        # Release the queue's resources as soon as possible.
+        self.call_queue.close()
+        self.call_queue.join_thread()
+        with self.shutdown_lock:
+            self.thread_wakeup.close()
+        for p in self.processes.values():
+            p.join(0.5)  # set a timeout to avoid hanging
+            try:
+                p.close()
+            except:
+                p.terminate()
+    concurrent.futures.process._ExecutorManagerThread.join_executor_internals = join_executor_internals
+except:
+    pass
 
 def kill_processes(pids, timeout=3, verbose=False):
     procs = get_procs(pids)

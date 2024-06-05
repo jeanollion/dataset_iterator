@@ -1,38 +1,63 @@
 import numpy as np
 from multiprocessing import shared_memory
+try:
+    import SharedArray as sa
+    import uuid
+except:
+    sa = None
 
 
-def to_shm(tensors, shm_manager=None):
+def to_shm(tensors, shm_manager=None, use_shared_array:bool = False):
     flatten_tensor_list, nested_structure = get_flatten_list(tensors)
-    size = np.sum([a.nbytes for a in flatten_tensor_list])
-    shm = shm_manager.SharedMemory(size=size) if shm_manager is not None else shared_memory.SharedMemory(create=True, size=size)
-    shapes = []
-    dtypes = []
-    offset = 0
-    for a in flatten_tensor_list:
-        shm_a = np.ndarray(a.shape, dtype=a.dtype, buffer=shm.buf, offset=offset)
-        shm_a[:] = a[:]
-        shapes.append(a.shape)
-        dtypes.append(a.dtype)
-        offset += a.nbytes
-    tensor_ref = (shapes, dtypes, shm.name, nested_structure)
-    shm.close()
-    del shm
-    return tensor_ref
+    if use_shared_array:
+        assert sa is not None, "SharedArray library not installed"
+        shm_names = []
+        for a in flatten_tensor_list:
+            name = f"shm://{uuid.uuid4().hex}"
+            shm = sa.create(name=name, shape=a.shape, dtype=a.dtype)
+            shm[:] = a[:]
+            shm_names.append(name)
+        return tuple(shm_names), nested_structure
+    else:
+        size = np.sum([a.nbytes for a in flatten_tensor_list])
+        shm = shm_manager.SharedMemory(size=size) if shm_manager is not None else shared_memory.SharedMemory(create=True, size=size)
+        shapes = []
+        dtypes = []
+        offset = 0
+        for a in flatten_tensor_list:
+            shm_a = np.ndarray(a.shape, dtype=a.dtype, buffer=shm.buf, offset=offset)
+            shm_a[:] = a[:]
+            shapes.append(a.shape)
+            dtypes.append(a.dtype)
+            offset += a.nbytes
+        tensor_ref = (shapes, dtypes, shm.name, nested_structure)
+        shm.close()
+        del shm
+        return tensor_ref
 
 
-def from_shm(shapes, dtypes, shm_name, nested_structure):
-    existing_shm = shared_memory.SharedMemory(shm_name)
-    offset = 0
-    tensor_list = []
-    for shape, dtype in zip(shapes, dtypes):
-        a = np.copy(np.ndarray(shape, dtype=dtype, buffer=existing_shm.buf, offset=offset))
-        #a = ShmArray(shape, dtype=dtype, buffer=existing_shm.buf, offset=offset, shm=existing_shm)
-        tensor_list.append(a)
-        offset += a.nbytes
-    existing_shm.close()
-    existing_shm.unlink()
-    return get_nested_structure(tensor_list, nested_structure)
+def from_shm(*args):
+    if len(args) == 4:
+        shapes, dtypes, shm_name, nested_structure = args
+        existing_shm = shared_memory.SharedMemory(shm_name)
+        offset = 0
+        tensor_list = []
+        for shape, dtype in zip(shapes, dtypes):
+            a = np.copy(np.ndarray(shape, dtype=dtype, buffer=existing_shm.buf, offset=offset))
+            #a = ShmArray(shape, dtype=dtype, buffer=existing_shm.buf, offset=offset, shm=existing_shm)
+            tensor_list.append(a)
+            offset += a.nbytes
+        existing_shm.close()
+        existing_shm.unlink()
+        return get_nested_structure(tensor_list, nested_structure)
+    elif len(args) == 2:
+        shm_names, nested_structure = args
+        tensor_list = [sa.attach(name) for name in shm_names]
+        for n in shm_names:
+            sa.delete(n)
+        return get_nested_structure(tensor_list, nested_structure)
+    else:
+        raise ValueError("either provide following arguments: shapes, dtypes, shm_name, nested_structure (shared_memory) or shm_names, nested_structure (SharedArray)")
 
 
 def get_idx_from_shm(idx, shapes, dtypes, shm_name, array_idx=0):
@@ -46,6 +71,11 @@ def get_idx_from_shm(idx, shapes, dtypes, shm_name, array_idx=0):
     existing_shm.close()
     del existing_shm
     return array
+
+
+def get_item_from_shared_array(item, shm_name):
+    array = sa.attach(shm_name)
+    return np.copy(array[item])
 
 
 def multiple(item):
@@ -101,6 +131,13 @@ def unlink_shm_ref(shm_name):
         existing_shm.close()
         existing_shm.unlink()
     except (FileExistsError, FileNotFoundError):
+        pass
+
+
+def unlink_shared_array(shm_name):
+    try:
+        sa.delete(shm_name)
+    except (OSError, IOError):
         pass
 
 

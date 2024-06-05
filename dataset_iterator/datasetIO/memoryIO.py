@@ -2,16 +2,22 @@ import os
 import threading
 import numpy as np
 from .datasetIO import DatasetIO
-from ..shared_memory import to_shm, get_idx_from_shm, unlink_shm_ref
+from ..shared_memory import to_shm, get_idx_from_shm, unlink_shm_ref, get_item_from_shared_array, unlink_shared_array
+try:
+    import SharedArray as sa
+except:
+    sa = None
 
 
 class MemoryIO(DatasetIO):
-    def __init__(self, datasetIO: DatasetIO, use_shm: bool = True):
+    def __init__(self, datasetIO: DatasetIO, use_shm: bool = True, use_shared_array: bool = False):
         super().__init__()
         self.datasetIO = datasetIO
         self.__lock__ = threading.Lock()
         self.datasets = dict()
         self.use_shm = use_shm
+        self.use_shared_array = use_shared_array
+        assert not self.use_shm and not self.use_shared_array or self.use_shm != self.use_shared_array, "either shm or shared_array or none of the 2"
 
     def close(self):
         self.datasets.clear()  # if shm : del will unlink
@@ -33,8 +39,11 @@ class MemoryIO(DatasetIO):
                     if self.use_shm:
                         self.datasets[path] = ShmArrayWrapper(*_to_shm(self.datasetIO.get_dataset(path)))
                         #print(f"open path: {path} to shm by ps: {os.getpid()}", flush=True)
+                    elif self.use_shared_array:
+                        self.datasets[path] = SharedArrayWrapper(*_to_sa(self.datasetIO.get_dataset(path)))
+                        #print(f"open path: {path} as SharedArray by ps: {os.getpid()}", flush=True)
                     else:
-                        self.datasets[path] = ArrayWrapper(self.datasetIO.get_dataset(path)[:]) # load into memory
+                        self.datasets[path] = ArrayWrapper(self.datasetIO.get_dataset(path)[:])  # load into memory
         return self.datasets[path]
 
     def get_attribute(self, path, attribute_name):
@@ -54,8 +63,13 @@ class MemoryIO(DatasetIO):
 
 
 def _to_shm(array):
-    shapes, dtypes, shm_name, _ = to_shm(array)
+    shapes, dtypes, shm_name, _ = to_shm(array, use_shared_array=False)
     return shapes[0], dtypes[0], shm_name
+
+
+def _to_sa(array):
+    shm_names, _ = to_shm(array, use_shared_array=True)
+    return array.shape, shm_names[0]
 
 
 class ArrayWrapper:
@@ -77,7 +91,7 @@ class ShmArrayWrapper:
         self.shm_name = shm_name
 
     def __getitem__(self, item):
-        assert isinstance(item, (int, np.integer)), f"only integer index supported: recieved: {item} of type: {type(item)}"
+        assert isinstance(item, (int, np.integer)), f"only integer index supported: received: {item} of type: {type(item)}"
         return get_idx_from_shm(item, (self.shape,), (self.dtype,), self.shm_name, array_idx=0)
 
     def __len__(self):
@@ -88,3 +102,21 @@ class ShmArrayWrapper:
 
     def unlink(self):
         unlink_shm_ref(self.shm_name)
+
+
+class SharedArrayWrapper:  # do not store the attached array to avoid copy in memory @multiprocessing
+    def __init__(self, shape, shm_name):
+        self.shape = shape
+        self.shm_name = shm_name
+
+    def __getitem__(self, item):
+        return get_item_from_shared_array(item, self.shm_name)
+
+    def __len__(self):
+        return self.shape[0]
+
+    def __del__(self):
+        self.unlink()
+
+    def unlink(self):
+        unlink_shared_array(self.shm_name)
