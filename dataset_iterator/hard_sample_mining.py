@@ -28,6 +28,10 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         self.proba_per_metric = None
         self.n_metrics = 0
         self.data_aug_param = self.iterator.disable_random_transforms(True, self.disable_channel_postprocessing)
+        try:
+            self.iterator_params = self.iterator.enqueuer_init()
+        except AttributeError:
+            self.iterator_params = None
         iterator_list = self.iterator.iterators if isinstance(self.iterator, ConcatIterator) else [self.iterator]
         self.simple_iterator_list = [SimpleIterator(it) for it in iterator_list]
         self.n_batches = [len(it) for it in self.simple_iterator_list]
@@ -51,6 +55,8 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
     def close(self):
         if self.data_aug_param is not None:
             self.iterator.enable_random_transforms(self.data_aug_param)
+        if self.iterator_params is not None:
+            self.iterator.enequeuer_end(self.iterator_params)
         self.iterator.close()
 
     def need_compute(self, epoch):
@@ -96,11 +102,11 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         if self.enqueuer is not None:
             main_sequence = self.enqueuer.iterator
             self.wait_for_me_consumer.clear()  # lock the main generator consumer
-            main_sequence.close()
+            #main_sequence.close()
         for i in range(len(self.simple_iterator_list)):
             # unlock temporarily the corresponding enqueuer so that it starts
             if self.enqueuer is not None:
-                self.simple_iterator_list[i].open()
+                #self.simple_iterator_list[i].open()
                 self.enqueuer.iterator = self.simple_iterator_list[i]
                 self.wait_for_me_supplier.set()
                 time.sleep(0.1)
@@ -112,9 +118,9 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             compute_metrics_fun = get_compute_metrics_fun(self.predict_fun, self.metrics_fun)
             metrics = compute_metrics_loop(compute_metrics_fun, gen, self.batch_size[i], self.n_batches[i], self.verbose)
             metric_list.append(metrics)
-            self.simple_iterator_list[i].close()
+            #self.simple_iterator_list[i].close()
         if self.enqueuer is not None:
-            main_sequence.open()
+            #main_sequence.open()
             self.enqueuer.iterator = main_sequence
             self.wait_for_me_consumer_hsm.clear()  # lock the hsm consumer
             self.wait_for_me_consumer.set()  # unlock the main consumer

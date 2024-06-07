@@ -66,9 +66,9 @@ class OrderedEnqueuerCF():
                 (when full, workers could block on `put()`)
         """
         try:
-            self.iterator.open()  # load in shared memory before spawning threads otherwise each thread will load in memory
+            self.iterator_params = self.iterator.enqueuer_init()
         except AttributeError:
-            pass
+            self.iterator_params = None
         self.workers = workers
         if max_queue_size <= 0:
             max_queue_size = self.workers
@@ -221,6 +221,8 @@ class OrderedEnqueuerCF():
         self.queue = None
         self.semaphore = None
         self._clear_iterator()
+        if self.iterator_params is not None:
+            self.iterator.enqueuer_end(self.iterator_params)
 
     def __del__(self):
         self.stop()
@@ -244,7 +246,7 @@ def get_item(uid, i):
 
 def close_iterator(uid):  # method intended to be called by each process to free memory related to iterator
     if _SHARED_ITERATOR[uid] is not None:
-        _SHARED_ITERATOR[uid].close(force=True)
+        _SHARED_ITERATOR[uid].close()
         _SHARED_ITERATOR[uid] = None
         time.sleep(0.5)
 

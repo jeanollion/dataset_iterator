@@ -10,7 +10,7 @@ except:
 
 
 class MemoryIO(DatasetIO):
-    def __init__(self, datasetIO: DatasetIO, use_shm: bool = True, use_shared_array: bool = False):
+    def __init__(self, datasetIO: DatasetIO, use_shm: bool = False, use_shared_array: bool = True):
         super().__init__()
         self.datasetIO = datasetIO
         self.__lock__ = threading.Lock()
@@ -20,10 +20,10 @@ class MemoryIO(DatasetIO):
         assert not self.use_shm and not self.use_shared_array or self.use_shm != self.use_shared_array, "either shm or shared_array or none of the 2"
 
     def close(self):
+        if self.use_shm or self.use_shared_array:
+            for shm in self.datasets.values():
+                shm.unlink()
         self.datasets.clear()  # if shm : del will unlink
-        self.datasetIO.close()
-
-    def free_mem(self):
         self.datasetIO.close()
 
     def __del__(self):
@@ -97,8 +97,8 @@ class ShmArrayWrapper:
     def __len__(self):
         return self.shape[0]
 
-    def __del__(self):
-        self.unlink()
+    #def __del__(self):
+    #    self.unlink()
 
     def unlink(self):
         unlink_shm_ref(self.shm_name)
@@ -115,8 +115,8 @@ class SharedArrayWrapper:  # do not store the attached array to avoid copy in me
     def __len__(self):
         return self.shape[0]
 
-    def __del__(self):
-        self.unlink()
+    #def __del__(self):
+    #    self.unlink()
 
     def unlink(self):
         unlink_shared_array(self.shm_name)
