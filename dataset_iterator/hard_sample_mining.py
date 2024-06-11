@@ -237,7 +237,7 @@ def compute_metrics_loop(compute_metrics_fun, gen, batch_size, n_batches, verbos
 
 
 def get_compute_metrics_fun(predict_function, metrics_function):
-    @tf.function
+    @tf.function(reduce_retracing=True)
     def compute_metrics(x, y_true):
         y_pred = predict_function(x)
         return metrics_function(y_true, y_pred)
@@ -269,6 +269,18 @@ class SimpleIterator(IndexArrayIterator):
 
     def close(self, force:bool=False):
         self.iterator.close(force)
+
+    def enqueuer_init(self):
+        try:
+            return self.iterator.enqueuer_init()
+        except AttributeError:
+            return None
+
+    def enqueuer_end(self, params):
+        try:
+            self.iterator.enequeuer_end(params)
+        except AttributeError:
+            pass
 
 def batchwise_inplace(function):
     def fun(batch):

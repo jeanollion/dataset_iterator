@@ -1,12 +1,17 @@
 from math import ceil, isclose
-import tensorflow as tf
 import numpy as np
 from .utils import ensure_size
 
 INCOMPLETE_LAST_BATCH_MODE = ["KEEP", "CONSTANT_SIZE", "REMOVE"]
-class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
+class IndexArrayIterator():
     def __init__(self, n, batch_size, shuffle, seed, incomplete_last_batch_mode=INCOMPLETE_LAST_BATCH_MODE[1], step_number:int=0):
-        super().__init__(n, batch_size, shuffle, seed)
+        self.n = n
+        self.batch_size = batch_size
+        self.seed = seed
+        self.shuffle = shuffle
+        self.batch_index = 0
+        self.total_batches_seen = 0
+        self.index_array = None
         self.allowed_indexes=np.arange(self.n)
         if isinstance(incomplete_last_batch_mode, str):
             self.incomplete_last_batch_mode = INCOMPLETE_LAST_BATCH_MODE.index(incomplete_last_batch_mode)
@@ -49,6 +54,12 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
         pass
 
     def close(self, force:bool=False):
+        pass
+
+    def enqueuer_init(self):
+        return None
+
+    def enqueuer_end(self, params):
         pass
 
     def __len__(self):
@@ -98,6 +109,12 @@ class IndexArrayIterator(tf.keras.preprocessing.image.Iterator):
 
     def enable_random_transforms(self, parameters):
         pass
+
+    def on_epoch_end(self):
+        self._set_index_array()
+
+    def reset(self):
+        self.batch_index = 0
 
     @property
     def batch_size(self):

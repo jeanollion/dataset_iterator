@@ -1,6 +1,7 @@
 import gc
 import os
 import traceback
+import dill
 from .process_utils import kill_processes, log_used_mem  # this import needs to be before any import related to concurrent futures to pathc
 from concurrent.futures import ProcessPoolExecutor, CancelledError, TimeoutError, as_completed
 import multiprocessing
@@ -94,7 +95,6 @@ class OrderedEnqueuerCF():
         """Submits request to the executor and queue the `Future` objects."""
         if self.wait_for_me_supplier is not None:
             self.wait_for_me_supplier.wait()
-        log_used_mem()
         if self.use_shm:
             task = get_item_shm
         elif self.use_shared_array:
@@ -103,10 +103,17 @@ class OrderedEnqueuerCF():
             task = get_item
         indices = list(range(len(self.iterator)))
         self._send_iterator()  # Share the initial sequence
+        mp_context_method = "fork"
+        try:
+            mp_context = multiprocessing.get_context(mp_context_method)
+        except ValueError:  # method not available
+            mp_context_method = "spawn"
+            mp_context = multiprocessing.get_context(mp_context_method)
         while True:
             if self.shuffle:
                 random.shuffle(indices)
-            executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=multiprocessing.get_context('fork'), initializer=init_pool_generator, initargs=(self.uid, self.iterator))
+
+            executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=(self.uid, self.iterator if mp_context_method == "fork" else dill.dumps(self.iterator), mp_context_method != "fork"))
             for idx, i in enumerate(indices):
                 if self.stop_signal.is_set():
                     processes = list(executor._processes.keys())
@@ -121,10 +128,6 @@ class OrderedEnqueuerCF():
             # Done with the current epoch, waiting for the final batches
             self._wait_queue(True)  # safer to wait before calling shutdown than calling directly shutdown with wait=True
 
-            futures = [executor.submit(close_iterator, self.uid) for _ in range(self.workers)]  #  close iterator in each process's memory TODO necesary ?
-            for _ in as_completed(futures, timeout=5):
-                pass
-            del futures
             processes = list(executor._processes.keys())
             executor.shutdown(wait=True, cancel_futures=True)  # wait=True often hangs because no timeout is set to Process.join().
             del executor
@@ -135,7 +138,7 @@ class OrderedEnqueuerCF():
                 return
             if self.wait_for_me_supplier is not None:
                 self.wait_for_me_supplier.wait()
-            log_used_mem()
+            #log_used_mem()
             indices = list(range(len(self.iterator)))
             self._send_iterator()  # Update the pool
 
@@ -251,6 +254,6 @@ def close_iterator(uid):  # method intended to be called by each process to free
         time.sleep(0.5)
 
 
-def init_pool_generator(uid, seq):
+def init_pool_generator(uid, seq, unpickle):
     global _SHARED_ITERATOR
-    _SHARED_ITERATOR = {uid:seq}
+    _SHARED_ITERATOR = {uid:dill.loads(seq) if unpickle else seq}

@@ -353,7 +353,7 @@ class MultiChannelIterator(IndexArrayIterator):
             self.close()
         return result
 
-    def enequeuer_end(self, params):
+    def enqueuer_end(self, params):
         if "dataset" in params:
             self.dataset = params["dataset"]
 
