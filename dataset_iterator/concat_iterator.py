@@ -105,6 +105,13 @@ class ConcatIterator(IndexArrayIterator):
     def set_allowed_indexes(self, indexes):
         raise NotImplementedError("Not supported yet")
 
+    def enqueuer_init(self):
+        return [it.enqueuer_init() for it in self.iterators]
+
+    def enqueuer_end(self, params):
+        for i, p in enumerate(params):
+            self.iterators[i].enequeuer_end(p)
+
     def close(self, force:bool=False):
         for it in self.iterators:
             it.close(force)
@@ -113,11 +120,9 @@ class ConcatIterator(IndexArrayIterator):
         for it in self.iterators:
             it._close_datasetIO()
 
-
     def _open_datasetIO(self):
         for it in self.iterators:
             it._open_datasetIO()
-
 
     def open(self):
         for it in self.iterators:
