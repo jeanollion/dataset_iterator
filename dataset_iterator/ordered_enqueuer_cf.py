@@ -9,7 +9,7 @@ import random
 import threading
 import time
 from threading import BoundedSemaphore
-from .shared_memory import to_shm, from_shm, unlink_tensor_ref
+from .shared_memory import to_shm, from_shm, unlink_tensor_ref, unlink_shared_array
 
 # adapted from https://github.com/keras-team/keras/blob/v2.13.1/keras/utils/data_utils.py#L651-L776
 # uses concurrent.futures, solves a memory leak in case of hard sample mining run as callback with regular orderedEnqueur. Option to pass tensors through shared memory
@@ -214,11 +214,14 @@ class OrderedEnqueuerCF():
             return
         self.stop_signal.set()
         self.run_thread.join(timeout)
-        if self.use_shm and self.queue is not None and len(self.queue) > 0:  # clean shm
+        if (self.use_shm or self.use_shared_array) and self.queue is not None and len(self.queue) > 0:  # clean shm
             for (future, _) in self.queue:
                 if future.exception() is None:
                     try:
-                        unlink_tensor_ref(*future.result(timeout=0.1))
+                        if self.use_shm:
+                            unlink_tensor_ref(*future.result(timeout=0.1))
+                        else:
+                            unlink_shared_array(future.result(timeout=0.1)[0])
                     except CancelledError | TimeoutError:  # save to shm is the last step, if task was not finished it is likely not saved to shm
                         pass
         self.queue = None
