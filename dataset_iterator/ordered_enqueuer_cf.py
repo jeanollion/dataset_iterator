@@ -109,29 +109,31 @@ class OrderedEnqueuerCF():
         except ValueError:  # method not available
             mp_context_method = "spawn"
             mp_context = multiprocessing.get_context(mp_context_method)
+        def get_init_pool_args(iterator):
+            return self.uid, iterator if mp_context_method == "fork" else dill.dumps(iterator), mp_context_method != "fork"
+
         while True:
             if self.shuffle:
                 random.shuffle(indices)
-
-            executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=(self.uid, self.iterator if mp_context_method == "fork" else dill.dumps(self.iterator), mp_context_method != "fork"))
+            executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
             for idx, i in enumerate(indices):
                 if self.stop_signal.is_set():
-                    processes = list(executor._processes.keys())
-                    executor.shutdown(wait=True, cancel_futures=True)
-                    del executor
-                    self.leaked_processes = kill_processes(processes, timeout=1, verbose=True)
+                    shutdown_executor(executor)
                     self._clear_iterator()
                     return
                 self.semaphore.acquire()
+                if executor._broken:
+                    print(f"Executor broken: waiting for queue: {len(self.queue)}...", flush=True)
+                    self._wait_queue(True)
+                    print(f"Executor broken: restarting...", flush=True)
+                    shutdown_executor(executor)
+                    executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
+                    print(f"Executor restarted!", flush=True)
                 future = executor.submit(task, self.uid, i)
                 self.queue.append((future, i))
             # Done with the current epoch, waiting for the final batches
             self._wait_queue(True)  # safer to wait before calling shutdown than calling directly shutdown with wait=True
-
-            processes = list(executor._processes.keys())
-            executor.shutdown(wait=True, cancel_futures=True)  # wait=True often hangs because no timeout is set to Process.join().
-            del executor
-            kill_processes(processes, timeout=3, verbose=True)
+            shutdown_executor(executor)
             self._clear_iterator()
             gc.collect()
             if self.stop_signal.is_set() or self.single_epoch:
@@ -260,3 +262,10 @@ def close_iterator(uid):  # method intended to be called by each process to free
 def init_pool_generator(uid, seq, unpickle):
     global _SHARED_ITERATOR
     _SHARED_ITERATOR = {uid:dill.loads(seq) if unpickle else seq}
+
+
+def shutdown_executor(executor):
+    processes = list(executor._processes.keys())
+    executor.shutdown(wait=True,  cancel_futures=True)  # wait=True often hangs because no timeout is set to Process.join().
+    del executor
+    kill_processes(processes, timeout=3, verbose=True)
