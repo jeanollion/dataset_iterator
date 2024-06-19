@@ -223,7 +223,7 @@ class OrderedEnqueuerCF():
                         if self.use_shm:
                             unlink_tensor_ref(*future.result(timeout=0.1))
                         else:
-                            unlink_shared_array(future.result(timeout=0.1)[0])
+                            unlink_shared_array(*future.result(timeout=0.1)[0])
                     except CancelledError | TimeoutError:  # save to shm is the last step, if task was not finished it is likely not saved to shm
                         pass
         self.queue = None

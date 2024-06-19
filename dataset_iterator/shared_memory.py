@@ -134,11 +134,12 @@ def unlink_shm_ref(shm_name):
         pass
 
 
-def unlink_shared_array(shm_name):
-    try:
-        sa.delete(shm_name)
-    except (OSError, IOError):
-        pass
+def unlink_shared_array(*shm_names):
+    for shm_name in shm_names:
+        try:
+            sa.delete(shm_name)
+        except (OSError, IOError):
+            pass
 
 
 # code from: https://muditb.medium.com/speed-up-your-keras-sequence-pipeline-f5d158359f46
