@@ -106,18 +106,21 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             #main_sequence.close()
         for i in range(len(self.simple_iterator_list)):
             # unlock temporarily the corresponding enqueuer so that it starts
+            print(f"compute metrics for iterator #{i}: start of loop", flush=True)
             if self.enqueuer is not None:
                 #self.simple_iterator_list[i].open()
                 self.enqueuer.iterator = self.simple_iterator_list[i]
                 self.wait_for_me_supplier.set()
-                time.sleep(0.1)
+                self.enqueuer.wait_queue(False)  # wait for queue to be non-empty
                 self.wait_for_me_supplier.clear()  # re-lock so that supplier stops at end of epoch (only one epoch for HSM)
                 self.wait_for_me_consumer_hsm.set()  # unlock hsm consumer
                 gen = self.generator
             else:
                 gen = self.simple_iterator_list[i]
+            print(f"compute metrics for iterator #{i} start computing", flush=True)
             compute_metrics_fun = get_compute_metrics_fun(self.predict_fun, self.metrics_fun)
             metrics = compute_metrics_loop(compute_metrics_fun, gen, self.batch_size[i], self.n_batches[i], self.verbose)
+            print(f"compute metrics for iterator #{i} metrics computed", flush=True)
             metric_list.append(metrics)
             #self.simple_iterator_list[i].close()
         if self.enqueuer is not None:

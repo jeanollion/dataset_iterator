@@ -80,7 +80,7 @@ class OrderedEnqueuerCF():
         self.run_thread.daemon = True
         self.run_thread.start()
 
-    def _wait_queue(self, empty:bool):
+    def wait_queue(self, empty:bool):
         """Wait for the queue to be empty or not empty."""
         while True:
             if (empty and len(self.queue) == 0) or (not empty and len(self.queue) > 0) or self.stop_signal.is_set():
@@ -124,7 +124,7 @@ class OrderedEnqueuerCF():
                 self.semaphore.acquire()
                 if executor._broken:
                     print(f"Executor broken: waiting for queue: {len(self.queue)}...", flush=True)
-                    self._wait_queue(True)
+                    self.wait_queue(True)
                     print(f"Executor broken: restarting...", flush=True)
                     shutdown_executor(executor)
                     executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
@@ -132,7 +132,7 @@ class OrderedEnqueuerCF():
                 future = executor.submit(task, self.uid, i)
                 self.queue.append((future, i))
             # Done with the current epoch, waiting for the final batches
-            self._wait_queue(True)  # safer to wait before calling shutdown than calling directly shutdown with wait=True
+            self.wait_queue(True)  # safer to wait before calling shutdown than calling directly shutdown with wait=True
             shutdown_executor(executor)
             self._clear_iterator()
             gc.collect()
@@ -176,10 +176,10 @@ class OrderedEnqueuerCF():
             `(inputs, targets, sample_weights)`.
         """
         while self.is_running():
-            self._wait_queue(False)
+            self.wait_queue(False)
             if wait_for_me is not None:
                 wait_for_me.wait()
-                self._wait_queue(False)
+                self.wait_queue(False)
 
             if len(self.queue) > 0:
                 future, i = self.queue[0]
