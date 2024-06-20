@@ -137,10 +137,12 @@ class OrderedEnqueuerCF():
             self._clear_iterator()
             gc.collect()
             if self.stop_signal.is_set() or self.single_epoch:
+                shutdown_executor(executor)
+                self._clear_iterator()
                 return
             if self.wait_for_me_supplier is not None:
                 self.wait_for_me_supplier.wait()
-            #log_used_mem()
+            log_used_mem()
             indices = list(range(len(self.iterator)))
             self._send_iterator()  # Update the pool
 
