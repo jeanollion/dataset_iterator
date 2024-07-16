@@ -28,6 +28,7 @@ class OrderedEnqueuerCF():
         self.use_shared_array=use_shared_array
         assert not self.use_shm and not self.use_shared_array or self.use_shm != self.use_shared_array, "either shm or shared_array or none of the 2"
         self.wait_for_me_supplier = None
+        self.wait_for_me_supplier_relock = False
         self.wait_for_me_consumer = None
         global _COUNTER
         if _COUNTER is None:
@@ -95,6 +96,9 @@ class OrderedEnqueuerCF():
         """Submits request to the executor and queue the `Future` objects."""
         if self.wait_for_me_supplier is not None:
             self.wait_for_me_supplier.wait()
+            if self.wait_for_me_supplier_relock:
+                self.wait_for_me_supplier.clear()
+                self.wait_for_me_supplier_relock=False
         if self.use_shm:
             task = get_item_shm
         elif self.use_shared_array:
@@ -142,6 +146,9 @@ class OrderedEnqueuerCF():
                 return
             if self.wait_for_me_supplier is not None:
                 self.wait_for_me_supplier.wait()
+                if self.wait_for_me_supplier_relock:
+                    self.wait_for_me_supplier.clear()
+                    self.wait_for_me_supplier_relock = False
             log_used_mem()
             indices = list(range(len(self.iterator)))
             self._send_iterator()  # Update the pool

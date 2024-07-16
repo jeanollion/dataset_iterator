@@ -110,7 +110,7 @@ class ConcatIterator(IndexArrayIterator):
 
     def enqueuer_end(self, params):
         for i, p in enumerate(params):
-            self.iterators[i].enequeuer_end(p)
+            self.iterators[i].enqueuer_end(p)
 
     def close(self, force:bool=False):
         for it in self.iterators:

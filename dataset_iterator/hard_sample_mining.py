@@ -110,9 +110,8 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             if self.enqueuer is not None:
                 #self.simple_iterator_list[i].open()
                 self.enqueuer.iterator = self.simple_iterator_list[i]
+                self.enqueuer.wait_for_me_supplier_relock = True # re-lock so that supplier stops at end of epoch (only one epoch for HSM)
                 self.wait_for_me_supplier.set()
-                self.enqueuer.wait_queue(False)  # wait for queue to be non-empty
-                self.wait_for_me_supplier.clear()  # re-lock so that supplier stops at end of epoch (only one epoch for HSM)
                 self.wait_for_me_consumer_hsm.set()  # unlock hsm consumer
                 gen = self.generator
             else:
