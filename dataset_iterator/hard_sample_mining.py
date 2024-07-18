@@ -83,7 +83,7 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             self.n_metrics = self.proba_per_metric.shape[0] if len(self.proba_per_metric.shape) == 2 else 1
             if first and self.n_metrics > self.period:
                 warnings.warn(f"Hard sample mining period = {self.period} should be greater than metric number = {self.n_metrics}")
-            print("Hard sample mining metrics computed", flush=True)
+            #print("Hard sample mining metrics computed", flush=True)
         if self.proba_per_metric is not None and not self.wait_for_me_supplier.is_set():
             if len(self.proba_per_metric.shape) == 2:
                 self.metric_idx = (self.metric_idx + 1) % self.n_metrics
@@ -106,7 +106,7 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             #main_sequence.close()
         for i in range(len(self.simple_iterator_list)):
             # unlock temporarily the corresponding enqueuer so that it starts
-            print(f"compute metrics for iterator #{i}: start of loop", flush=True)
+            #print(f"compute metrics for iterator #{i}: start of loop", flush=True)
             if self.enqueuer is not None:
                 #self.simple_iterator_list[i].open()
                 self.enqueuer.iterator = self.simple_iterator_list[i]
@@ -116,10 +116,10 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
                 gen = self.generator
             else:
                 gen = self.simple_iterator_list[i]
-            print(f"compute metrics for iterator #{i} start computing", flush=True)
+            #print(f"compute metrics for iterator #{i} start computing", flush=True)
             compute_metrics_fun = get_compute_metrics_fun(self.predict_fun, self.metrics_fun)
             metrics = compute_metrics_loop(compute_metrics_fun, gen, self.batch_size[i], self.n_batches[i], self.verbose)
-            print(f"compute metrics for iterator #{i} metrics computed", flush=True)
+            #print(f"compute metrics for iterator #{i} metrics computed", flush=True)
             metric_list.append(metrics)
             #self.simple_iterator_list[i].close()
         if self.enqueuer is not None:

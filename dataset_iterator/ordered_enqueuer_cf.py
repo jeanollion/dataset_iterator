@@ -2,7 +2,7 @@ import gc
 import os
 import traceback
 import dill
-from .process_utils import kill_processes, log_used_mem  # this import needs to be before any import related to concurrent futures to pathc
+from .process_utils import kill_processes, log_used_mem  # this import needs to be before any import related to concurrent futures to patch
 from concurrent.futures import ProcessPoolExecutor, CancelledError, TimeoutError, as_completed
 import multiprocessing
 import random
@@ -149,7 +149,7 @@ class OrderedEnqueuerCF():
                 if self.wait_for_me_supplier_relock:
                     self.wait_for_me_supplier.clear()
                     self.wait_for_me_supplier_relock = False
-            log_used_mem()
+            #log_used_mem()
             indices = list(range(len(self.iterator)))
             self._send_iterator()  # Update the pool
 
