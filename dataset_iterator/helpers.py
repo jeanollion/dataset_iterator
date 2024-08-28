@@ -203,7 +203,7 @@ def get_modal_value(histogram, bins, return_bin = False):
         return bin_centers[bin]
 
 
-def get_mean_sd(dataset, channel_keyword:str, group_keyword:str=None, per_channel:bool=True): # TODO TEST
+def get_mean_sd(dataset, channel_keyword:str, group_keyword:str=None, per_channel:bool=True, return_count:bool=False):
   params = dict(dataset=dataset,
               channel_keywords=[channel_keyword],
               group_keyword=group_keyword,
@@ -232,7 +232,7 @@ def get_mean_sd(dataset, channel_keyword:str, group_keyword:str=None, per_channe
   axis = 0 if per_channel else (0, 1)
   mean_ = np.sum(sum_im, axis=axis)
   sd_ = np.sqrt(np.sum(sum2_im, axis=axis) - mean_ * mean_)
-  return mean_, sd_
+  return (mean_, sd_, size) if return_count else (mean_, sd_)
 
 
 def distribution_summary(dataset, channel_keyword:str, bins, group_keyword:str=None, percentiles = [5, 50, 95]):
