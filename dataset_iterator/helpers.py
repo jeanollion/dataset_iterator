@@ -244,3 +244,14 @@ def distribution_summary(dataset, channel_keyword:str, bins, group_keyword:str=N
     vmin, vmax = get_min_and_max(dataset, channel_keyword, group_keyword)
     print("range:[{:.5g}; {:.5g}] mode: {:.5g} mean: {}, sd: {}, percentiles: {}".format(vmin, vmax, mode,  "; ".join("{:.5g}".format(m) for m in mean), "; ".join("{:.5g}".format(s) for s in sd), "; ".join("{}%:{:.4g}".format(k,v) for k,v in percentiles.items())))
     return vmin, vmax, mode, mean, sd, percentiles
+
+def get_channel_number(dataset, channel_keyword:str, group_keyword:str=None, n_spatial_dims=2):
+    iterator = MultiChannelIterator(dataset=dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=[0], output_channels=[], batch_size=1, incomplete_last_batch_mode=0)
+    shape = iterator.channel_image_shapes[0]
+    iterator.close()
+    if len(shape) == n_spatial_dims:
+        return 1
+    elif len(shape) == n_spatial_dims + 1:
+        return shape[-1]
+    else:
+        raise ValueError(f"Dataset shape is {shape} but {n_spatial_dims} spatial dimensions are specified")

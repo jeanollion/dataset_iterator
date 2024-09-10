@@ -94,7 +94,7 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
         return tiles
 
 def extract_tile_random_zoom_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=True, augmentation_rotate=True, zoom_range=[0.9, 1.1], aspect_ratio_range=[0.9, 1.1], zoom_probability:float=0.5, interpolation_order=1, random_channel_jitter_shape=None):
-    if (is_null(zoom_range, 1) or is_null(zoom_range, 0)) and is_null(random_channel_jitter_shape, 0):
+    if (is_null(zoom_range, 1) or is_null(zoom_range, 0) or zoom_probability==0) and is_null(random_channel_jitter_shape, 0):
         return extract_tile_function(tile_shape, perform_augmentation=perform_augmentation, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, augmentation_rotate=augmentation_rotate)
     def func(batch, is_mask:bool, allow_random:bool=True):
         if isinstance(batch, (list, tuple)):

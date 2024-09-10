@@ -86,6 +86,15 @@ class StopOnLR(Callback):
             print(f"Learning rate {lr} <= {self.min_lr} : training will be stopped", flush=True)
             self.model.stop_training = True
 
+class LogLRCallback(Callback):
+    def __init__(self):
+        super().__init__()
+
+    def on_train_batch_end(self, batch, logs=None):
+        if logs is not None:
+            logs['lr'] = backend.get_value(self.model.optimizer.lr)
+
+
 class EpsilonCosineDecayCallback(Callback):
     """Reduce optimizer epsilon parameter.
     Args:
