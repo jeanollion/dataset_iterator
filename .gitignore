@@ -3,3 +3,4 @@ test.py
 __pycache__
 dataset_iterator.egg-info/*
 *.tar.gz
+.idea/
