@@ -258,14 +258,10 @@ class SimpleIterator(IndexArrayIterator):
 
     def _get_batches_of_transformed_samples(self, index_array):
         batch = self.iterator._get_batches_of_transformed_samples(index_array)
-        if isinstance(batch, (list, tuple)):
-            x, y = batch
-            batch = x, y
+        if len(batch)==1 and self.input_scaling_function is not None:
+            return self.input_scaling_function(batch[0]),
         else:
-            if self.input_scaling_function is not None:
-                x = self.input_scaling_function(batch)
-            batch = x
-        return batch
+            return batch
 
     def open(self):
         self.iterator.open()

@@ -95,7 +95,7 @@ class ConcatIterator(IndexArrayIterator):
             outputs = [b[1] for b in batches]
             return concat_numpy_arrays(inputs), concat_numpy_arrays(outputs)
         else:
-            return concat_numpy_arrays(batches)
+            return concat_numpy_arrays(batches),
 
     def _get_it_idx(self, index_array): # !! modifies index_array
         it_idx = np.searchsorted(self.it_cumlen, index_array, side='right')

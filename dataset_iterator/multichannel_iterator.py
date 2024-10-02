@@ -442,9 +442,9 @@ class MultiChannelIterator(IndexArrayIterator):
                 if not isinstance(input, list):
                     input = [input]
                 input.append(batch_by_channel[-1])
-                return input
+                return (input,)
             else:
-                return input
+                return (input,)
         else:
             input = self._get_input_batch(batch_by_channel, ref_chan_idx, aug_param_array)
             output = self._get_output_batch(batch_by_channel, ref_chan_idx, aug_param_array)
