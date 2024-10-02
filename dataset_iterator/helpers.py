@@ -41,7 +41,7 @@ def open_channel(dataset, channel_keyword:str, group_keyword:str=None, size=None
     iterator = MultiChannelIterator(dataset=dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=[0], output_channels=[], batch_size=1 if size is None else size, incomplete_last_batch_mode=0, shuffle=False)
     if size is None:
         iterator.batch_size=len(iterator)
-    data = iterator[0]
+    data, = iterator[0]
     if not isinstance(dataset, DatasetIO):
         iterator.close()
     return data
@@ -51,7 +51,7 @@ def get_min_and_max(dataset, channel_keyword:str, group_keyword:str=None, batch_
     vmin = float('inf')
     vmax = float('-inf')
     for i in range(len(iterator)):
-        batch = iterator[i]
+        batch, = iterator[i]
         vmin = min(batch.min(), vmin)
         vmax = max(batch.max(), vmax)
     if not isinstance(dataset, DatasetIO):
@@ -124,7 +124,7 @@ def get_histogram(dataset, channel_keyword:str, bins, bin_size=None, sum_to_one:
         vmin = bins[0]
     histogram = None
     for i in range(len(iterator)):
-        batch = iterator[i]
+        batch, = iterator[i]
         histo, _ = np.histogram(batch, bins)
         if histogram is None:
             histogram = histo
@@ -214,13 +214,13 @@ def get_mean_sd(dataset, channel_keyword:str, group_keyword:str=None, per_channe
               incomplete_last_batch_mode=0,
               shuffle=False)
   it = MultiChannelIterator(**params)
-  shape = it[0].shape
+  shape = it[0][0].shape
   ds_size = len(it)
   n_channels = shape[-1]
   sum_im = np.zeros(shape=(ds_size, n_channels), dtype=np.float64)
   sum2_im = np.zeros(shape=(ds_size, n_channels), dtype=np.float64)
   for i in range(ds_size):
-    image = it[i]
+    image, = it[i]
     for c in range(n_channels):
       sum_im[i,c] = np.sum(image[...,c])
       sum2_im[i,c] = np.sum(image[...,c]*image[...,c])
