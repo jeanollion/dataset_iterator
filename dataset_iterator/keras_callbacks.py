@@ -9,6 +9,7 @@ else:
 import csv
 import os
 import time
+import numpy as np
 
 class SafeModelCheckpoint(ModelCheckpoint):
     def __init__(self,
@@ -22,6 +23,12 @@ class SafeModelCheckpoint(ModelCheckpoint):
         self._alternative_path = False
 
     def _save_model(self, epoch, batch, logs):
+        if logs is not None:
+            loss = logs.get("loss")
+            if loss is not None:
+                if np.isnan(loss) or np.isinf(loss):
+                    print(f"Invalid loss, skipping checkpoint.")
+                    return
         if isinstance(self.save_freq, int) or self.epochs_since_last_save >= self.period:
             for i in range(self.n_retry):
                 if i>1:
