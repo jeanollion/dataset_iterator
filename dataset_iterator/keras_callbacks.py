@@ -1,6 +1,11 @@
 from math import cos, pi
-from tensorflow.keras.callbacks import Callback, ModelCheckpoint, ReduceLROnPlateau
-from tensorflow.keras import backend
+from .utils import is_keras_3
+if not is_keras_3():
+    from tensorflow.keras.callbacks import Callback, ModelCheckpoint, ReduceLROnPlateau
+    from tensorflow.keras import backend
+else:
+    from keras.callbacks import Callback, ModelCheckpoint, ReduceLROnPlateau
+    from keras import backend
 import csv
 import os
 import time

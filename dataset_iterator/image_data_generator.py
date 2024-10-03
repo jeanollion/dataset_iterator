@@ -1,4 +1,8 @@
-import tensorflow as tf
+from .utils import is_keras_3
+if not is_keras_3():
+    from tensorflow.keras.preprocessing.image import ImageDataGenerator
+else:
+    from keras.src.legacy.preprocessing.image import ImageDataGenerator
 import numpy as np
 from random import uniform, random, getrandbits
 from .utils import is_list, ensure_multiplicity, get_tf_version
@@ -357,7 +361,7 @@ class IlluminationImageGenerator():
     def standardize(self, img):
         return img
 
-class KerasImageDataGenerator(tf.keras.preprocessing.image.ImageDataGenerator):
+class KerasImageDataGenerator(ImageDataGenerator):
     def __init__(self, **kwargs):
         if "interpolation_order" in kwargs: # interpolation_order was introduced at version 2.9.0
             tf_version = get_tf_version()

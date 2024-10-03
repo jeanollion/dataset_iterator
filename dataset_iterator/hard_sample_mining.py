@@ -4,12 +4,19 @@ import warnings
 import os
 import numpy as np
 import tensorflow as tf
+from .utils import is_keras_3
+if not is_keras_3():
+    from tensorflow.keras.callbacks import Callback
+    from tensorflow.keras.utils import Progbar
+else:
+    from keras.callbacks import Callback
+    from keras.utils import Progbar
 from .index_array_iterator import IndexArrayIterator, INCOMPLETE_LAST_BATCH_MODE
 from .concat_iterator import ConcatIterator
 from dataset_iterator.ordered_enqueuer_cf import OrderedEnqueuerCF
 import threading
 
-class HardSampleMiningCallback(tf.keras.callbacks.Callback):
+class HardSampleMiningCallback(Callback):
     def __init__(self, iterator, target_iterator, predict_fun, metrics_fun, period:int=10, start_epoch:int=0, start_from_epoch:int=0, enrich_factor:float=10., quantile_max:float=0.99, quantile_min:float=None, disable_channel_postprocessing:bool=False, verbose:int=1):
         super().__init__()
         self.period = period
@@ -221,7 +228,7 @@ def compute_metrics(iterator, predict_function, metrics_function, disable_augmen
 
 def compute_metrics_loop(compute_metrics_fun, gen, batch_size, n_batches, verbose):
     if verbose >= 1:
-        progbar = tf.keras.utils.Progbar(n_batches)
+        progbar = Progbar(n_batches)
     n_tiles = None
     metrics = []
     for i in range(n_batches):

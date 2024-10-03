@@ -1,3 +1,4 @@
+import os
 import tensorflow as tf
 import numpy as np
 from math import ceil
@@ -6,6 +7,10 @@ from math import ceil
 def get_tf_version():
     return tuple(map(int, (tf.__version__.split("."))))
 
+def is_keras_3():
+    if get_tf_version() < (2, 16, 0):
+        return False
+    return not (os.environ["TF_USE_LEGACY_KERAS"] == "1" or os.environ["TF_USE_LEGACY_KERAS"] == 1 or os.environ["TF_USE_LEGACY_KERAS"] == True or os.environ["TF_USE_LEGACY_KERAS"] == "True")
 
 def replace_last(s, old, new):
     # return (s[::-1].replace(old[::-1], new[::-1], 1))[::-1]
