@@ -20,7 +20,7 @@ _COUNTER = None
 
 
 class OrderedEnqueuerCF():
-    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=True):
+    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=True, name="enqueuer"):
         self.iterator = iterator
         self.shuffle = shuffle
         self.single_epoch = single_epoch
@@ -30,6 +30,7 @@ class OrderedEnqueuerCF():
         self.wait_for_me_supplier = None
         self.wait_for_me_supplier_relock = False
         self.wait_for_me_consumer = None
+        self.name=name
         global _COUNTER
         if _COUNTER is None:
             try:
