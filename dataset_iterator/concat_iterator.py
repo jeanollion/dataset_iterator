@@ -95,6 +95,7 @@ class ConcatIterator(IndexArrayIterator):
             outputs = [b[1] for b in batches]
             return concat_numpy_arrays(inputs), concat_numpy_arrays(outputs)
         else:
+            batches = [b[0] for b in batches] # single output is a 1-tuple
             return concat_numpy_arrays(batches),
 
     def _get_it_idx(self, index_array): # !! modifies index_array

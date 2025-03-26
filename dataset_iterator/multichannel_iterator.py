@@ -441,7 +441,7 @@ class MultiChannelIterator(IndexArrayIterator):
                     input = list(input)
                 if not isinstance(input, list):
                     input = [input]
-                input.append(batch_by_channel[-1])
+                input.append(batch_by_channel["image_idx"])
                 return (input,)
             else:
                 return (input,)
@@ -467,7 +467,7 @@ class MultiChannelIterator(IndexArrayIterator):
                     input = list(input)
                 if not isinstance(input, list):
                     input = [input]
-                input.append(batch_by_channel[-1])
+                input.append(batch_by_channel["image_idx"])
             output = _apply_multiplicity(output, self.output_multiplicity) # removes None batches
             return input, output
 
@@ -484,7 +484,7 @@ class MultiChannelIterator(IndexArrayIterator):
         for chan_idx in channels:
             batch_by_channel[chan_idx] = self._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, channels[0], aug_param_array, perform_augmentation=perform_augmentation, **kwargs)
             if chan_idx == channels[0] and self.return_image_index:
-                batch_by_channel[-1] = batch_by_channel[chan_idx][1] # image index
+                batch_by_channel["image_idx"] = batch_by_channel[chan_idx][1] # image index
                 batch_by_channel[chan_idx] = batch_by_channel[chan_idx][0] # batch
         if perform_elasticdeform or perform_tiling: ## elastic deform do not support float16 type -> temporarily convert to float32
             channels = [c for c in batch_by_channel.keys() if not isinstance(c, str) and c>=0]
@@ -573,7 +573,7 @@ class MultiChannelIterator(IndexArrayIterator):
             for i, chan_idx in enumerate(channels):
                 batch_by_channel[chan_idx] = batches[i]
             if self.return_image_index and n_tiles>1:
-                batch_by_channel[-1] = np.tile(batch_by_channel[-1], (n_tiles, 1)) # transmit tiling to image index
+                batch_by_channel["image_idx"] = np.tile(batch_by_channel["image_idx"], (n_tiles, 1)) # transmit tiling to image index
 
     def _get_input_batch(self, batch_by_channel, ref_chan_idx, aug_param_array):
         if len(self.input_channels)==1:
