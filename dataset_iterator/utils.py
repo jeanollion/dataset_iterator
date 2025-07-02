@@ -69,6 +69,8 @@ def ensure_multiplicity(n, object):
 def is_list(l):
     return isinstance(l, (list, tuple, np.ndarray))
 
+def is_dict(l):
+    return isinstance(l, dict)
 
 def flatten_list(l):
     flat_list = []

@@ -2,7 +2,7 @@ from .datasetIO import DatasetIO
 import threading
 import os
 from os import listdir
-from os.path import isfile, join
+from os.path import isfile, join, basename
 from tensorflow.keras.utils import img_to_array
 from math import log10
 import numpy as np
@@ -14,6 +14,10 @@ try:
     from tifffile import imwrite as tiff_write
 except ImportError:
     tiff_write = None
+try:
+    import imageio as imio
+except ImportError:
+    imio = None
 
 if pil_image is not None:
     _PIL_INTERPOLATION_METHODS = {
@@ -27,6 +31,9 @@ if pil_image is not None:
         _PIL_INTERPOLATION_METHODS['box'] = pil_image.BOX
     if hasattr(pil_image, 'LANCZOS'):
         _PIL_INTERPOLATION_METHODS['lanczos'] = pil_image.LANCZOS
+
+SUPPORTED_IMAGE_FORMATS = ('.png', '.tif', '.tiff')
+SUPPORTED_IMAGEIO_FORMATS = ('.mov',)
 
 class MultipleFileIO(DatasetIO):
     """Allows to iterate an image dataset that contains several image files compatible with PILLOW
@@ -98,7 +105,7 @@ class MultipleFileIO(DatasetIO):
     data_type
 
     """
-    def __init__(self, directory, one_image_per_file, target_shape=None, channel_map_interpolation=None, data_format='channels_last', data_type='float32', supported_image_fun = lambda f : f.lower().endswith(('.png', '.tif', '.tiff')), write_format='tif'):
+    def __init__(self, directory, one_image_per_file, target_shape=None, channel_map_interpolation=None, data_format='channels_last', data_type='float32', supported_image_fun = lambda f : f.lower().endswith(SUPPORTED_IMAGE_FORMATS), supported_imageio_fun = lambda f : f.lower().endswith(SUPPORTED_IMAGEIO_FORMATS), write_format='tif'):
         super().__init__()
         self.path = directory
         if pil_image is None:
@@ -108,6 +115,7 @@ class MultipleFileIO(DatasetIO):
         self.one_image_per_file = one_image_per_file
         self.image_shape = target_shape
         self.supported_image_fun = supported_image_fun
+        self.supported_imageio_fun=supported_imageio_fun
         self.channel_map_interpolation = {c:get_interpolation_function(target_shape, i) for c,i in channel_map_interpolation.items()} if channel_map_interpolation is not None else None
         self.channel_map_nn_interpolation = {c:i=='nearest' for c,i in channel_map_interpolation.items() } if channel_map_interpolation is not None else None # flag channels that have nearest neighbor interpolation to avoid converting them to float
         self.data_format = data_format
@@ -131,6 +139,7 @@ class MultipleFileIO(DatasetIO):
             for d in filtered_dirs:
                 all_imgs.extend(self.get_images(d, name = channel_keyword))
                 all_imgs.extend(self.get_images(d, name = channel_keyword, npy=True))
+                all_imgs.extend(self.get_images(d, name=channel_keyword, imageio=True))
             return all_imgs
 
     def __getitem__(self, path):
@@ -208,11 +217,13 @@ class MultipleFileIO(DatasetIO):
         else: # fallback to numpy
             np.save(path, data, allow_pickle=True)
 
-    def get_images(self, path, name = None, npy=False):
+    def get_images(self, path, name = None, npy=False, imageio=False):
         if npy:
-            return [join(path, f) for f in listdir(path) if f.lower().endswith('.npy') and (name is None or name in f)]
+            return sorted([join(path, f) for f in listdir(path) if f.lower().endswith('.npy') and (name is None or name in f)])
+        elif imageio:
+            return sorted([join(path, f) for f in listdir(path) if self.supported_imageio_fun(f.lower()) and (name is None or name in f)])
         else:
-            return [join(path, f) for f in listdir(path) if self.supported_image_fun(f.lower()) and (name is None or name in f)]
+            return sorted([join(path, f) for f in listdir(path) if self.supported_image_fun(f.lower()) and (name is None or name in f)])
 
 def fix_keyword(keyword):
     if keyword is None:
@@ -259,13 +270,31 @@ class ImageWrapper():
         self.path = path
         self.mfileIO=mfileIO
         self.npy = path.endswith('.npy')
+        self.imageio = not self.npy and mfileIO.supported_imageio_fun(basename(path).lower())
         if not mfileIO.one_image_per_file or mfileIO.image_shape is None: # get shape from image file
             if self.npy:
                 img = np.load(self.path, mmap_mode='r')
                 self.shape = img.shape
+                self.dtype= img.dtype
+            elif self.imageio:
+                self.imageio_reader = imio.get_reader(path, 'ffmpeg')
+                first_frame = self.imageio_reader.get_data(0)
+                meta_data = self.imageio_reader.get_meta_data()
+                num_frames = meta_data['nframes']
+                if np.isinf(num_frames) or np.isnan(num_frames):
+                    num_frames = meta_data['duration'] * meta_data['fps']
+                    if np.isinf(num_frames) or np.isnan(num_frames):
+                        num_frames = get_number_of_frames(path)
+                    else:
+                        num_frames = int(num_frames)
+                else:
+                    num_frames = int(num_frames)
+                self.shape = (num_frames,) + tuple(first_frame.shape)
+                self.dtype = first_frame.dtype
             else:
                 self.image = pil_image.open(self.path)
                 self.shape = (self.image.n_frames,) + (mfileIO.image_shape if mfileIO.image_shape is not None else self.image.size[::-1])
+                self.dtype = get_pil_image_dtype(self.image) # not tested
         else:
             self.shape = (1,) + mfileIO.image_shape
         self.image = None
@@ -273,25 +302,42 @@ class ImageWrapper():
         if self.interpolator is None and self.mfileIO.crop_function is not None:
             self.interpolator = self.mfileIO.crop_function
         self.convert = not self.mfileIO.channel_map_nn_interpolation[channel_keyword] if self.mfileIO.channel_map_nn_interpolation is not None else False
-        if self.npy:
+        if self.npy or self.imageio:
             assert self.interpolator is None, "interpolation not supported (yet) with npy files"
         self.__lock__ = None if self.npy else threading.Lock()
 
     def __getitem__(self, idx):
         if self.npy:
             return np.load(self.path, mmap_mode='r')[idx]
+        elif self.imageio:
+            if isinstance(idx, slice):
+                return np.stack([self.imageio_reader.get_data(i) for i in self._slice_to_indices(idx)], 0)
+            else:
+                return self.imageio_reader.get_data(idx)
         else:
             with self.__lock__:
                 if self.image is None:
                     self.image = pil_image.open(self.path)
-                assert idx<self.shape[0], "invalid index"
-                self.image.seek(idx)
-                if self.interpolator is not None:
-                    pil_img = self.image.convert("F") if self.convert else self.image
-                    pil_img = self.interpolator(pil_img)
+                if isinstance(idx, slice):
+                    return np.stack([self._open_pil_image(i) for i in self._slice_to_indices(idx)], 0)
                 else:
-                    pil_img = self.image
-                return img_to_array(pil_img, data_format=self.mfileIO.data_format, dtype=self.mfileIO.dtype)
+                    assert idx<self.shape[0] and idx>=0, "invalid index"
+                    return self._open_pil_image(idx)
+
+    def _slice_to_indices(self, s:slice):
+        start = s.start or 0
+        stop = s.stop or self.shape[0]
+        step = s.step or 1
+        return list(range(start, stop, step))
+
+    def _open_pil_image(self, idx:int):
+        self.image.seek(idx)
+        if self.interpolator is not None:
+            pil_img = self.image.convert("F") if self.convert else self.image
+            pil_img = self.interpolator(pil_img)
+        else:
+            pil_img = self.image
+        return img_to_array(pil_img, data_format=self.mfileIO.data_format, dtype=self.mfileIO.dtype)
 
     def __len__(self):
         return self.shape[0]
@@ -309,24 +355,42 @@ class ImageListWrapper():
                 raise ValueError("No supported image found in dir: {}".format(directory))
         else:
             self.npy = False
+        self.interpolator = self.mfileIO.channel_map_interpolation[
+            channel_keyword] if self.mfileIO.channel_map_interpolation is not None else None
+        if self.interpolator is None and self.mfileIO.crop_function is not None:
+            self.interpolator = self.mfileIO.crop_function
+        self.convert = not self.mfileIO.channel_map_nn_interpolation[
+            channel_keyword] if self.mfileIO.channel_map_nn_interpolation is not None else False
+
         if mfileIO.image_shape is None:
             if self.npy:
                 img = np.load(self.image_paths[0], mmap_mode='r')
                 self.shape = (len(self.image_paths),) + img.shape
+                self.dtype = img.dtype
             else:
                 pil_img = pil_image.open(self.image_paths[0])
-                self.shape = (len(self.image_paths),) + pil_img.size[::-1]
+                nchan = get_pil_image_nchan(pil_img)
+                self.dtype = self.mfileIO.dtype
+                if nchan is None:
+                    x = np.asarray(pil_img, dtype=self.mfileIO.dtype)
+                    nchan = x.shape[-1]
+                self.shape = (len(self.image_paths),) + pil_img.size[::-1] + (nchan,)
         else:
             self.shape = (len(self.image_paths),) + mfileIO.image_shape
-        self.interpolator = self.mfileIO.channel_map_interpolation[channel_keyword] if self.mfileIO.channel_map_interpolation is not None else None
-        if self.interpolator is None and self.mfileIO.crop_function is not None:
-            self.interpolator = self.mfileIO.crop_function
-        self.convert = not self.mfileIO.channel_map_nn_interpolation[channel_keyword] if self.mfileIO.channel_map_nn_interpolation is not None else False
 
         if self.npy:
             assert self.interpolator is None, "interpolation not supported (yet) with npy files"
 
+    def _slice_to_indices(self, s:slice):
+        start = s.start or 0
+        stop = s.stop or self.shape[0]
+        step = s.step or 1
+        return list(range(start, stop, step))
+
     def __getitem__(self, idx):
+        if isinstance(idx, slice):
+            idxs = self._slice_to_indices(idx)
+            return np.stack([self[i] for i in idxs], 0)
         if self.npy:
             return np.load(self.image_paths[idx], mmap_mode='r')
         else:
@@ -339,3 +403,39 @@ class ImageListWrapper():
 
     def __len__(self):
         return len(self.image_paths)
+
+def get_number_of_frames(video_path):
+    import subprocess
+    cmd = [
+        'ffprobe',
+        '-v', 'error',
+        '-select_streams', 'v:0',
+        '-count_packets',
+        '-show_entries', 'stream=nb_read_packets',
+        '-of', 'csv=p=0',
+        video_path
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return int(result.stdout.strip())
+
+def get_pil_image_dtype(image:pil_image.Image):
+    mode = image.mode
+    if mode in ['1', 'L', 'P', 'RGB', 'RGBA', 'CMYK']:
+        return 'uint8'
+    elif mode == 'I':
+        return 'int32'
+    elif mode == 'F':
+        return 'float32'
+    else:
+        return None
+
+def get_pil_image_nchan(image:pil_image.Image):
+    mode = image.mode
+    if mode == '1' or mode == 'L' or mode == 'P' or mode == 'I' or mode == 'F':
+        return 1
+    elif mode == 'RGB':
+        return 3
+    elif mode == 'RGBA' or mode == 'CMYK':
+        return 4
+    else:
+        return None
