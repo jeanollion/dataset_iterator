@@ -275,7 +275,8 @@ def init_pool_generator(uid, seq, unpickle):
 
 
 def shutdown_executor(executor):
-    processes = list(executor._processes.keys())
+    processes = list(executor._processes.keys()) if executor._processes is not None else None
     executor.shutdown(wait=True,  cancel_futures=True)  # wait=True often hangs because no timeout is set to Process.join().
     del executor
-    kill_processes(processes, timeout=3, verbose=True)
+    if processes is not None:
+        kill_processes(processes, timeout=3, verbose=True)

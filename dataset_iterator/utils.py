@@ -5,7 +5,10 @@ from math import ceil
 
 
 def get_tf_version():
-    return tuple(map(int, (tf.__version__.split("."))))
+    version = tf.__version__
+    if "-rc" in version:
+        version = version.split("-rc")[0]
+    return tuple(map(int, (version.split("."))))
 
 def is_keras_3():
     if get_tf_version() < (2, 16, 0):
