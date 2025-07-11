@@ -42,6 +42,10 @@ class MultiChannelIterator(IndexArrayIterator):
         should be None or of same length as output_channels.
         For each output channel, if not None, the corresponding function is applied to the output batch of same index, and concatenated along the last axis
         Applied before output_postprocessing_functions if any and after channels_postprocessing_function.
+    input_postprocessing_functions : list of callable
+        should be None or of same length as input_channels.
+        For each output channel, if not None, the corresponding function is applied to the input batch of same index.
+        Applied after channels_postprocessing_function.
     output_postprocessing_functions : list of callable
         should be None or of same length as output_channels.
         For each output channel, if not None, the corresponding function is applied to the output batch of same index.
@@ -138,6 +142,7 @@ class MultiChannelIterator(IndexArrayIterator):
     output_channels
     image_data_generators
     weight_map_functions
+    input_postprocessing_functions
     output_postprocessing_functions
     channels_postprocessing_function
     extract_tile_function
@@ -151,6 +156,7 @@ class MultiChannelIterator(IndexArrayIterator):
                  mask_channels=[],
                  array_keywords:list=[],
                  weight_map_functions=None,
+                 input_postprocessing_functions=None,
                  output_postprocessing_functions=None,
                  channels_postprocessing_function=None,
                  extract_tile_function=None,
@@ -184,7 +190,7 @@ class MultiChannelIterator(IndexArrayIterator):
         if group_proportion is not None:
             assert group_keyword is not None and isinstance(group_keyword, (tuple, list)) and isinstance(group_proportion, (tuple, list)) and len(group_proportion)==len(group_keyword), "when group_proportion is not None, group_keyword should be a list/tuple group_proportion should be of same length as group_keyword"
         self.channel_keywords=channel_keywords
-        self.array_keywords = array_keywords
+        self.array_keywords = array_keywords if array_keywords is not None else []
         self.dtype = dtype
         self.convert_masks_to_dtype=convert_masks_to_dtype
         self.perform_data_augmentation=perform_data_augmentation
@@ -210,8 +216,6 @@ class MultiChannelIterator(IndexArrayIterator):
             output_channels = []
         if input_channels is None or len(input_channels)==0:
             raise ValueError("No input channels set")
-        if (len(input_channels) != len(set(input_channels))):
-            raise ValueError("Duplicated channels in input_channels")
         self.input_channels=input_channels
         self.output_channels=output_channels # duplicated output channels allowed because can be modified by a postprocessing function
         if image_data_generators!=None and len(channel_keywords)!=len(image_data_generators):
@@ -220,8 +224,12 @@ class MultiChannelIterator(IndexArrayIterator):
         if weight_map_functions is not None:
             assert len(weight_map_functions)==len(output_channels), "weight map should have same length as output channels"
         self.weight_map_functions=weight_map_functions
+        if input_postprocessing_functions is not None:
+            assert len(input_postprocessing_functions) == len(input_channels), "input postprocessing functions should have same length as input channels"
+        self.input_postprocessing_functions = input_postprocessing_functions
+
         if output_postprocessing_functions is not None:
-            assert len(output_postprocessing_functions)==len(output_postprocessing_functions), "output postprocessing functions should have same length as output channels"
+            assert len(output_postprocessing_functions)==len(output_channels), "output postprocessing functions should have same length as output channels"
         self.output_postprocessing_functions = output_postprocessing_functions
         self.channels_postprocessing_function=channels_postprocessing_function
         self.extract_tile_function=extract_tile_function
@@ -243,7 +251,7 @@ class MultiChannelIterator(IndexArrayIterator):
                                 raise ValueError("Channel {} is set as singleton but one dataset has more that one image".format(c))
                         elif indexes[ds_idx] != len(ds):
                             raise ValueError('Channel {}({}) has at least one dataset with number of elements that differ from Channel 0'.format(c, channel_keywords[c]))
-        if len(array_keywords)>1: # check that all array ds have compatible length
+        if len(array_keywords)>0: # check that all array ds have compatible length
             for c, ds_l in enumerate(self.ads_array):
                 if self.array_keywords[c] is not None:
                     if len(self.ds_array[0])!=len(ds_l):
@@ -503,15 +511,16 @@ class MultiChannelIterator(IndexArrayIterator):
             for c in converted_from_float16:
                 batch_by_channel[c] = batch_by_channel[c].astype('float16')
 
-        if self.channels_postprocessing_function is not None:
-            self.channels_postprocessing_function(batch_by_channel)
-
         arrays = dict()
         batch_by_channel["arrays"] = arrays
-        if len(self.array_keywords is not None and self.array_keywords)>0:
+        if len(self.array_keywords)>0:
             for c, n in enumerate(self.array_keywords):
                 if n is not None:
                     arrays[c] = self._read_image_batch(index_ds, index_array, c, channels[0], aug_param_array, is_array=True, **kwargs)[0]
+
+        if self.channels_postprocessing_function is not None:
+            self.channels_postprocessing_function(batch_by_channel)
+
         return batch_by_channel, aug_param_array, channels[0]
 
     def _apply_elasticdeform(self, batch_by_channel):
@@ -575,11 +584,16 @@ class MultiChannelIterator(IndexArrayIterator):
             if self.return_image_index and n_tiles>1:
                 batch_by_channel["image_idx"] = np.tile(batch_by_channel["image_idx"], (n_tiles, 1)) # transmit tiling to image index
 
+    def _apply_input_post_processing(self, batch, input_chan_idx):
+        if self.input_postprocessing_functions is None or self.input_postprocessing_functions[input_chan_idx] is None:
+            return batch
+        return self.input_postprocessing_functions[input_chan_idx](batch)
+
     def _get_input_batch(self, batch_by_channel, ref_chan_idx, aug_param_array):
         if len(self.input_channels)==1:
-            return batch_by_channel[self.input_channels[0]]
+            return self._apply_input_post_processing(batch_by_channel[self.input_channels[0]], 0)
         else:
-            return [batch_by_channel[chan_idx] for chan_idx in self.input_channels]
+            return [self._apply_input_post_processing(batch_by_channel[chan_idx], i) for i, chan_idx in enumerate(self.input_channels)]
 
     def _apply_postprocessing_and_concat_weight_map(self, batch, output_chan_idx):
         if self.weight_map_functions is not None and self.weight_map_functions[output_chan_idx] is not None:

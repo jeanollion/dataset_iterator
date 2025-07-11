@@ -158,7 +158,8 @@ class ScalingImageGenerator():
             assert self.min_centile_range[0] <= self.min_centile_range[1], "invalid min range"
             assert self.max_centile_range[0] <= self.max_centile_range[1], "invalid max range"
             assert self.min_centile_range[0] < self.max_centile_range[1], "invalid min and max range"
-            self.saturate = kwargs.get("saturate", True)
+            self.saturate = kwargs.get("saturate", False)
+            self.power_law = kwargs.get("power_law", 1)
             self.min_centile = kwargs.get("min_centile", np.mean(self.min_centile_range))
             self.max_centile = kwargs.get("max_centile", np.mean(self.max_centile_range))
         elif mode == "RANDOM_MIN_MAX":
@@ -233,18 +234,23 @@ class ScalingImageGenerator():
     def apply_transform(self, img, aug_params):
         if self.mode=="CONSTANT":
             return (img - self.center) / self.scale
-        if self.mode == "RANDOM_CENTILES":
+        elif self.mode == "RANDOM_CENTILES":
             if aug_params.get("constant", False):
                 cmin, cmax = np.percentile(img, [self.min_centile, self.max_centile])
             else: # random
                 min0, min1, max0, max1 = np.percentile(img, self.min_centile_range + self.max_centile_range)
                 cmin = min0 + (min1 - min0) * aug_params["cmin"]
                 cmax = max0 + (max1 - max0) * aug_params["cmax"]
-            if self.saturate:
+            if self.saturate and (self.power_law==0 or self.power_law == 1):
                 img = adjust_histogram_range(img, min=0, max=1, initial_range=[cmin,  cmax])  # will saturate values under cmin or over cmax, as in real life.
             else:
                 scale = 1. / (cmax - cmin)
                 img = (img - cmin) * scale
+                if 0 < self.power_law < 1:
+                    mask = img > 1
+                    img[mask] = np.power(img[mask], self.power_law)
+                if self.saturate: # saturate low values
+                    img[img < 0] = 0
             return img
         elif self.mode == "RANDOM_MIN_MAX":
             return adjust_histogram_range(img, aug_params["vmin"], aug_params["vmax"])
@@ -259,6 +265,8 @@ class ScalingImageGenerator():
             elif self.mode == "FLUORESCENCE" and self.per_image:
                 raise NotImplementedError("FLUORESCENCE per image is not implemented yet")
             return (img - center) / scale
+        else:
+            raise ValueError("Ivalid Mode")
 
     def standardize(self, img):
         return img
