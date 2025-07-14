@@ -63,7 +63,7 @@ class HardSampleMiningCallback(Callback):
         if self.data_aug_param is not None:
             self.iterator.enable_random_transforms(self.data_aug_param)
         if self.iterator_params is not None:
-            self.iterator.enequeuer_end(self.iterator_params)
+            self.iterator.enqueuer_end(self.iterator_params)
         self.iterator.close()
 
     def need_compute(self, epoch):
@@ -284,7 +284,7 @@ class SimpleIterator(IndexArrayIterator):
 
     def enqueuer_end(self, params):
         try:
-            self.iterator.enequeuer_end(params)
+            self.iterator.enqueuer_end(params)
         except AttributeError:
             pass
 
