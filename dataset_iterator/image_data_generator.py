@@ -158,8 +158,14 @@ class ScalingImageGenerator():
             assert self.min_centile_range[0] <= self.min_centile_range[1], "invalid min range"
             assert self.max_centile_range[0] <= self.max_centile_range[1], "invalid max range"
             assert self.min_centile_range[0] < self.max_centile_range[1], "invalid min and max range"
-            self.saturate = kwargs.get("saturate", False)
-            self.power_law = kwargs.get("power_law", 1)
+            self.saturate = kwargs.get("saturate", [1., 1.])
+            if isinstance(self.saturate, bool): # legacy value
+                if self.saturate:
+                    self.saturate = [0., 0.]
+                else:
+                    self.saturate = [1., 1.]
+            else:
+                assert isinstance(self.saturate, (list, tuple)) and len(self.saturate)==1 and 0<=self.saturate[0]<=1 and 0<=self.saturate[1]<=1, "invalid saturate parameter: should be two float in range [0, 1]"
             self.min_centile = kwargs.get("min_centile", np.mean(self.min_centile_range))
             self.max_centile = kwargs.get("max_centile", np.mean(self.max_centile_range))
         elif mode == "RANDOM_MIN_MAX":
@@ -170,6 +176,8 @@ class ScalingImageGenerator():
             if "per_image" not in kwargs:
                 kwargs["per_image"] = dataset is None
             self.per_image = kwargs.get("per_image", True)
+            self.saturate = kwargs.get("saturate", 1.)
+            assert 0<=self.saturate<=1, "invalid saturation value should be in range [0, 1]"
             if not self.per_image and dataset is None:
                 assert "scale_range" in kwargs and "center_range" in kwargs, "if no dataset is provided, scale_range and center_range must be provided"
                 self.scale_range = kwargs["scale_range"]
@@ -241,16 +249,23 @@ class ScalingImageGenerator():
                 min0, min1, max0, max1 = np.percentile(img, self.min_centile_range + self.max_centile_range)
                 cmin = min0 + (min1 - min0) * aug_params["cmin"]
                 cmax = max0 + (max1 - max0) * aug_params["cmax"]
-            if self.saturate and (self.power_law==0 or self.power_law == 1):
+            if self.saturate[0] == 0 and self.saturate[1] == 0: # hard saturation on both tails
                 img = adjust_histogram_range(img, min=0, max=1, initial_range=[cmin,  cmax])  # will saturate values under cmin or over cmax, as in real life.
             else:
                 scale = 1. / (cmax - cmin)
                 img = (img - cmin) * scale
-                if 0 < self.power_law < 1:
+                if 0 < self.saturate[0] < 1:
+                    mask = img < 0
+                    img[mask] = -np.power(-img[mask], self.saturate[0])
+                elif self.saturate[0] == 0:
+                    mask = img < 0
+                    img[mask] = 0
+                if 0 < self.saturate[1] < 1:
                     mask = img > 1
-                    img[mask] = np.power(img[mask], self.power_law)
-                if self.saturate: # saturate low values
-                    img[img < 0] = 0
+                    img[mask] = np.power(img[mask], self.saturate[1])
+                elif self.saturate[1] == 1:
+                    mask = img < 0
+                    img[mask] = 1
             return img
         elif self.mode == "RANDOM_MIN_MAX":
             return adjust_histogram_range(img, aug_params["vmin"], aug_params["vmax"])
@@ -264,16 +279,23 @@ class ScalingImageGenerator():
                 scale = scale * sd
             elif self.mode == "FLUORESCENCE" and self.per_image:
                 raise NotImplementedError("FLUORESCENCE per image is not implemented yet")
-            return (img - center) / scale
+            img = (img - center) / scale
+            if 0 < self.saturate < 1:
+                mask = img > 1
+                img[mask] = np.power(img[mask], self.saturate)
+            elif self.saturate == 0:
+                mask = img > 1
+                img[mask] = 1
+            return img
         else:
-            raise ValueError("Ivalid Mode")
+            raise ValueError("Invalid Mode")
 
     def standardize(self, img):
         return img
 
 
 class IlluminationImageGenerator():
-    def __init__(self, gaussian_blur_range:list=[1, 2], noise_intensity:float = 0.1, gaussian_noise:bool = True, poisson_noise:bool=True, speckle_noise:bool=False, histogram_elasticdeform_n_points:int=5, histogram_elasticdeform_intensity:float=0.5, illumination_variation_n_points:list=[0, 0], illumination_variation_intensity:float=0.6, illumination_variation_2d:bool = False):
+    def __init__(self, gaussian_blur_range:list=[0, 2], noise_intensity:float = 0.1, gaussian_noise:bool = True, poisson_noise:bool=True, speckle_noise:bool=False, histogram_elasticdeform_n_points:int=5, histogram_elasticdeform_intensity:float=0.5, illumination_variation_n_points:list=[0, 0], illumination_variation_intensity:float=0.6, illumination_variation_2d:bool = False):
         self.gaussian_blur_range = ensure_multiplicity(2, gaussian_blur_range)
         self.noise_intensity = noise_intensity
         self.gaussian_noise = gaussian_noise
@@ -353,7 +375,7 @@ class IlluminationImageGenerator():
         if "illumination_variation_target_points" in aug_params:
             target_points = aug_params.get("illumination_variation_target_points", None)
             img = illumination_variation(img, num_control_points_y=self.illumination_variation_n_points[0], num_control_points_x=self.illumination_variation_n_points[1], intensity=self.illumination_variation_intensity, target_points=target_points, perform_2d=self.illumination_variation_2d)
-        if aug_params.get("gaussian_blur", 0) > 0:
+        if aug_params.get("gaussian_blur", 0) > 0.33:
             img = gaussian_blur(img, aug_params["gaussian_blur"])
         gaussian_noise_intensity = aug_params.get("gaussian_noise", 0)
         poisson_noise_intensity = aug_params.get("poisson_noise", 0)
