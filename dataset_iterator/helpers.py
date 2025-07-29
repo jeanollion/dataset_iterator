@@ -120,7 +120,7 @@ def get_histogram(dataset, channel_keyword:str, bins, bin_size=None, sum_to_one:
         bin_size = (vmax - vmin)/(bins-1)
         bins = np.linspace(vmin, vmax + bin_size, num=bins+1)
     else:
-        assert isinstance(bins, (list, tuple))
+        assert isinstance(bins, (list, tuple, np.ndarray))
         vmin = bins[0]
     histogram = None
     for i in range(len(iterator)):
