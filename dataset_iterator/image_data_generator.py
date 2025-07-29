@@ -1,3 +1,5 @@
+import copy
+
 from .utils import is_keras_3
 if not is_keras_3():
     from tensorflow.keras.preprocessing.image import ImageDataGenerator
@@ -176,7 +178,7 @@ class ScalingImageGenerator():
             if "per_image" not in kwargs:
                 kwargs["per_image"] = dataset is None
             self.per_image = kwargs.get("per_image", True)
-            self.saturate = kwargs.get("saturate", 1.)
+            self.saturate = kwargs.pop("saturate", 1.) # not used by get_center_scale_range
             assert 0<=self.saturate<=1, "invalid saturation value should be in range [0, 1]"
             if not self.per_image and dataset is None:
                 assert "scale_range" in kwargs and "center_range" in kwargs, "if no dataset is provided, scale_range and center_range must be provided"
@@ -185,6 +187,7 @@ class ScalingImageGenerator():
                 self.center = kwargs.get("center", np.mean(self.center_range))
                 self.scale = kwargs.get("scale", np.mean(self.scale_range))
             else:
+                kwargs.pop("max_centile", None)
                 center_range, scale_range = get_center_scale_range(dataset, channel_name=channel_name, fluorescence=fluo, return_center=True, **kwargs)
                 if len(center_range)==3:
                     self.center = center_range[-1]
