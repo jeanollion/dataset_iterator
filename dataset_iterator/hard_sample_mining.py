@@ -234,7 +234,7 @@ def compute_metrics_loop(compute_metrics_fun, gen, batch_size, n_batches, verbos
     for i in range(n_batches):
         x, y_true = next(gen)
         batch_metrics = compute_metrics_fun(x, y_true)
-        bs = x.shape[0]
+        bs = x[0].shape[0] if isinstance(x, (tuple, list)) else x.shape[0]
         if bs > batch_size or n_tiles is not None:
             if n_tiles is None:  # record n_tile which is constant but last batch may have fewer elements
                 n_tiles = bs // batch_size
