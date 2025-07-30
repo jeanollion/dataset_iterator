@@ -167,7 +167,7 @@ class ScalingImageGenerator():
                 else:
                     self.saturate = [1., 1.]
             else:
-                assert isinstance(self.saturate, (list, tuple)) and len(self.saturate)==1 and 0<=self.saturate[0]<=1 and 0<=self.saturate[1]<=1, "invalid saturate parameter: should be two float in range [0, 1]"
+                assert isinstance(self.saturate, (list, tuple)) and len(self.saturate)==2 and 0<=self.saturate[0]<=1 and 0<=self.saturate[1]<=1, "invalid saturate parameter: should be two float in range [0, 1]"
             self.min_centile = kwargs.get("min_centile", np.mean(self.min_centile_range))
             self.max_centile = kwargs.get("max_centile", np.mean(self.max_centile_range))
         elif mode == "RANDOM_MIN_MAX":
