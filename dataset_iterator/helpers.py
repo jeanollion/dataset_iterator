@@ -4,6 +4,8 @@ from .datasetIO import DatasetIO
 from .multichannel_iterator import MultiChannelIterator
 from scipy.ndimage import gaussian_filter
 
+HISTO_NPIX = 1e8 # target pixel number to compute histogram. If a dataset has more pixels, only a subset will be used
+
 def get_optimal_tiling(dataset, channel:str, target_batch_size:int, tile_shape:tuple, group_keyword:str=None, tile_overlap_fraction:float=1./3):
     """
     Parameters
@@ -46,19 +48,32 @@ def open_channel(dataset, channel_keyword:str, group_keyword:str=None, size=None
         iterator.close()
     return data
 
-def get_min_and_max(dataset, channel_keyword:str, group_keyword:str=None, batch_size=1):
+def get_decimation_factor(batch_shape, iterator_length, target_npix = HISTO_NPIX, max_decimation_factor=None):
+    n_pix = np.prod(batch_shape) * iterator_length
+    f = max(1, min(iterator_length/2, n_pix / target_npix)) # at least two samples
+    if max_decimation_factor is not None:
+        assert max_decimation_factor >= 1, "max_decimation_factor must be greater than 1"
+        f = min(max_decimation_factor, f)
+    return f
+
+def get_min_and_max(dataset, channel_keyword:str, group_keyword:str=None, batch_size=1, max_decimation_factor=None):
     iterator = MultiChannelIterator(dataset=dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=[0], output_channels=[], batch_size=batch_size, incomplete_last_batch_mode=0)
     vmin = float('inf')
     vmax = float('-inf')
-    for i in range(len(iterator)):
-        batch, = iterator[i]
+    f = 1
+    i = 0
+    while i < len(iterator):
+        batch, = iterator[int(i)]
+        if i==0:
+            f = get_decimation_factor(batch.shape, len(iterator), max_decimation_factor=max_decimation_factor)
         vmin = min(batch.min(), vmin)
         vmax = max(batch.max(), vmax)
+        i += f
     if not isinstance(dataset, DatasetIO):
         iterator.close()
     return vmin, vmax
 
-def get_min_max_range(dataset, channel_keyword:str = "/raw", group_keyword:str=None, min_centile_range:list=[0.01, 5.], max_centile_range:list=[95., 99.9], verbose:bool=False):
+def get_min_max_range(dataset, channel_keyword:str = "/raw", group_keyword:str=None, min_centile_range:list=[0.01, 5.], max_centile_range:list=[95., 99.9], max_decimation_factor:float=None, verbose:bool=False):
     """Computes a range for min and max value for random intensity normalization during data augmentation.
     Image can then be normalized using a random min and max value that will be mapped to [0, 1]
 
@@ -87,15 +102,15 @@ def get_min_max_range(dataset, channel_keyword:str = "/raw", group_keyword:str=N
     if isinstance(dataset, (list, tuple)):
         min_range, max_range = [], []
         for ds in dataset:
-            min_r, max_r = get_min_max_range(ds, channel_keyword, min_centile_range, max_centile_range)
+            min_r, max_r = get_min_max_range(ds, channel_keyword, min_centile_range, max_centile_range, max_decimation_factor=max_decimation_factor)
             min_range.append(min_r)
             max_range.append(max_r)
         if len(dataset)==1:
             return min_range[0], max_range[0]
         return min_range, max_range
 
-    bins = get_histogram_bins_IPR(*get_histogram(dataset, channel_keyword, group_keyword=group_keyword, bins=1000), n_bins=256, percentiles=[0, 95], verbose=True)
-    histogram, _ = get_histogram(dataset, channel_keyword, bins=bins)
+    bins = get_histogram_bins_IPR(*get_histogram(dataset, channel_keyword, group_keyword=group_keyword, bins=1000, max_decimation_factor=max_decimation_factor), n_bins=256, percentiles=[0, 95], verbose=True)
+    histogram, _ = get_histogram(dataset, channel_keyword, bins=bins, max_decimation_factor=max_decimation_factor)
 
     values = get_percentile(histogram, bins, min_centile_range + max_centile_range)
     min_range = [values[0], values[1]]
@@ -105,31 +120,36 @@ def get_min_max_range(dataset, channel_keyword:str = "/raw", group_keyword:str=N
     return min_range, max_range
 
 
-def get_histogram(dataset, channel_keyword:str, bins, bin_size=None, sum_to_one:bool=False, group_keyword:str=None, batch_size:int=1, return_min_and_bin_size:bool=False, smooth_scale:float = 0., smooth_scale_in_bin_unit:bool=True):
+def get_histogram(dataset, channel_keyword:str, bins, bin_size=None, sum_to_one:bool=False, group_keyword:str=None, batch_size:int=1, return_min_and_bin_size:bool=False, smooth_scale:float = 0., smooth_scale_in_bin_unit:bool=True, max_decimation_factor:float=None):
     iterator = MultiChannelIterator(dataset=dataset, channel_keywords=[channel_keyword], group_keyword=group_keyword, input_channels=[0], output_channels=[], batch_size=batch_size, incomplete_last_batch_mode=0)
     if bins is None:
         assert bin_size is not None
-        vmin, vmax = get_min_and_max(dataset, channel_keyword, batch_size=batch_size)
+        vmin, vmax = get_min_and_max(dataset, channel_keyword, batch_size=batch_size, max_decimation_factor=max_decimation_factor)
         n_bins = int( 1 + (vmax - vmin ) / bin_size )
         bin_size = (vmax - vmin ) / (n_bins - 1)
         bins = np.linspace(vmin, vmax + bin_size, num=n_bins+1)
         #print(f"range: [{vmin}; {vmax}] nbins: {n_bins} binsize: {bin_size} bins: {bins}")
     elif isinstance(bins, int):
         assert bins>1, "at least 2 bins"
-        vmin, vmax = get_min_and_max(dataset, channel_keyword, batch_size=batch_size)
+        vmin, vmax = get_min_and_max(dataset, channel_keyword, batch_size=batch_size, max_decimation_factor=max_decimation_factor)
         bin_size = (vmax - vmin)/(bins-1)
         bins = np.linspace(vmin, vmax + bin_size, num=bins+1)
     else:
         assert isinstance(bins, (list, tuple, np.ndarray))
         vmin = bins[0]
     histogram = None
-    for i in range(len(iterator)):
-        batch, = iterator[i]
+    f = 1
+    i = 0
+    while i < len(iterator):
+        batch, = iterator[int(i)]
+        if i==0:
+            f = get_decimation_factor(batch.shape, len(iterator), max_decimation_factor=max_decimation_factor)
         histo, _ = np.histogram(batch, bins)
         if histogram is None:
             histogram = histo
         else:
             histogram += histo
+        i += f
     if not isinstance(dataset, DatasetIO):
         iterator.close()
     if smooth_scale>0:
