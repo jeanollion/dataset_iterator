@@ -251,7 +251,7 @@ class MultiChannelIterator(IndexArrayIterator):
                                 raise ValueError("Channel {} is set as singleton but one dataset has more that one image".format(c))
                         elif indexes[ds_idx] != len(ds):
                             raise ValueError('Channel {}({}) has at least one dataset with number of elements that differ from Channel 0'.format(c, channel_keywords[c]))
-        if len(array_keywords)>0: # check that all array ds have compatible length
+        if len(self.array_keywords)>0: # check that all array ds have compatible length
             for c, ds_l in enumerate(self.ads_array):
                 if self.array_keywords[c] is not None:
                     if len(self.ds_array[0])!=len(ds_l):
