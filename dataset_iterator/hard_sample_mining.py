@@ -4,12 +4,19 @@ import warnings
 import os
 import numpy as np
 import tensorflow as tf
+from .utils import is_keras_3
+if not is_keras_3():
+    from tensorflow.keras.callbacks import Callback
+    from tensorflow.keras.utils import Progbar
+else:
+    from keras.callbacks import Callback
+    from keras.utils import Progbar
 from .index_array_iterator import IndexArrayIterator, INCOMPLETE_LAST_BATCH_MODE
 from .concat_iterator import ConcatIterator
 from dataset_iterator.ordered_enqueuer_cf import OrderedEnqueuerCF
 import threading
 
-class HardSampleMiningCallback(tf.keras.callbacks.Callback):
+class HardSampleMiningCallback(Callback):
     def __init__(self, iterator, target_iterator, predict_fun, metrics_fun, period:int=10, start_epoch:int=0, start_from_epoch:int=0, enrich_factor:float=10., quantile_max:float=0.99, quantile_min:float=None, disable_channel_postprocessing:bool=False, verbose:int=1):
         super().__init__()
         self.period = period
@@ -56,7 +63,7 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
         if self.data_aug_param is not None:
             self.iterator.enable_random_transforms(self.data_aug_param)
         if self.iterator_params is not None:
-            self.iterator.enequeuer_end(self.iterator_params)
+            self.iterator.enqueuer_end(self.iterator_params)
         self.iterator.close()
 
     def need_compute(self, epoch):
@@ -83,7 +90,7 @@ class HardSampleMiningCallback(tf.keras.callbacks.Callback):
             self.n_metrics = self.proba_per_metric.shape[0] if len(self.proba_per_metric.shape) == 2 else 1
             if first and self.n_metrics > self.period:
                 warnings.warn(f"Hard sample mining period = {self.period} should be greater than metric number = {self.n_metrics}")
-            print("Hard sample mining metrics computed", flush=True)
+            #print("Hard sample mining metrics computed", flush=True)
         if self.proba_per_metric is not None and not self.wait_for_me_supplier.is_set():
             if len(self.proba_per_metric.shape) == 2:
                 self.metric_idx = (self.metric_idx + 1) % self.n_metrics
@@ -221,13 +228,13 @@ def compute_metrics(iterator, predict_function, metrics_function, disable_augmen
 
 def compute_metrics_loop(compute_metrics_fun, gen, batch_size, n_batches, verbose):
     if verbose >= 1:
-        progbar = tf.keras.utils.Progbar(n_batches)
+        progbar = Progbar(n_batches)
     n_tiles = None
     metrics = []
     for i in range(n_batches):
         x, y_true = next(gen)
         batch_metrics = compute_metrics_fun(x, y_true)
-        bs = x.shape[0]
+        bs = x[0].shape[0] if isinstance(x, (tuple, list)) else x.shape[0]
         if bs > batch_size or n_tiles is not None:
             if n_tiles is None:  # record n_tile which is constant but last batch may have fewer elements
                 n_tiles = bs // batch_size
@@ -258,14 +265,10 @@ class SimpleIterator(IndexArrayIterator):
 
     def _get_batches_of_transformed_samples(self, index_array):
         batch = self.iterator._get_batches_of_transformed_samples(index_array)
-        if isinstance(batch, (list, tuple)):
-            x, y = batch
-            batch = x, y
+        if len(batch)==1 and self.input_scaling_function is not None:
+            return self.input_scaling_function(batch[0]),
         else:
-            if self.input_scaling_function is not None:
-                x = self.input_scaling_function(batch)
-            batch = x
-        return batch
+            return batch
 
     def open(self):
         self.iterator.open()
@@ -281,7 +284,7 @@ class SimpleIterator(IndexArrayIterator):
 
     def enqueuer_end(self, params):
         try:
-            self.iterator.enequeuer_end(params)
+            self.iterator.enqueuer_end(params)
         except AttributeError:
             pass
 

@@ -1,5 +1,5 @@
 *.pyc
-test.py
+test_dataset_iterator.py
 __pycache__
 dataset_iterator.egg-info/*
 *.tar.gz

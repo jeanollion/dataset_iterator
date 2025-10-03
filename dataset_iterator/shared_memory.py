@@ -37,7 +37,7 @@ def to_shm(tensors, shm_manager=None, use_shared_array:bool = False):
 
 
 def from_shm(*args):
-    if len(args) == 4:
+    if len(args) == 4: # multiprocessing shared_memory
         shapes, dtypes, shm_name, nested_structure = args
         existing_shm = shared_memory.SharedMemory(shm_name)
         offset = 0
@@ -50,7 +50,7 @@ def from_shm(*args):
         existing_shm.close()
         existing_shm.unlink()
         return get_nested_structure(tensor_list, nested_structure)
-    elif len(args) == 2:
+    elif len(args) == 2: # sharedArray
         shm_names, nested_structure = args
         tensor_list = [sa.attach(name) for name in shm_names]
         for n in shm_names:
@@ -82,6 +82,16 @@ def multiple(item):
     return isinstance(item, (list, tuple))
 
 
+def unbox(item):
+    if isinstance(item, (list, tuple)):
+        if len(item)==1:
+            return item[0]
+        else:
+            raise ValueError("Cannot unbox list/tuple with several items")
+    else:
+        return item
+
+
 def get_flatten_list(item):
     flatten_list = []
     nested_structure = []
@@ -94,10 +104,12 @@ def _flatten(item, offset, flatten_list, nested_structure):
         nested_structure.append([])
         for sub_item in item:
             offset = _flatten(sub_item, offset, flatten_list, nested_structure[-1])
+        if isinstance(item, tuple):
+            nested_structure[-1] = tuple(nested_structure[-1])
         return offset
     else:
         nested_structure.append(offset)
-        flatten_list.append(item)
+        flatten_list.append(unbox(item))
         return offset + 1
 
 
@@ -115,6 +127,8 @@ def _get_nested(flatten_list, nested_structure, offset, result):
         result.append([])
         for sub_nested in nested_structure:
             offset = _get_nested(flatten_list, sub_nested, offset, result[-1])
+        if isinstance(nested_structure, tuple):
+            result[-1] = tuple(result[-1])
         return offset
     else:
         result.append(flatten_list[offset])

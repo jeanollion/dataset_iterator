@@ -2,7 +2,7 @@ import gc
 import os
 import traceback
 import dill
-from .process_utils import kill_processes, log_used_mem  # this import needs to be before any import related to concurrent futures to pathc
+from .process_utils import kill_processes, log_used_mem  # this import needs to be before any import related to concurrent futures to patch
 from concurrent.futures import ProcessPoolExecutor, CancelledError, TimeoutError, as_completed
 import multiprocessing
 import random
@@ -20,7 +20,7 @@ _COUNTER = None
 
 
 class OrderedEnqueuerCF():
-    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=True):
+    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=True, name="enqueuer"):
         self.iterator = iterator
         self.shuffle = shuffle
         self.single_epoch = single_epoch
@@ -30,6 +30,7 @@ class OrderedEnqueuerCF():
         self.wait_for_me_supplier = None
         self.wait_for_me_supplier_relock = False
         self.wait_for_me_consumer = None
+        self.name=name
         global _COUNTER
         if _COUNTER is None:
             try:
@@ -149,7 +150,7 @@ class OrderedEnqueuerCF():
                 if self.wait_for_me_supplier_relock:
                     self.wait_for_me_supplier.clear()
                     self.wait_for_me_supplier_relock = False
-            log_used_mem()
+            #log_used_mem()
             indices = list(range(len(self.iterator)))
             self._send_iterator()  # Update the pool
 
@@ -274,7 +275,8 @@ def init_pool_generator(uid, seq, unpickle):
 
 
 def shutdown_executor(executor):
-    processes = list(executor._processes.keys())
+    processes = list(executor._processes.keys()) if executor._processes is not None else None
     executor.shutdown(wait=True,  cancel_futures=True)  # wait=True often hangs because no timeout is set to Process.join().
     del executor
-    kill_processes(processes, timeout=3, verbose=True)
+    if processes is not None:
+        kill_processes(processes, timeout=3, verbose=True)

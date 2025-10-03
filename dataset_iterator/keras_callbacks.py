@@ -1,9 +1,15 @@
 from math import cos, pi
-from tensorflow.keras.callbacks import Callback, ModelCheckpoint, ReduceLROnPlateau
-from tensorflow.keras import backend
+from .utils import is_keras_3
+if not is_keras_3():
+    from tensorflow.keras.callbacks import Callback, ModelCheckpoint, ReduceLROnPlateau
+    from tensorflow.keras import backend
+else:
+    from keras.callbacks import Callback, ModelCheckpoint, ReduceLROnPlateau
+    from keras import backend
 import csv
 import os
 import time
+import numpy as np
 
 class SafeModelCheckpoint(ModelCheckpoint):
     def __init__(self,
@@ -17,6 +23,12 @@ class SafeModelCheckpoint(ModelCheckpoint):
         self._alternative_path = False
 
     def _save_model(self, epoch, batch, logs):
+        if logs is not None:
+            loss = logs.get("loss")
+            if loss is not None:
+                if np.isnan(loss) or np.isinf(loss):
+                    print(f"Invalid loss, skipping checkpoint.")
+                    return
         if isinstance(self.save_freq, int) or self.epochs_since_last_save >= self.period:
             for i in range(self.n_retry):
                 if i>1:
@@ -85,6 +97,15 @@ class StopOnLR(Callback):
         if lr <= self.min_lr:
             print(f"Learning rate {lr} <= {self.min_lr} : training will be stopped", flush=True)
             self.model.stop_training = True
+
+class LogLRCallback(Callback):
+    def __init__(self):
+        super().__init__()
+
+    def on_train_batch_end(self, batch, logs=None):
+        if logs is not None:
+            logs['lr'] = backend.get_value(self.model.optimizer.lr)
+
 
 class EpsilonCosineDecayCallback(Callback):
     """Reduce optimizer epsilon parameter.

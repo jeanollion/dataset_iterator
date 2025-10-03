@@ -9,4 +9,4 @@ from .image_data_generator import get_image_data_generator
 from .datasetIO import DatasetIO, H5pyIO, MultipleFileIO, MultipleDatasetIO, ConcatenateDatasetIO, MemoryIO
 from .hard_sample_mining import HardSampleMiningCallback
 from .concat_iterator import ConcatIterator
-from .utils import get_tf_version
+from .utils import get_tf_version, is_keras_3

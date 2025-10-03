@@ -1,11 +1,22 @@
+import os
 import tensorflow as tf
 import numpy as np
 from math import ceil
 
 
 def get_tf_version():
-    return tuple(map(int, (tf.__version__.split("."))))
+    version = tf.__version__
+    if "-rc" in version:
+        version = version.split("-rc")[0]
+    return tuple(map(int, (version.split("."))))
 
+def is_keras_3():
+    if get_tf_version() < (2, 16, 0):
+        return False
+    if "TF_USE_LEGACY_KERAS" in os.environ:
+        return not (os.environ["TF_USE_LEGACY_KERAS"] == "1" or os.environ["TF_USE_LEGACY_KERAS"] == 1 or os.environ["TF_USE_LEGACY_KERAS"] == True or os.environ["TF_USE_LEGACY_KERAS"] == "True")
+    else:
+        return True
 
 def replace_last(s, old, new):
     # return (s[::-1].replace(old[::-1], new[::-1], 1))[::-1]
@@ -58,6 +69,8 @@ def ensure_multiplicity(n, object):
 def is_list(l):
     return isinstance(l, (list, tuple, np.ndarray))
 
+def is_dict(l):
+    return isinstance(l, dict)
 
 def flatten_list(l):
     flat_list = []
