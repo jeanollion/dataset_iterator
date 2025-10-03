@@ -182,6 +182,8 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
     zoom_range = ensure_multiplicity(2, zoom_range)
     assert zoom_range[0]<=zoom_range[1], "invalid zoom range"
     tile_shape = ensure_multiplicity(len(image_shape), tile_shape)
+    for i, (t_s, i_s) in enumerate(zip(tile_shape, image_shape)):
+        assert t_s <= i_s, f"invalid tile shape ({t_s}) at axis: {i}: must be lower than image shape ({i_s})"
     if n_tiles is None:
         assert anchor_point_mask_idx is None, "anchor at mask center not supported in overlap mode"
         tile_coords_bat = _get_tile_coords_overlap(image_shape, tile_shape, overlap_mode, min_overlap, random_stride)
