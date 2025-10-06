@@ -109,7 +109,7 @@ class TrackingIterator(MultiChannelIterator):
         batch, index_a = super()._read_image_batch(index_ds, index_array, chan_idx, ref_chan_idx, aug_param_array, is_array=is_array, **kwargs)
         batch_list= []
         index_array_list = []
-        n_frames = kwargs.get("n_frames", self.def_n_frames if self.def_n_frames>0 else 1)
+        n_frames = kwargs.get("n_frames", self.def_n_frames)
         subsampling = kwargs.get("frame_subsampling", 1)
         aug_remove = n_frames<=0
         if n_frames<=0:
