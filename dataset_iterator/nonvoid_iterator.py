@@ -101,8 +101,8 @@ class NonVoidIterator(IndexArrayIterator):
                     assert self.mask_channel_idx == 0, "invalid mask channel idx: there is only one output"
             idxs = self.get_non_void_indices(bmask, self.pix_thld)
             if idxs.shape[0] == 0:
-                return (None, None), (0, b_in.shape[0])
-            return (self.subset_batch(b_in, idxs), self.subset_batch(b_out, idxs)), (idxs.shape[0], b_in.shape[0])
+                return (None, None), (0, bmask.shape[0])
+            return (self.subset_batch(b_in, idxs), self.subset_batch(b_out, idxs)), (idxs.shape[0], bmask.shape[0])
         else:
             b_in,  = batch
             assert self.mask_is_input, "no output batch"
@@ -113,8 +113,8 @@ class NonVoidIterator(IndexArrayIterator):
                 assert self.mask_channel_idx == 0, "invalid mask channel idx: there is only one input"
             idxs = self.get_non_void_indices(bmask, self.pix_thld)
             if idxs.shape[0] == 0:
-                return (None,), (0, b_in.shape[0])
-            return (self.subset_batch(b_in, idxs),), (idxs.shape[0], b_in.shape[0])
+                return (None,), (0, bmask.shape[0])
+            return (self.subset_batch(b_in, idxs),), (idxs.shape[0], bmask.shape[0])
 
 
     @staticmethod
