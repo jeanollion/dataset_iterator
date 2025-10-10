@@ -6,6 +6,15 @@ from scipy.ndimage import gaussian_filter
 
 HISTO_NPIX = 1e8 # target pixel number to compute histogram. If a dataset has more pixels, only a subset will be used
 
+def get_image_shape(dataset, channel:str, group_keyword:str=None):
+    it = MultiChannelIterator(dataset, channel_keywords=[channel], input_channels=[0], output_channels=[], group_keyword=group_keyword, incomplete_last_batch_mode=0)
+    assert it.consistent_image_shape, "dataset contains sub-datasets with different images shapes"
+    image_shape = it.channel_image_shapes[0][:it.n_spatial_dims]
+    if not isinstance(dataset, DatasetIO):
+        it.close()
+    del it
+    return image_shape
+
 def get_optimal_tiling(dataset, channel:str, target_batch_size:int, tile_shape:tuple, group_keyword:str=None, tile_overlap_fraction:float=1./3):
     """
     Parameters
@@ -20,10 +29,8 @@ def get_optimal_tiling(dataset, channel:str, target_batch_size:int, tile_shape:t
     -------
     batch_size:int, n_tiles:int so that target_batch_size = batch_size x n_tiles
     """
-    it = MultiChannelIterator(dataset, channel_keywords=[channel], input_channels=[0], output_channels=[], group_keyword=group_keyword, incomplete_last_batch_mode=0)
-    assert it.consistent_image_shape, "dataset contains sub-datasets with different images shapes"
     assert tile_overlap_fraction < 1, "invalid argument: tile_overlap_fraction must be <1"
-    image_shape = it.channel_image_shapes[0][:it.n_spatial_dims]
+    image_shape = get_image_shape(dataset, channel, group_keyword)
     n_tiles = np.prod(image_shape) / ((1 - tile_overlap_fraction) * np.prod(tile_shape))
     assert n_tiles >= 1, f"tile volume is higher than image volume: image shape: {image_shape} tile shape: {tile_shape}"
     n_tile_int = int(n_tiles + 0.5)
@@ -34,9 +41,6 @@ def get_optimal_tiling(dataset, channel:str, target_batch_size:int, tile_shape:t
     for n_t in n_tile_candidates:
         if target_batch_size % n_t == 0:
             return target_batch_size//n_t, n_t
-    if not isinstance(dataset, DatasetIO):
-        it.close()
-    del it
     return target_batch_size, 1
 
 def open_channel(dataset, channel_keyword:str, group_keyword:str=None, size=None):

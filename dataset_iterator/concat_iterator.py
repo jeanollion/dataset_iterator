@@ -45,10 +45,15 @@ class ConcatIterator(IndexArrayIterator):
         super().__init__(-1, batch_size, shuffle, seed, incomplete_last_batch_mode, step_number=step_number)
 
     def _get_index_array(self, choice:bool = True): # return concatenated indices for all iterators. not used by _set_index_array
-        array = np.arange(self.it_cumlen[-1])
+        N = self.get_sample_number()
         if choice and self.index_probability is not None:
-            array = np.random.choice(array, size=array.shape[0], replace=True, p=self.index_probability)
-        return array
+            tiling = len(self.index_probability.shape) == 2
+            index_probability = np.sum(self.index_probability, axis=1) if tiling else self.index_probability  # sum proba per tile
+            if tiling:
+                index_probability /= np.sum(index_probability)
+            return np.random.choice(N, size=N, replace=True, p=np.sum(self.index_probability, 1) if tiling else self.index_probability)
+        else:
+            return np.arange(N)
 
     def get_sample_number(self):
         return self.it_cumlen[-1]
@@ -64,7 +69,11 @@ class ConcatIterator(IndexArrayIterator):
                 index_array = np.arange(self.it_off[i], self.it_cumlen[i])
                 size = max(1, int((self.it_cumlen[i] - self.it_off[i]) * self.proportion[i] + 0.5))
                 if self.index_probability is not None:
-                    index_array = np.random.choice(index_array, size=size, replace=True, p=self.index_probability[self.it_off[i]:self.it_cumlen[i]])
+                    proba = self.index_probability[self.it_off[i]:self.it_cumlen[i]]
+                    if len(proba.shape) == 2: # tiles probability
+                        proba = np.sum(proba, axis=1)
+                    proba = proba / np.sum(proba)
+                    index_array = np.random.choice(index_array, size=size, replace=True, p=proba)
                     #print( f"concat it: set index array for it {i} with proba factor: [{np.min(self.index_probability[self.it_off[i]:self.it_cumlen[i]]) * (self.it_cumlen[i] - self.it_off[i] + 1) }; {np.max(self.index_probability[self.it_off[i]:self.it_cumlen[i]]) * (self.it_cumlen[i] - self.it_off[i] + 1)}] ")
                 else:
                     index_array = ensure_size(index_array, size, shuffle=self.shuffle)
@@ -136,14 +145,19 @@ class ConcatIterator(IndexArrayIterator):
         for it, params in zip(self.iterators, parameters):
             it.enable_random_transforms(params)
 
-    def set_index_probability(self, value): # set to sub_iterators/ expects a concatenated vector in the order of sub iterators
-        cur_idx = 0
-        for it in self.iterators:
-            size = it.get_sample_number()
-            proba = value[cur_idx:cur_idx+size]
-            it.index_probability = proba / np.sum(proba)
-            cur_idx+=size
-        assert cur_idx == value.shape[0], f"invalid index_probability length expected: {cur_idx} actual {value.shape[0]}"
+    def set_index_probability(self, value, n_tiles = 1): # set to sub_iterators/ expects a concatenated vector in the order of sub iterators
+        if value is not None:
+            cur_idx = 0
+            n_tiles = ensure_multiplicity(len(self.iterators), n_tiles)
+            for it, n_t in zip(self.iterators, n_tiles):
+                size = it.get_sample_number() * n_t
+                proba = value[cur_idx:cur_idx+size]
+                it.set_index_probability(proba / np.sum(proba), n_tiles=n_t)
+                cur_idx+=size
+            assert cur_idx == value.shape[0], f"Concat iterator: invalid index_probability length expected: {cur_idx} actual {value.shape[0]}"
+        else:
+            for it in self.iterators:
+                it.set_index_probability(None, 1)
 
 def concat_numpy_arrays(arrays):
     if isinstance(arrays[0], (list, tuple)):

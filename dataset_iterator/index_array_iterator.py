@@ -35,8 +35,12 @@ class IndexArrayIterator():
     def _get_index_array(self, choice:bool = True):
         array = self.allowed_indexes
         if choice and self.index_probability is not None:
-            array = np.random.choice(array, size=array.shape[0], replace=True, p=self.index_probability)
-            #print(f"set index array with proba factor: [{np.min(self.index_probability) * self.index_probability.shape[0]}; {np.max(self.index_probability) * self.index_probability.shape[0]}] ")
+            tiling = len(self.index_probability.shape)==2
+            index_probability = np.sum(self.index_probability, axis=1) if tiling else self.index_probability # sum proba per tile
+            if tiling:
+                index_probability /= np.sum(index_probability)
+            array = np.random.choice(array, size=array.shape[0], replace=True, p=index_probability)
+            #print(f"set index array with proba factor: [{np.min(index_probability) * index_probability.shape[0]}; {np.max(index_probability) * index_probability.shape[0]}] tiling: {tiling}")
         else:
             array = np.copy(array)
         return array
@@ -47,7 +51,14 @@ class IndexArrayIterator():
     def get_batch_size(self):
         return self.batch_size
 
-    def set_index_probability(self, value):
+    def set_index_probability(self, value, n_tiles = 1):
+        if value is not None:
+            if isinstance(n_tiles, (list, tuple)):
+                assert len(n_tiles)==1, f"set_index_probability: invalid n_tiles len={len(n_tiles)} expected = 1"
+                n_tiles=n_tiles[0]
+            if n_tiles is not None and n_tiles > 1:
+                value = np.reshape(value, (-1, n_tiles))
+            assert value.shape[0] == self.get_sample_number(), f"invalid probability number expected: {self.get_sample_number()} got {value.shape[0]}"
         self.index_probability = value
 
     def open(self):

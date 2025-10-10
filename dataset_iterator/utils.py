@@ -107,6 +107,31 @@ def pick_from_array(array, proportion, p=None):
         return np.random.choice(array, replace=True, size=int(len(array) * proportion + 0.5), p=p)
 
 
+def random_choice_multidim(a, size=1, replace=True, p=None, axis=0):
+    """
+    Multidimensional version of np.random.choice.
+
+    Parameters:
+    - a: Multidimensional array to choose from (shape: (N, ...)).
+    - size: Number of elements to choose.
+    - replace: Whether to sample with replacement.
+    - p: Probabilities for each element along axis (shape: (N,)).
+    - axis: Axis along which to choose (default: 0).
+
+    Returns:
+    - Array of chosen elements (shape: (size, ...)).
+    """
+    if p is not None:
+        p = np.asarray(p)
+        p = p / np.sum(p)  # Normalize
+        assert a.shape[axis] == p.shape[0], f"{a.shape[axis]} probabilities expected, got {p.shape[0]} instead"
+
+    indices = np.random.choice(a.shape[axis], size=size, replace=replace, p=p)
+    if axis == 0:
+        return a[indices, ...]
+    else:
+        return np.take(a, indices, axis=axis)
+
 def is_null(param, null_value):
     if param is None:
         return True

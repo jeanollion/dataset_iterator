@@ -505,7 +505,7 @@ class MultiChannelIterator(IndexArrayIterator):
         if perform_elasticdeform:
             self._apply_elasticdeform(batch_by_channel)
         if perform_tiling:
-            self._apply_tiling(batch_by_channel)
+            self._apply_tiling(batch_by_channel, index_array)
 
         if perform_elasticdeform or perform_tiling:
             for c in converted_from_float16:
@@ -572,12 +572,17 @@ class MultiChannelIterator(IndexArrayIterator):
             for i, chan_idx in enumerate(channels):
                 batch_by_channel[chan_idx] = batches[i]
 
-    def _apply_tiling(self, batch_by_channel):
+    def _apply_tiling(self, batch_by_channel, index_array):
         if self.extract_tile_function is not None:
             channels = [c for c in batch_by_channel.keys() if not isinstance(c, str) and c>=0]
             batches = [batch_by_channel[chan_idx] for chan_idx in channels]
             is_mask = [chan_idx in self.mask_channels for chan_idx in channels]
-            batches = self.extract_tile_function(batches, is_mask, allow_random=self.perform_data_augmentation)
+            if self.perform_data_augmentation and self.index_probability is not None and len(self.index_probability.shape)==2: # index_probability includes probabilities per tile
+                tile_probabilities = self.index_probability[index_array, :]
+                tile_probabilities = tile_probabilities / np.sum(tile_probabilities, axis=1)
+            else:
+                tile_probabilities = None
+            batches = self.extract_tile_function(batches, is_mask, allow_random=self.perform_data_augmentation, tile_probabilities=tile_probabilities)
             n_tiles = batches[0].shape[0]//batch_by_channel[channels[0]].shape[0]
             for i, chan_idx in enumerate(channels):
                 batch_by_channel[chan_idx] = batches[i]
@@ -886,6 +891,8 @@ class MultiChannelIterator(IndexArrayIterator):
             allowed_indexes_per_group = [index_array[index_grp==i] for i in range(len(self.group_map_paths))]
             proba_per_group = [self.index_probability[index_grp==i] if self.index_probability is not None else None for i in range(len(self.group_map_paths))]
             if self.index_probability is not None: # sum to one
+                if len(self.index_probability.shape)==2: # includes tiles probabilities
+                    proba_per_group = [np.sum(p, axis=1) for p in proba_per_group]
                 proba_per_group = [p / np.sum(p) for p in proba_per_group]
             indexes_per_group = [ pick_from_array(allowed_indexes_per_group[i], self.group_proportion[i], p=proba_per_group[i]) for i in range(len(self.group_map_paths)) ]
             index_a = np.concatenate(indexes_per_group)

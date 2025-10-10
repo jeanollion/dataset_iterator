@@ -29,8 +29,8 @@ class NonVoidIterator(IndexArrayIterator):
     def get_batch_size(self):
         return self.iterator.get_batch_size()
 
-    def set_index_probability(self, value):
-        self.iterator.set_index_probability(value)
+    def set_index_probability(self, value, n_tiles=1):
+        self.iterator.set_index_probability(value, n_tiles=n_tiles)
 
     def open(self):
         self.iterator.open()

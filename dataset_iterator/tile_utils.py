@@ -1,7 +1,7 @@
 from math import ceil, floor
 import numpy as np
 from numpy.random import randint, random
-from .utils import ensure_multiplicity, is_null
+from .utils import ensure_multiplicity, is_null, random_choice_multidim
 from scipy.ndimage import zoom
 
 OVERLAP_MODE = ["NO_OVERLAP", "ALLOW", "FORCE"]
@@ -9,20 +9,20 @@ OVERLAP_MODE = ["NO_OVERLAP", "ALLOW", "FORCE"]
 
 def extract_single_tile(tensor_slice=None, tile_shape=None, contraction_factor=None, return_none_for_identity:bool=True):
     if tensor_slice is not None:
-        def extract_tiles_fun(batch, is_mask: bool, allow_random: bool = False):
+        def extract_tiles_fun(batch, is_mask: bool, allow_random: bool = False, tile_probabilities=None):
             if isinstance(batch, (list, tuple)):
                 return [b[tensor_slice] for b in batch]
             else:
                 return batch[tensor_slice]
     elif tile_shape is not None: # fixed patch shape
-        def extract_tiles_fun(batch, is_mask: bool, allow_random: bool = False):
+        def extract_tiles_fun(batch, is_mask: bool, allow_random: bool = False, tile_probabilities=None):
             if isinstance(batch, (list, tuple)):
                 return [crop(b, tile_shape) for b in batch]
             else:
                 return crop(batch, tile_shape)
     elif contraction_factor is not None: # honor contraction factor
         assert contraction_factor is not None, "either tensor_slice, tile_shape or contraction factor must be provided"
-        def extract_tiles_fun(batch, is_mask:bool, allow_random:bool=False):
+        def extract_tiles_fun(batch, is_mask:bool, allow_random:bool=False, tile_probabilities=None):
             if isinstance(batch, (list, tuple)):
                 return [crop_to_contraction(b, contraction_factor) for b in batch]
             else:
@@ -30,106 +30,30 @@ def extract_single_tile(tensor_slice=None, tile_shape=None, contraction_factor=N
     else: # identity
         if return_none_for_identity:
             return None
-        def extract_tiles_fun(batch, is_mask: bool, allow_random: bool = False):
+        def extract_tiles_fun(batch, is_mask: bool, allow_random: bool = False, tile_probabilities=None):
             return batch
     return extract_tiles_fun
 
 def extract_tile_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, augmentation_rotate=True, anchor_point_mask_idx=None):
-    def func(batch, is_mask:bool, allow_random:bool=True):
-        tiles = extract_tiles(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride if allow_random else False, anchor_point_mask_idx=anchor_point_mask_idx)
-        if perform_augmentation and allow_random:
-            tiles = augment_tiles_inplace(tiles, rotate=augmentation_rotate and all([s==tile_shape[0] for s in tile_shape]), n_dims=len(tile_shape))
-        return tiles
-    return func
+    return extract_tile_random_zoom_function(tile_shape, perform_augmentation=perform_augmentation, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, augmentation_rotate=augmentation_rotate, zoom_range=[1, 1], aspect_ratio_range=[1, 1], zoom_probability=0, random_channel_jitter_shape=None, anchor_point_mask_idx=anchor_point_mask_idx)
 
 def extract_tile_random_zoom_function(tile_shape, perform_augmentation=True, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=True, augmentation_rotate=True, zoom_range=[0.9, 1.1], aspect_ratio_range=[0.9, 1.1], zoom_probability:float=0.5, interpolation_order=1, random_channel_jitter_shape=None, anchor_point_mask_idx=None):
-    if (is_null(zoom_range, 1) or is_null(zoom_range, 0) or zoom_probability==0) and is_null(random_channel_jitter_shape, 0):
-        return extract_tile_function(tile_shape, perform_augmentation=perform_augmentation, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride, augmentation_rotate=augmentation_rotate, anchor_point_mask_idx=anchor_point_mask_idx)
-    def func(batch, is_mask:bool, allow_random:bool=True):
-        if isinstance(batch, (list, tuple)):
-            is_mask = ensure_multiplicity(len(batch), is_mask)
-            order = [0 if m else interpolation_order for m in is_mask]
+    def func(batch, is_mask:bool, allow_random:bool=True, tile_probabilities=None):
+        if (is_null(zoom_range, 1) or is_null(zoom_range, 0) or zoom_probability==0) and is_null(random_channel_jitter_shape, 0):
+            order = None
         else:
-            order = 0 if is_mask else interpolation_order
-        tiles = extract_tiles_random_zoom(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride if allow_random else False, zoom_range=zoom_range if allow_random else [1., 1.], aspect_ratio_range=aspect_ratio_range if allow_random else [1., 1.], zoom_probability=zoom_probability if allow_random else 0., interpolation_order=order, random_channel_jitter_shape=random_channel_jitter_shape if allow_random else None, anchor_point_mask_idx=anchor_point_mask_idx)
+            if isinstance(batch, (list, tuple)):
+                is_mask = ensure_multiplicity(len(batch), is_mask)
+                order = [0 if m else interpolation_order for m in is_mask]
+            else:
+                order = 0 if is_mask else interpolation_order
+        tiles = extract_tiles(batch, tile_shape=tile_shape, overlap_mode=overlap_mode, min_overlap=min_overlap, n_tiles=n_tiles, random_stride=random_stride if allow_random else False, zoom_range=zoom_range if allow_random else [1., 1.], aspect_ratio_range=aspect_ratio_range if allow_random else [1., 1.], zoom_probability=zoom_probability if allow_random else 0., interpolation_order=order, random_channel_jitter_shape=random_channel_jitter_shape if allow_random else None, tile_probabilities=tile_probabilities if allow_random else None, anchor_point_mask_idx=anchor_point_mask_idx)
         if perform_augmentation and allow_random:
             tiles = augment_tiles_inplace(tiles, rotate=augmentation_rotate and all([s==tile_shape[0] for s in tile_shape]), n_dims=len(tile_shape))
         return tiles
     return func
 
-def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=True, anchor_point_mask_idx=None):
-    """Extract tiles.
-
-    Parameters
-    ----------
-    batch : numpy array
-        dimensions BYXC or BZYXC (B = batch)
-    tile_shape : tuple
-        tile shape, dimensions YX or ZYX. Z,Y,X,must be inferior or equal to batch dimensions
-    overlap_mode : string
-        one of ["NO_OVERLAP", "ALLOW", "FORCE"]
-        "NO_OVERLAP" maximum number of tiles so that they do not overlap
-        "ALLOW" maximum number of tiles that fit in the image, allowing overlap
-        "FORCE"  maximum number of tiles that fit in the image while enforcing a minimum overlap defined by min_overlap. If min_overlap is less than zero, it enforces a distance between tiles
-    min_overlap : integer or tuple
-        min overlap along each spatial dimension. only used in mode "FORCE"
-    n_tiles : int
-        if provided overlap_mode and min_overlap are ignored
-    random_stride : bool
-        whether tile coordinates should be randomized, within the gap / overlap zone
-    anchor_point_mask_idx: int or None
-        if not None, index of mask that defines the anchor point, which is a point always included in all tiles.
-        Anchor point defined as the mean coordinate of the mask along each axis.
-        if input is a list of batches then anchor_mask_center_mask_idx is the index of the batch in this list, and middle channel is used. Otherwise it is the channel index of the batch.
-
-    Returns
-    -------
-    numpy array, ([numpy array])
-        tiles concatenated along first axis, (tiles coordinates)
-
-    """
-    multiple_inputs = isinstance(batch, (list, tuple))
-    image_shape = batch[0].shape[1:-1] if multiple_inputs else batch.shape[1:-1]
-    rank = len(image_shape)
-    assert rank in [2, 3], "only 2D or 3D images are supported"
-    nchan_max = np.max([b.shape[-1] for b in batch]) if multiple_inputs else batch.shape[-1]
-    batch_size = batch[0].shape[0] if multiple_inputs else batch.shape[0]
-    tile_shape = ensure_multiplicity(len(image_shape), tile_shape)
-    if n_tiles is None:
-        assert anchor_point_mask_idx is None, "anchor at mask center not supported in overlap mode"
-        tile_coords_bat = _get_tile_coords_overlap(image_shape, tile_shape, overlap_mode, min_overlap, random_stride)
-    else:
-        assert len(image_shape)==2, "only 2d images supported when specifying n_tiles"
-        if anchor_point_mask_idx is not None:
-            if multiple_inputs:
-                assert anchor_point_mask_idx < len( batch), f"invalid anchor mask idx: {anchor_point_mask_idx} > {len(batch)}"
-                anchor_points = compute_middle_points(batch[anchor_point_mask_idx][..., nchan_max // 2])
-            else:
-                assert anchor_point_mask_idx < nchan_max, f"invalid anchor mask idx: {anchor_point_mask_idx} > {nchan_max}"
-                anchor_points = compute_middle_points(batch[..., anchor_point_mask_idx])
-        else:
-            anchor_points = None
-        tile_coords_bat = []
-        for b in range(batch_size):
-            _, n_tiles_yx = get_stride_2d(image_shape, tile_shape, n_tiles, anchor_point=anchor_points[b] if anchor_points is not None else None)
-            tile_coords_ = _get_tile_coords(image_shape, tile_shape, n_tiles_yx, random_stride, anchor_point=anchor_points[b] if anchor_points is not None else None)
-            tile_coords_bat.append(_ensure_n_tiles(tile_coords_, n_tiles, random=random_stride))
-
-    n_t = tile_coords_bat[0][0].shape[0]
-    def tile_fun(b):
-        tiles = []
-        for i in range(n_t):
-            tile_coords_ba = [[tile_coords_bat[bidx][ax][i] for ax in range(rank)] for bidx in range(batch_size)]
-            tiles.append(_subset_by_b(b, tile_coords_ba, tile_shape))
-        return np.concatenate(tiles)
-
-    if multiple_inputs:
-        tiles = [tile_fun(b) for b in batch]
-    else:
-        tiles = tile_fun(batch)
-    return tiles
-
-def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, zoom_range=[0.9, 1.1], aspect_ratio_range=[0.9, 1.1], zoom_probability:float=0.5, interpolation_order=1, random_channel_jitter_shape=None, anchor_point_mask_idx:int=None):
+def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, n_tiles=None, random_stride=False, zoom_range=[0.9, 1.1], aspect_ratio_range=[0.9, 1.1], zoom_probability:float=0.5, interpolation_order=1, random_channel_jitter_shape=None, tile_probabilities = None, anchor_point_mask_idx:int=None):
     """Extract tiles with random zoom.
 
     Parameters
@@ -159,6 +83,8 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
         The order of the spline interpolation passed to scipy.ndimage.zoom, range 0-5
     random_channel_jitter_shape : list / tuple of ints or int
         if not None: tile coordinates are translated of a random value in this range. The range can be either the same for all dimensions (random_channel_jitter_range should be an integer) or distinct (random_channel_jitter_range should be a list or tuple of ints of length equal to the number of spatial dimensions of the batch)
+    tile_probabilities: np.array (B, N_tiles)
+
     anchor_point_mask_idx: int or None
         if not None, index of mask that defines the anchor point, which is a point always included in all tiles.
         Anchor point defined as the mean coordinate of the mask along each axis.
@@ -184,77 +110,105 @@ def extract_tiles_random_zoom(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], m
     tile_shape = ensure_multiplicity(len(image_shape), tile_shape)
     for i, (t_s, i_s) in enumerate(zip(tile_shape, image_shape)):
         assert t_s <= i_s, f"invalid tile shape ({t_s}) at axis: {i}: must be lower than image shape ({i_s})"
-    if n_tiles is None:
-        assert anchor_point_mask_idx is None, "anchor at mask center not supported in overlap mode"
-        tile_coords_bat = _get_tile_coords_overlap(image_shape, tile_shape, overlap_mode, min_overlap, random_stride)
+    assert anchor_point_mask_idx is None or tile_probabilities is None, "anchor_point mode is incompatible with tile_probability mode"
+
+    if tile_probabilities is not None: # choose tiles according to tile probability
+        assert tile_probabilities.shape[0] == batch_size, f"invalid tile_probability array: first axis should be of same size as of batch size={batch_size} but is {tile_probabilities.shape[0]}"
+        all_tile_coords = _get_tile_coords_overlap(image_shape, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=0, random_stride=False) # A, N
+        assert all_tile_coords[0].shape[0] == tile_probabilities.shape[1], f"invalid tile_probability array: second axis should be of same size as of tile number={all_tile_coords[0].shape[0]} (all possibly overlapping tiles for an images shape: {image_shape} tile shape: {tile_shape}) but is {tile_probabilities.shape[1]}"
+        # tile center = anchor points.
+        anchor_point_list = np.array(all_tile_coords, dtype=np.float32) + np.array(tile_shape, dtype=np.float32)[:, np.newaxis] / 2 # anchor points = middle of tiles
+        anchor_point_list = np.transpose(anchor_point_list, (1, 0)) # N, A
+        if n_tiles is None:  # infer n_tiles from overlap
+            n_tiles = _get_tile_coords_overlap(image_shape, tile_shape, overlap_mode, min_overlap, random_stride=False)[0].shape[0]
+        anchor_point_list = np.stack([ random_choice_multidim(anchor_point_list, size=n_tiles, replace=True, p=tile_probabilities[b] ) for b in range(batch_size)])
+        tile_coords_bat = [[_get_tile_coords(image_shape, tile_shape, (1, 1), random_stride, anchor_point=anchor_point_list[b][t])[0] for t in range(n_tiles)] for b in range(batch_size) ]
     else:
-        assert len(image_shape)==2, "only 2d images supported when specifying n_tiles"
-        if anchor_point_mask_idx is not None:
+        if anchor_point_mask_idx is not None:  # single anchor point per batch item, n_tiles around this anchor point
             if multiple_inputs:
-                assert anchor_point_mask_idx < len(batch), f"invalid anchor mask idx: {anchor_point_mask_idx} > {len(batch)}"
-                anchor_points = compute_middle_points(batch[anchor_point_mask_idx][..., nchan_max//2])
+                assert anchor_point_mask_idx < len(
+                    batch), f"invalid anchor mask idx: {anchor_point_mask_idx} > {len(batch)}"
+                anchor_points = compute_middle_points(batch[anchor_point_mask_idx][..., nchan_max // 2])
             else:
                 assert anchor_point_mask_idx < nchan_max, f"invalid anchor mask idx: {anchor_point_mask_idx} > {nchan_max}"
                 anchor_points = compute_middle_points(batch[..., anchor_point_mask_idx])
         else:
             anchor_points = None
-
-        tile_coords_bat = []
-        for b in range(batch_size):
-            _, n_tiles_yx = get_stride_2d(image_shape, tile_shape, n_tiles, anchor_point=anchor_points[b] if anchor_points is not None else None)
-            tile_coords_ = _get_tile_coords(image_shape, tile_shape, n_tiles_yx, random_stride, anchor_point=anchor_points[b] if anchor_points is not None else None)
-            tile_coords_bat.append(_ensure_n_tiles(tile_coords_, n_tiles, random=random_stride))
+        if n_tiles is None and anchor_points is None: # overlap mode
+            tile_coords_bat = [_get_tile_coords_overlap(image_shape, tile_shape, overlap_mode, min_overlap, random_stride)  for _ in range(batch_size)]
+        else:
+            if n_tiles is None:  # infer n_tiles from overlap
+                n_tiles = _get_tile_coords_overlap(image_shape, tile_shape, overlap_mode, min_overlap, random_stride)[0].shape[0]
+            assert len(image_shape) == 2, "only 2d images supported when specifying n_tiles"
+            tile_coords_bat = []
+            for b in range(batch_size):
+                _, n_tiles_yx = get_stride_2d(image_shape, tile_shape, n_tiles,  anchor_point=anchor_points[b] if anchor_points is not None else None)
+                all_tile_coords = _get_tile_coords(image_shape, tile_shape, n_tiles_yx, random_stride,  anchor_point=anchor_points[b] if anchor_points is not None else None)
+                tile_coords_bat.append(_ensure_n_tiles(all_tile_coords, n_tiles, random=random_stride))
 
     n_t = tile_coords_bat[0][0].shape[0]
-    zoom_range_corrected = [1./np.max(zoom_range), np.min([ min(1./np.min(zoom_range), float(image_shape[ax])/float(tile_shape[ax])) for ax in range(rank) ])]
-    zoom = random(n_t) * (zoom_range_corrected[1] - zoom_range_corrected[0]) + zoom_range_corrected[0]
-    aspect_ratio_fun = lambda ax : random(n_t) * (np.minimum(image_shape[ax] / (zoom * tile_shape[ax]), aspect_ratio_range[1]) - aspect_ratio_range[0]) + aspect_ratio_range[0]
-    aspect_ratio = [ aspect_ratio_fun(ax) for ax in range(1, rank) ]
-    if zoom_probability < 1: # some tiles are not zoomed
-        no_zoom = random(n_t) >= zoom_probability
-        for i in range(n_t):
-            if no_zoom[i]:
-                zoom[i] = 1
-                for ax in range(0, rank-1):
-                    aspect_ratio[ax][i] = 1
-    tile_size_fun = lambda ax : np.rint(zoom * tile_shape[ax]).astype(int) if ax==0 else np.rint(zoom * aspect_ratio[ax-1] * tile_shape[ax]).astype(int)
-    r_tile_shape = [tile_size_fun(ax) for ax in range(rank)]
-    for b in range(batch_size):
-        for i in range(n_t): # translate coords if necessary so that tile is valid
-            for ax in range(rank):
-                delta = tile_coords_bat[b][ax][i] + r_tile_shape[ax][i] - image_shape[ax]
-                if delta>0:
-                    tile_coords_bat[b][ax][i] -= delta
-
-    def tile_fun_no_jitter(b, o):
-        tiles = []
-        for i in range(n_t):
-            tile_shape_ =  [r_tile_shape[ax][i] for ax in range(rank)]
-            tile_coords_ba = [[tile_coords_bat[bidx][ax][i] for ax in range(rank)] for bidx in range(batch_size)]
-            tiles_ = _subset_by_b(b, tile_coords_ba, tile_shape_)
-            tiles.append(_zoom(tiles_, tile_shape, o))
-        return np.concatenate(tiles)
-
-    if random_channel_jitter_shape is not None and nchan_max>1:
-        random_channel_jitter_shape = ensure_multiplicity(rank, random_channel_jitter_shape)
-        def r_channel_jitter_fun(b, ax):
-            min_a = np.maximum(0, tile_coords_bat[b][ax]-random_channel_jitter_shape[ax] )
-            max_a = np.minimum(tile_coords_bat[b][ax] + random_channel_jitter_shape[ax], image_shape[ax]-r_tile_shape[ax])
-            return randint(min_a, max_a+1, size=n_t)
-        tile_coords_cbat = [ [ [r_channel_jitter_fun(b, ax) for ax in range(rank)] for b in range(batch_size) ] for c in range(nchan_max) ]
-        def tile_fun_jitter(b, o):
-            if b.shape[-1]==1:
-                return tile_fun_no_jitter(b, o)
+    if (is_null(zoom_range, 1) or is_null(zoom_range, 0) or zoom_probability == 0) and is_null( random_channel_jitter_shape, 0):
+        def tile_fun(b):
             tiles = []
             for i in range(n_t):
-                tile_shape_ = [r_tile_shape[ax][i] for ax in range(rank)]
-                tile_coords_cba = [[[tile_coords_cbat[c][bidx][ax][i] for ax in range(rank)] for bidx in range(batch_size)] for c in range(b.shape[-1])]
-                tiles_ = _subset_by_cb(b, tile_coords_cba, tile_shape_)
+                tile_coords_ba = [[tile_coords_bat[bidx][ax][i] for ax in range(rank)] for bidx in range(batch_size)]
+                tiles.append(_subset_by_b(b, tile_coords_ba, tile_shape))
+            return np.concatenate(tiles)
+        if multiple_inputs:
+            tiles = [tile_fun(b) for b in batch]
+        else:
+            tiles = tile_fun(batch)
+        return tiles
+    else:
+        zoom_range_corrected = [1./np.max(zoom_range), np.min([ min(1./np.min(zoom_range), float(image_shape[ax])/float(tile_shape[ax])) for ax in range(rank) ])]
+        zoom = random(n_t) * (zoom_range_corrected[1] - zoom_range_corrected[0]) + zoom_range_corrected[0]
+        aspect_ratio_fun = lambda ax : random(n_t) * (np.minimum(image_shape[ax] / (zoom * tile_shape[ax]), aspect_ratio_range[1]) - aspect_ratio_range[0]) + aspect_ratio_range[0]
+        aspect_ratio = [ aspect_ratio_fun(ax) for ax in range(1, rank) ]
+        if zoom_probability < 1: # some tiles are not zoomed
+            no_zoom = random(n_t) >= zoom_probability
+            for i in range(n_t):
+                if no_zoom[i]:
+                    zoom[i] = 1
+                    for ax in range(0, rank-1):
+                        aspect_ratio[ax][i] = 1
+        tile_size_fun = lambda ax : np.rint(zoom * tile_shape[ax]).astype(int) if ax==0 else np.rint(zoom * aspect_ratio[ax-1] * tile_shape[ax]).astype(int)
+        r_tile_shape = [tile_size_fun(ax) for ax in range(rank)]
+        for b in range(batch_size):
+            for i in range(n_t): # translate coords if necessary so that tile is valid
+                for ax in range(rank):
+                    delta = tile_coords_bat[b][ax][i] + r_tile_shape[ax][i] - image_shape[ax]
+                    if delta>0:
+                        tile_coords_bat[b][ax][i] -= delta
+
+        def tile_fun_no_jitter(b, o):
+            tiles = []
+            for i in range(n_t):
+                tile_shape_ =  [r_tile_shape[ax][i] for ax in range(rank)]
+                tile_coords_ba = [[tile_coords_bat[bidx][ax][i] for ax in range(rank)] for bidx in range(batch_size)]
+                tiles_ = _subset_by_b(b, tile_coords_ba, tile_shape_)
                 tiles.append(_zoom(tiles_, tile_shape, o))
             return np.concatenate(tiles)
-        tile_fun = tile_fun_jitter
-    else:
-        tile_fun = tile_fun_no_jitter
+
+        if random_channel_jitter_shape is not None and nchan_max>1:
+            random_channel_jitter_shape = ensure_multiplicity(rank, random_channel_jitter_shape)
+            def r_channel_jitter_fun(b, ax):
+                min_a = np.maximum(0, tile_coords_bat[b][ax]-random_channel_jitter_shape[ax] )
+                max_a = np.minimum(tile_coords_bat[b][ax] + random_channel_jitter_shape[ax], image_shape[ax]-r_tile_shape[ax])
+                return randint(min_a, max_a+1, size=n_t)
+            tile_coords_cbat = [ [ [r_channel_jitter_fun(b, ax) for ax in range(rank)] for b in range(batch_size) ] for c in range(nchan_max) ]
+            def tile_fun_jitter(b, o):
+                if b.shape[-1]==1:
+                    return tile_fun_no_jitter(b, o)
+                tiles = []
+                for i in range(n_t):
+                    tile_shape_ = [r_tile_shape[ax][i] for ax in range(rank)]
+                    tile_coords_cba = [[[tile_coords_cbat[c][bidx][ax][i] for ax in range(rank)] for bidx in range(batch_size)] for c in range(b.shape[-1])]
+                    tiles_ = _subset_by_cb(b, tile_coords_cba, tile_shape_)
+                    tiles.append(_zoom(tiles_, tile_shape, o))
+                return np.concatenate(tiles)
+            tile_fun = tile_fun_jitter
+        else:
+            tile_fun = tile_fun_no_jitter
     if multiple_inputs: # multi-array case (batch is actually a list of batches)
         interpolation_order= ensure_multiplicity(len(batch), interpolation_order)
         return [tile_fun(b, interpolation_order[i]) for i, b in enumerate(batch)]
@@ -372,6 +326,8 @@ def _get_tile_coords_axis_overlap(size, tile_size, overlap_mode=OVERLAP_MODE[1],
             n_tiles = 1 + ceil((size - tile_size)/(tile_size - min_overlap)) # size = tile_size + (n-1) * (tile_size - min_overlap)
         else:
             n_tiles = floor((size - min_overlap)/(tile_size - min_overlap)) # n-1 gaps and n tiles: size = n * tile_size + (n-1)*-min_overlap
+    else:
+        raise ValueError(f"Invalid overlap_mode = {overlap_mode} must be in {OVERLAP_MODE}")
     return _get_tile_coords_axis(size, tile_size, n_tiles, random_stride)
 
 def _get_tile_coords_axis(size, tile_size, n_tiles, random_stride=False):
