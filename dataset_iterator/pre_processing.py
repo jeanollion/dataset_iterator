@@ -87,7 +87,7 @@ def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool
         if per_image:
             center_range, scale_range = [0, 1], [0, 1]
         else:
-            bins = get_histogram_bins_IPR(*get_histogram(dataset, channel_name, bins=1000), n_bins=256, percentiles=[0, 95], verbose=verbose)
+            bins = get_histogram_bins_IPR(*get_histogram(dataset, channel_name, bins=1000), n_bins=256, percentiles=[0, 95], verbose=False)
             histo, _ = get_histogram(dataset, channel_name, bins=bins)
             center_range, scale_range = get_histogram_normalization_center_scale_ranges(histo, bins, fluo_center_centile_extent, fluo_scale_centile_range, return_mode=return_center, verbose=True)
             if verbose:

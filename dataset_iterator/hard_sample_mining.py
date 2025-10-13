@@ -69,35 +69,46 @@ class HardSampleMiningCallback(Callback):
     def initialize(self):
         if self.need_compute(-1):
             self.on_epoch_end(-1)
+        elif self.start_epoch >= self.start_from_epoch: # force compute & set metrics
+            self.set_metrics()
+            self.on_epoch_end(-1)
         else:
             if self.wait_for_me_supplier is not None:
                 self.wait_for_me_supplier.set()  # unlock main generator supplier
                 self.wait_for_me_consumer.set()  # unlock main generator consumer
 
     def on_epoch_begin(self, epoch, logs=None):
-        if self.n_metrics > 1 or self.need_compute(epoch):
-            self.wait_for_me_supplier.clear()  # will lock main generator at end of epoch
+        if self.n_metrics >= 1 or self.need_compute(epoch):
+            self.wait_for_me_supplier.clear()  # will lock main generator at end of epoch to modify sample probabilities
 
     def on_epoch_end(self, epoch, logs=None):
         if self.need_compute(epoch):
-            metrics, n_tiles = self.compute_metrics() # [ B, M or B x T, M ] , T can differ between iterators
-            gc.collect()
-            first = self.proba_per_metric is None
-            self.proba_per_metric = get_index_probability(metrics, enrich_factor=self.enrich_factor, quantile_max=self.quantile_max, quantile_min=self.quantile_min, verbose=self.verbose)
-            self.n_metrics = self.proba_per_metric.shape[0]
-            if first and self.n_metrics > self.period:
-                warnings.warn(f"Hard sample mining period = {self.period} should be greater than metric number = {self.n_metrics}")
-            self.n_tiles = n_tiles
+            self.set_metrics()
             #print("Hard sample mining metrics computed", flush=True)
         if self.proba_per_metric is not None and not self.wait_for_me_supplier.is_set():
             self.metric_idx = (self.metric_idx + 1) % self.n_metrics
             proba = self.proba_per_metric[self.metric_idx]
-            #print(f"set proba for metric: {self.metric_idx}")
             self.target_iterator.set_index_probability(proba, n_tiles = self.n_tiles)
             self.wait_for_me_supplier.set()  # release lock
 
     def on_train_end(self, logs=None):
         self.close()
+
+    def set_metrics(self):
+        metrics, n_tiles = self.compute_metrics()  # [ B, M or B x T, M ] , T can differ between iterators
+        gc.collect()
+        first = self.proba_per_metric is None
+        if first:
+            for i in range(metrics.shape[1]):
+                print(f"metric: range: [{np.min(metrics[:,i])}, {np.max(metrics[:,i])}] mean: {np.mean(metrics[:,i])}")
+        self.proba_per_metric = get_index_probability(metrics, enrich_factor=self.enrich_factor,  quantile_max=self.quantile_max, quantile_min=self.quantile_min, verbose=self.verbose)
+        self.n_metrics = self.proba_per_metric.shape[0]
+        if first:
+            for i in range(self.n_metrics):
+                print( f"set proba for metric: {self.metric_idx + 1}/{self.n_metrics}: range: [{np.min(self.proba_per_metric[i])}; {np.max(self.proba_per_metric[1])}]: NA count: {np.sum(np.isnan(self.proba_per_metric[1]))}")
+        if first and self.n_metrics > self.period:
+            warnings.warn(  f"Hard sample mining period = {self.period} should be greater than metric number = {self.n_metrics}")
+        self.n_tiles = n_tiles
 
     def compute_metrics(self):
         metric_list = []
