@@ -88,8 +88,10 @@ class HardSampleMiningCallback(Callback):
         if self.proba_per_metric is not None and not self.wait_for_me_supplier.is_set():
             self.metric_idx = (self.metric_idx + 1) % self.n_metrics
             proba = self.proba_per_metric[self.metric_idx]
+            print(f"setting proba for metrics: {self.metric_idx+1}/{self.n_metrics}", flush=True)
             self.target_iterator.set_index_probability(proba, n_tiles = self.n_tiles)
             self.wait_for_me_supplier.set()  # release lock
+            print(f"lock released", flush=True)
 
     def on_train_end(self, logs=None):
         self.close()
@@ -105,7 +107,7 @@ class HardSampleMiningCallback(Callback):
         self.n_metrics = self.proba_per_metric.shape[0]
         if first:
             for i in range(self.n_metrics):
-                print( f"set proba for metric: {self.metric_idx + 1}/{self.n_metrics}: range: [{np.min(self.proba_per_metric[i])}; {np.max(self.proba_per_metric[1])}]: NA count: {np.sum(np.isnan(self.proba_per_metric[1]))}")
+                print( f"proba for metric: {i + 1}/{self.n_metrics}: range: [{np.min(self.proba_per_metric[i])}; {np.max(self.proba_per_metric[i])}]: NA count: {np.sum(np.isnan(self.proba_per_metric[i]))}")
         if first and self.n_metrics > self.period:
             warnings.warn(  f"Hard sample mining period = {self.period} should be greater than metric number = {self.n_metrics}")
         self.n_tiles = n_tiles
@@ -190,8 +192,7 @@ def get_index_probability_1d(metric, enrich_factor:float=10., quantile_min:float
 
     vget_proba = np.vectorize(get_proba)
     proba = vget_proba(metric)
-    p_sum = float(np.sum(proba))
-    proba /= p_sum
+    proba = proba / float(np.sum(proba))
     #if verbose > 1:
     #    print(f"metric proba range: [{np.min(proba) * metric.shape[0]}, {np.max(proba) * metric.shape[0]}] (target range: [{p_min}; {p_max}]) power: {power} sum: {p_sum} quantiles: [{quantile_min}; {quantile_max}]", flush=True)
     return proba

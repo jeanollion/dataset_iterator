@@ -158,7 +158,7 @@ def get_histogram(dataset, channel_keyword:str, bins, bin_size=None, sum_to_one:
         iterator.close()
     if smooth_scale>0:
         if not smooth_scale_in_bin_unit:
-            smooth_scale /= bin_size
+            smooth_scale = smooth_scale / bin_size
         gaussian_filter(histogram, sigma = smooth_scale, mode="nearest", output=histogram)
     if sum_to_one:
         histogram=histogram/np.sum(histogram)
@@ -251,8 +251,8 @@ def get_mean_sd(dataset, channel_keyword:str, group_keyword:str=None, per_channe
   if not isinstance(dataset, DatasetIO):
       it.close()
   size = np.prod(shape[1:-1]) * ds_size * (1 if per_channel else shape[-1])
-  sum_im /= size
-  sum2_im /= size
+  sum_im = sum_im / size
+  sum2_im = sum2_im / size
   axis = 0 if per_channel else (0, 1)
   mean_ = np.sum(sum_im, axis=axis)
   sd_ = np.sqrt(np.sum(sum2_im, axis=axis) - mean_ * mean_)

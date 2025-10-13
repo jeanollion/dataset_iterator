@@ -37,9 +37,10 @@ class IndexArrayIterator():
         if choice and self.index_probability is not None:
             tiling = len(self.index_probability.shape)==2
             index_probability = np.sum(self.index_probability, axis=1) if tiling else self.index_probability # sum proba per tile
-            if tiling:
-                index_probability /= np.sum(index_probability)
             array = np.random.choice(array, size=array.shape[0], replace=True, p=index_probability)
+            if tiling:
+                sum_p = np.sum(index_probability)
+                print(f"index proba with tiling: sum: {sum_p}")
             #print(f"set index array with proba factor: [{np.min(index_probability) * index_probability.shape[0]}; {np.max(index_probability) * index_probability.shape[0]}] tiling: {tiling}")
         else:
             array = np.copy(array)

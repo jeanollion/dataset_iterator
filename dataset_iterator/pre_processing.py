@@ -142,7 +142,7 @@ def add_poisson_noise(img, noise_intensity=[0, 0.1], adjust_intensity=True):
         else:
             raise ValueError("noise_intensity should be either a list/tuple of lenth 2 or a scalar")
     if adjust_intensity:
-        noise_intensity /= 10.0 # so that intensity is comparable to gaussian sigma
+        noise_intensity = noise_intensity / 10.0 # so that intensity is comparable to gaussian sigma
     min = img.min()
     max = img.max()
     img = (img - min) / (max - min)

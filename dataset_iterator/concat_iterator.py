@@ -49,9 +49,7 @@ class ConcatIterator(IndexArrayIterator):
         if choice and self.index_probability is not None:
             tiling = len(self.index_probability.shape) == 2
             index_probability = np.sum(self.index_probability, axis=1) if tiling else self.index_probability  # sum proba per tile
-            if tiling:
-                index_probability /= np.sum(index_probability)
-            return np.random.choice(N, size=N, replace=True, p=np.sum(self.index_probability, 1) if tiling else self.index_probability)
+            return np.random.choice(N, size=N, replace=True, p=index_probability)
         else:
             return np.arange(N)
 
@@ -152,7 +150,12 @@ class ConcatIterator(IndexArrayIterator):
             for it, n_t in zip(self.iterators, n_tiles):
                 size = it.get_sample_number() * n_t
                 proba = value[cur_idx:cur_idx+size]
-                it.set_index_probability(proba / np.sum(proba), n_tiles=n_t)
+                sum_p = np.sum(proba)
+                if sum_p == 0:
+                    proba = np.ones_like(proba) / float(size)
+                else:
+                    proba = proba / sum_p
+                it.set_index_probability(proba, n_tiles=n_t)
                 cur_idx+=size
             assert cur_idx == value.shape[0], f"Concat iterator: invalid index_probability length expected: {cur_idx} actual {value.shape[0]}"
         else:
