@@ -108,8 +108,8 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
     zoom_range = ensure_multiplicity(2, zoom_range)
     assert zoom_range[0]<=zoom_range[1], "invalid zoom range"
     tile_shape = ensure_multiplicity(len(image_shape), tile_shape)
-    for i, (t_s, i_s) in enumerate(zip(tile_shape, image_shape)):
-        assert t_s <= i_s, f"invalid tile shape ({t_s}) at axis: {i}: must be lower than image shape ({i_s})"
+    for t, (t_s, i_s) in enumerate(zip(tile_shape, image_shape)):
+        assert t_s <= i_s, f"invalid tile shape ({t_s}) at axis: {t}: must be lower than image shape ({i_s})"
     assert anchor_point_mask_idx is None or tile_probabilities is None, "anchor_point mode is incompatible with tile_probability mode"
 
     if tile_probabilities is not None: # choose tiles according to tile probability
@@ -123,18 +123,18 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
             n_tiles = _get_tile_coords_overlap(image_shape, tile_shape, overlap_mode, min_overlap, random_stride=False)[0].shape[0]
         anchor_point_list = np.stack([ random_choice_multidim(anchor_point_list, size=n_tiles, replace=True, p=tile_probabilities[b] ) for b in range(batch_size)])
         tile_coords_bat = [[_get_tile_coords(image_shape, tile_shape, (1, 1), random_stride, anchor_point=anchor_point_list[b][t])[0] for t in range(n_tiles)] for b in range(batch_size) ]
+        anchor_intervals = None
     else:
         if anchor_point_mask_idx is not None:  # single anchor point per batch item, n_tiles around this anchor point
             if multiple_inputs:
-                assert anchor_point_mask_idx < len(
-                    batch), f"invalid anchor mask idx: {anchor_point_mask_idx} > {len(batch)}"
-                anchor_points = compute_middle_points(batch[anchor_point_mask_idx][..., nchan_max // 2])
+                assert anchor_point_mask_idx < len(batch), f"invalid anchor mask idx: {anchor_point_mask_idx} > {len(batch)}"
+                anchor_intervals = compute_anchor_interval(batch[anchor_point_mask_idx], jitter_shape=random_channel_jitter_shape)
             else:
                 assert anchor_point_mask_idx < nchan_max, f"invalid anchor mask idx: {anchor_point_mask_idx} > {nchan_max}"
-                anchor_points = compute_middle_points(batch[..., anchor_point_mask_idx])
+                anchor_intervals = compute_anchor_interval(batch[..., anchor_point_mask_idx:anchor_point_mask_idx+1], jitter_shape=random_channel_jitter_shape)
         else:
-            anchor_points = None
-        if n_tiles is None and anchor_points is None: # overlap mode
+            anchor_intervals = None
+        if n_tiles is None and anchor_intervals is None: # overlap mode
             tile_coords_bat = [_get_tile_coords_overlap(image_shape, tile_shape, overlap_mode, min_overlap, random_stride)  for _ in range(batch_size)]
         else:
             if n_tiles is None:  # infer n_tiles from overlap
@@ -142,8 +142,8 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
             assert len(image_shape) == 2, "only 2d images supported when specifying n_tiles"
             tile_coords_bat = []
             for b in range(batch_size):
-                _, n_tiles_yx = get_stride_2d(image_shape, tile_shape, n_tiles,  anchor_point=anchor_points[b] if anchor_points is not None else None)
-                all_tile_coords = _get_tile_coords(image_shape, tile_shape, n_tiles_yx, random_stride,  anchor_point=anchor_points[b] if anchor_points is not None else None)
+                _, n_tiles_yx = get_stride_2d(image_shape, tile_shape, n_tiles, anchor_interval=anchor_intervals[b] if anchor_intervals is not None else None)
+                all_tile_coords = _get_tile_coords(image_shape, tile_shape, n_tiles_yx, random_stride,  anchor_interval=anchor_intervals[b] if anchor_intervals is not None else None)
                 tile_coords_bat.append(_ensure_n_tiles(all_tile_coords, n_tiles, random=random_stride))
 
     n_t = tile_coords_bat[0][0].shape[0]
@@ -166,19 +166,24 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
         aspect_ratio = [ aspect_ratio_fun(ax) for ax in range(1, rank) ]
         if zoom_probability < 1: # some tiles are not zoomed
             no_zoom = random(n_t) >= zoom_probability
-            for i in range(n_t):
-                if no_zoom[i]:
-                    zoom[i] = 1
+            for t in range(n_t):
+                if no_zoom[t]:
+                    zoom[t] = 1
                     for ax in range(0, rank-1):
-                        aspect_ratio[ax][i] = 1
+                        aspect_ratio[ax][t] = 1
         tile_size_fun = lambda ax : np.rint(zoom * tile_shape[ax]).astype(int) if ax==0 else np.rint(zoom * aspect_ratio[ax-1] * tile_shape[ax]).astype(int)
         r_tile_shape = [tile_size_fun(ax) for ax in range(rank)]
         for b in range(batch_size):
-            for i in range(n_t): # translate coords if necessary so that tile is valid
+            for t in range(n_t): # translate coords if necessary so that tile is valid
                 for ax in range(rank):
-                    delta = tile_coords_bat[b][ax][i] + r_tile_shape[ax][i] - image_shape[ax]
+                    delta = tile_coords_bat[b][ax][t] + r_tile_shape[ax][t] - image_shape[ax]
                     if delta>0:
-                        tile_coords_bat[b][ax][i] -= delta
+                        tile_coords_bat[b][ax][t] -= delta
+                    if anchor_intervals is not None and r_tile_shape[ax][t] < tile_shape[ax]: # honor anchor interval when zooming in
+                        if tile_coords_bat[b][ax][t] > anchor_intervals[b, ax, 0]:
+                            tile_coords_bat[b][ax][t] = anchor_intervals[b, ax, 0]
+                        elif tile_coords_bat[b][ax][t] + r_tile_shape[ax][t] < anchor_intervals[b, ax, 1]:
+                            tile_coords_bat[b][ax][t] = anchor_intervals[b, ax, 1] - r_tile_shape[ax][t]
 
         def tile_fun_no_jitter(b, o):
             tiles = []
@@ -238,7 +243,7 @@ def _zoom(batch, target_shape, order):
     else:
         return zoom(batch, zoom = [1] + ratio + [1], order=order, grid_mode=False, mode="reflect")
 
-def get_stride_2d(image_shape, tile_shape, n_tiles, anchor_point=None):
+def get_stride_2d(image_shape, tile_shape, n_tiles, anchor_interval=None):
     if n_tiles == 1:
         return (image_shape[0], image_shape[1]), (1, 1)
     assert len(image_shape)==2, "only available for 2d images"
@@ -247,10 +252,11 @@ def get_stride_2d(image_shape, tile_shape, n_tiles, anchor_point=None):
     Sx = image_shape[1] - tile_shape[1]
     assert Sy>=0, f"tile size is too high on first axis: image size: {image_shape[0]} tile size: {tile_shape[0]}"
     assert Sx>=0, f"tile size is too high on second axis: image size: {image_shape[1]} tile size: {tile_shape[1]}"
-    if anchor_point is not None: # anchor point limits the possible range of stride
-        assert len(anchor_point) == 2, "anchor_point must be a 2D coordinate"
-        Dy = min(anchor_point[0], image_shape[0] - anchor_point[0])
-        Dx = min(anchor_point[1], image_shape[1] - anchor_point[1])
+    if anchor_interval is not None: # anchor interval limits the possible range of stride
+        anchor_interval = np.asarray(anchor_interval)
+        assert tuple(anchor_interval.shape) == (2,2), "anchor_interval must be a 2D interval shape (2, 2)"
+        Dy = min(anchor_interval[0, 0], image_shape[0] - anchor_interval[0, 1])
+        Dx = min(anchor_interval[1, 0], image_shape[1] - anchor_interval[1, 1])
         Sy = min(Sy, Dy)
         Sx = min(Sx, Dx)
     a = - n_tiles + 1
@@ -292,15 +298,17 @@ def _ensure_n_tiles(tile_coords, n_tiles, random:bool=True):
     else:
         raise ValueError(f"Too few tiles: expected={n_tiles} got={tile_coords[0].shape[0]}")
 
-def _get_tile_coords(image_shape, tile_shape, n_tiles, random_stride=False, anchor_point=None):
+def _get_tile_coords(image_shape, tile_shape, n_tiles, random_stride=False, anchor_interval=None, anchor_point=None):
     n_dims = len(image_shape)
     assert n_dims == len(tile_shape), "tile rank should be equal to image rank"
     assert n_dims == len(n_tiles), "n_tiles should have same rank as image"
-    if anchor_point is None:
-        tile_coords_by_axis = [_get_tile_coords_axis(image_shape[i], tile_shape[i], n_tiles[i], random_stride=random_stride) for i in range(n_dims)]
+    if anchor_point is not None and anchor_interval is None: # compute interval = point interval
+        anchor_interval = np.stack([np.asarray(anchor_point), np.asarray(anchor_point)], -1) # (Ndims, 2)
+    if anchor_interval is None:
+        tile_coords_by_axis = [_get_tile_coords_axis(image_shape[ax], tile_shape[ax], n_tiles[ax], random_stride=random_stride) for ax in range(n_dims)]
     else:
-        assert n_dims == len(anchor_point), f"anchor point should have same rank as image: but is {anchor_point} and rank={n_dims}"
-        tile_coords_by_axis = [ _get_tile_coords_anchor_axis(image_shape[i], tile_shape[i], n_tiles[i], anchor_point=anchor_point[i], random_stride=random_stride) for i in range(n_dims)]
+        assert n_dims == len(anchor_interval), f"anchor_interval should have same rank as image: but is {anchor_interval} and rank={n_dims}"
+        tile_coords_by_axis = [ _get_tile_coords_anchor_axis(image_shape[ax], tile_shape[ax], n_tiles[ax], anchor_interval=anchor_interval[ax], random_stride=random_stride) for ax in range(n_dims)]
     return [a.flatten() for a in np.meshgrid(*tile_coords_by_axis, sparse=False, indexing='ij')]
 
 def _get_tile_coords_overlap(image_shape, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1, random_stride=False):
@@ -367,24 +375,24 @@ def _get_tile_coords_axis(size, tile_size, n_tiles, random_stride=False):
         # print("after random: spacing: {}, gap: {}, coords: {}".format(spacing, half_mean_gap, coords))
     return coords
 
-def _get_tile_coords_anchor_axis(size, tile_size, n_tiles, anchor_point, random_stride=False):
-    if anchor_point is None:
-        raise ValueError("anchor_point must be provided for this function.")
+def _get_tile_coords_anchor_axis(size, tile_size, n_tiles, anchor_interval, random_stride=False):
+    if anchor_interval is None:
+        raise ValueError("anchor_interval must be provided for this function.")
 
     # Calculate the minimum and maximum possible starting positions for each tile
-    # such that the anchor_point is always included
-    min_start = max(anchor_point - tile_size + 1, 0)
-    max_start = min(anchor_point, size - tile_size)
+    # such that the anchor_interval is always included
+    min_start = max(anchor_interval[1] - tile_size + 1, 0)
+    max_start = min(anchor_interval[0], size - tile_size)
 
     # If the tile_size is larger than the size, only one tile is possible
     if tile_size >= size:
         return [0]
 
-    # Calculate the base coordinates such that all tiles include the anchor_point
+    # Calculate the base coordinates such that all tiles include the anchor_interval
     if n_tiles == 1:
         base_coords = np.array([(min_start + max_start) // 2], dtype=np.int32)
     else:
-        # Distribute tiles evenly around the anchor_point
+        # Distribute tiles evenly around the anchor_interval
         base_coords = np.linspace(min_start, max_start, n_tiles, dtype=np.int32)
 
     # Apply random perturbation if required
@@ -484,7 +492,7 @@ def crop(batch, target_shape, start_point=None):
             start_point[1] = min(start_point[2], X - target_shape[2])
             return batch[:, start_point[0]:start_point[0]+target_shape[0], start_point[1]:start_point[1]+target_shape[1], start_point[2]:start_point[2]+target_shape[2]]
 
-def compute_middle_points(tensor):
+def compute_middle_points(tensor): # (B, Y, X) -> (B, 2)
     B = tensor.shape[0]
     ndim = tensor.ndim - 1  # exclude batch dimension
     middle_points = np.zeros((B, ndim))
@@ -495,3 +503,13 @@ def compute_middle_points(tensor):
         indices = np.arange(tensor.shape[axis + 1])[None, ]
         middle_points[:, axis] = np.sum(counts * indices, axis=1) / np.sum(counts, axis=1)
     return middle_points
+
+def compute_anchor_interval(tensor, jitter_shape=None): # [ (B, Y, X, C), (2) ] -> (B, A=2 (Y, X), I=2 (min/max) )
+    anchor_points = [ compute_middle_points(tensor[..., c]) for c in range(tensor.shape[-1]) ] # (C, B, 2)
+    anchor_interval = np.stack([ np.min(anchor_points, axis=0), np.max(anchor_points, axis=0) ], -1) # (B, 2, 2)
+    if jitter_shape is not None:
+        jitter_shape = np.asarray(jitter_shape)[np.newaxis] # (1, 2)
+        anchor_interval[..., 0] = np.maximum( anchor_interval[..., 0] - jitter_shape, 0 )
+        max = np.array(tensor.shape[1:-1])[np.newaxis] # (1, 2)
+        anchor_interval[..., 1] = np.minimum( anchor_interval[..., 1] + jitter_shape, max )
+    return anchor_interval
