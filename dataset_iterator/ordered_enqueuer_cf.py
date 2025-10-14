@@ -29,6 +29,10 @@ class OrderedEnqueuerCF():
         assert not self.use_shm and not self.use_shared_array or self.use_shm != self.use_shared_array, "either shm or shared_array or none of the 2"
         self.wait_for_me_supplier = None
         self.wait_for_me_supplier_relock = False
+        self.supplying_signal = threading.Event()
+        self.supplying_signal.clear() # wait -> until is supplying
+        self.supplying_end_signal = threading.Event()
+        self.supplying_end_signal.set()  # wait -> until end of epoch
         self.wait_for_me_consumer = None
         self.name=name
         global _COUNTER
@@ -118,6 +122,9 @@ class OrderedEnqueuerCF():
             return self.uid, iterator if mp_context_method == "fork" else dill.dumps(iterator), mp_context_method != "fork"
 
         while True:
+            self.supplying_signal.set()
+            self.supplying_end_signal.clear()
+            #print("supplying signal on", flush=True)
             if self.shuffle:
                 random.shuffle(indices)
             executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
@@ -141,15 +148,24 @@ class OrderedEnqueuerCF():
             shutdown_executor(executor)
             self._clear_iterator()
             gc.collect()
+            self.supplying_signal.clear()
+            self.supplying_end_signal.set()
+            #print("supplying signal off", flush=True)
             if self.stop_signal.is_set() or self.single_epoch:
                 shutdown_executor(executor)
                 self._clear_iterator()
                 return
             if self.wait_for_me_supplier is not None:
+                #if not self.wait_for_me_supplier.is_set():
+                #    print("supplier waiting...", flush=True)
                 self.wait_for_me_supplier.wait()
+                #print("supplier waiting done", flush=True)
                 if self.wait_for_me_supplier_relock:
                     self.wait_for_me_supplier.clear()
+                    #print("supplier relock", flush=True)
                     self.wait_for_me_supplier_relock = False
+            #self.supplying_signal.set()
+            #print("supplying signal on", flush=True)
             #log_used_mem()
             indices = list(range(len(self.iterator)))
             self._send_iterator()  # Update the pool

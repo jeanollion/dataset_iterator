@@ -52,7 +52,7 @@ class HardSampleMiningCallback(Callback):
         self.enqueuer = None
         self.generator = None
 
-    def set_enqueuer(self, enqueuer):
+    def set_enqueuer(self, enqueuer:OrderedEnqueuerCF):
         self.enqueuer = enqueuer
         self.enqueuer.wait_for_me_supplier = self.wait_for_me_supplier
         self.enqueuer.wait_for_me_consumer = self.wait_for_me_consumer
@@ -79,19 +79,26 @@ class HardSampleMiningCallback(Callback):
 
     def on_epoch_begin(self, epoch, logs=None):
         if self.n_metrics >= 1 or self.need_compute(epoch):
+            #if not self.enqueuer.supplying_signal.is_set():
+            #    print("waiting for supplier to start before locking it...", flush=True)
+            self.enqueuer.supplying_signal.wait() # wait that supplier loop starts otherwise can stall randomly
             self.wait_for_me_supplier.clear()  # will lock main generator at end of epoch to modify sample probabilities
+            #print(f"supplier lock (ep-begin)", flush=True)
 
     def on_epoch_end(self, epoch, logs=None):
         if self.need_compute(epoch):
             self.set_metrics()
             #print("Hard sample mining metrics computed", flush=True)
         if self.proba_per_metric is not None and not self.wait_for_me_supplier.is_set():
+            #if not self.enqueuer.supplying_end_signal.is_set():
+            #    print(f"waiting supplier signal end...", flush=True)
+            self.enqueuer.supplying_end_signal.wait()
             self.metric_idx = (self.metric_idx + 1) % self.n_metrics
             proba = self.proba_per_metric[self.metric_idx]
             print(f"setting proba for metrics: {self.metric_idx+1}/{self.n_metrics}", flush=True)
             self.target_iterator.set_index_probability(proba, n_tiles = self.n_tiles)
             self.wait_for_me_supplier.set()  # release lock
-            print(f"lock released", flush=True)
+            #print(f"supplier unlock (ep-ends)", flush=True)
 
     def on_train_end(self, logs=None):
         self.close()
@@ -120,16 +127,19 @@ class HardSampleMiningCallback(Callback):
         if self.enqueuer is not None:
             main_sequence = self.enqueuer.iterator
             self.wait_for_me_consumer.clear()  # lock the main generator consumer
+            #print("consumer locked", flush=True)
             #main_sequence.close()
         for i in range(len(self.simple_iterator_list)):
             # unlock temporarily the corresponding enqueuer so that it starts
             #print(f"compute metrics for iterator #{i}: start of loop", flush=True)
-            if self.enqueuer is not None:
+            if self.enqueuer is not None: # reuse the same enqueur -> set the iterator
                 #self.simple_iterator_list[i].open()
                 self.enqueuer.iterator = self.simple_iterator_list[i]
                 self.enqueuer.wait_for_me_supplier_relock = True # re-lock so that supplier stops at end of epoch (only one epoch for HSM)
                 self.wait_for_me_supplier.set()
+                #print(f"supplier unlock (compute metrics @{i})", flush=True)
                 self.wait_for_me_consumer_hsm.set()  # unlock hsm consumer
+                #print(f"hsm consumer unlock", flush=True)
                 gen = self.generator
             else:
                 gen = self.simple_iterator_list[i]
@@ -144,7 +154,9 @@ class HardSampleMiningCallback(Callback):
             #main_sequence.open()
             self.enqueuer.iterator = main_sequence
             self.wait_for_me_consumer_hsm.clear()  # lock the hsm consumer
+            #print("hsm consumer locked", flush=True)
             self.wait_for_me_consumer.set()  # unlock the main consumer
+            #print("consumer unlocked", flush=True)
         return np.concatenate(metric_list, axis=0), tile_list
 
 
