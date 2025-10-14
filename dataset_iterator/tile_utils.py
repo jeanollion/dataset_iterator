@@ -381,12 +381,14 @@ def _get_tile_coords_anchor_axis(size, tile_size, n_tiles, anchor_interval, rand
 
     # Calculate the minimum and maximum possible starting positions for each tile
     # such that the anchor_interval is always included
-    min_start = max(anchor_interval[1] - tile_size + 1, 0)
-    max_start = min(anchor_interval[0], size - tile_size)
+    right_bound = max(anchor_interval[1] - tile_size + 1, 0)
+    left_bound = min(anchor_interval[0], size - tile_size)
+    min_start = min(left_bound, right_bound)
+    max_start = max(left_bound, right_bound)
 
     # If the tile_size is larger than the size, only one tile is possible
     if tile_size >= size:
-        return [0]
+        return [0] * n_tiles
 
     # Calculate the base coordinates such that all tiles include the anchor_interval
     if n_tiles == 1:
