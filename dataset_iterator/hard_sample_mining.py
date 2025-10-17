@@ -95,7 +95,7 @@ class HardSampleMiningCallback(Callback):
             self.enqueuer.supplying_end_signal.wait()
             self.metric_idx = (self.metric_idx + 1) % self.n_metrics
             proba = self.proba_per_metric[self.metric_idx]
-            print(f"setting proba for metrics: {self.metric_idx+1}/{self.n_metrics}", flush=True)
+            #print(f"setting proba for metrics: {self.metric_idx+1}/{self.n_metrics}", flush=True)
             self.target_iterator.set_index_probability(proba, n_tiles = self.n_tiles)
             self.wait_for_me_supplier.set()  # release lock
             #print(f"supplier unlock (ep-ends)", flush=True)
