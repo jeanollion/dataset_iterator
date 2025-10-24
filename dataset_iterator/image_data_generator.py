@@ -177,7 +177,7 @@ class ScalingImageGenerator():
             fluo = mode == "FLUORESCENCE"
             if "per_image" not in kwargs:
                 kwargs["per_image"] = dataset is None
-            self.per_image = kwargs.get("per_image", True)
+            self.per_image = kwargs.get("per_image", False)
             self.saturate = kwargs.pop("saturate", 1.) # not used by get_center_scale_range
             assert 0<=self.saturate<=1, "invalid saturation value should be in range [0, 1]"
             if not self.per_image and dataset is None:
@@ -187,16 +187,11 @@ class ScalingImageGenerator():
                 self.center = kwargs.get("center", np.mean(self.center_range))
                 self.scale = kwargs.get("scale", np.mean(self.scale_range))
             else:
-                kwargs.pop("max_centile", None)
                 center_range, scale_range = get_center_scale_range(dataset, channel_name=channel_name, fluorescence=fluo, return_center=True, **kwargs)
-                if len(center_range)==3:
-                    self.center = center_range[-1]
-                    center_range = center_range[:2]
-                else:
-                    self.center = np.mean(center_range)
-                self.scale_range = scale_range
-                self.center_range = center_range
-                self.scale = np.mean(scale_range)
+                self.center = center_range[-1] if len(center_range)==3 else np.mean(center_range)
+                self.center_range = center_range[:2]
+                self.scale_range = scale_range[:2]
+                self.scale = scale_range[-1] if len(scale_range) == 3 else np.mean(scale_range)
 
     def get_constant_transform(self, image_shape):
         params = {"constant":True}
