@@ -226,16 +226,9 @@ class ScalingImageGenerator():
             params["scale"] = uniform(self.scale_range[0], self.scale_range[1])
         return params
 
-    def transfer_parameters(self, source, destination):
-        if self.mode == "RANDOM_CENTILES":
-            destination["cmin"] = source.get("cmin", 0)
-            destination["cmax"] = source.get("cmax", 1)
-        elif self.mode == "RANDOM_MIN_MAX":
-            destination["vmin"] = source.get("vmin", 0)
-            destination["vmax"] = source.get("vmax", 1)
-        elif self.mode == "FLUORESCENCE" or self.mode == "BRIGHT_FIELD":
-            destination["center"] = source["center"]
-            destination["scale"] = source["scale"]
+    def transfer_parameters(self, source, destination): # between channels : no transfer of intensity parameters
+        pass
+
 
     def apply_transform(self, img, aug_params):
         if self.mode=="CONSTANT":
@@ -340,32 +333,8 @@ class IlluminationImageGenerator():
             del params["illumination_variation_target_points"]
         return params
 
-    def transfer_parameters(self, source, destination):
-        # do not transfer gaussian blur as focus may vary from one frame to the other
-        if "poisson_noise" in source:
-            destination["poisson_noise"] = source.get("poisson_noise", 0)
-        elif "poisson_noise" in destination:
-            del destination["poisson_noise"]
-        if "speckle_noise" in source:
-            destination["speckle_noise"] = source.get("speckle_noise", 0)
-        elif "speckle_noise" in destination:
-            del destination["speckle_noise"]
-        if "gaussian_noise" in source:
-            destination["gaussian_noise"] = source.get("gaussian_noise", 0)
-        elif "gaussian_noise" in destination:
-            del destination["gaussian_noise"]
-        if "gaussian_blur" in source:
-            destination["gaussian_blur"] = source.get("gaussian_blur", 0)
-        elif "gaussian_blur" in destination:
-            del destination["gaussian_blur"]
-        if "histogram_elasticdeform_target_points_delta" in source:
-            destination["histogram_elasticdeform_target_points_delta"] = source["histogram_elasticdeform_target_points_delta"]
-        elif "histogram_elasticdeform_target_points_delta" in destination:
-            del destination["histogram_elasticdeform_target_points_delta"]
-        if "illumination_variation_target_points" in source:
-            destination["illumination_variation_target_points"] = source["illumination_variation_target_points"]
-        elif "illumination_variation_target_points" in destination:
-            del destination["illumination_variation_target_points"]
+    def transfer_parameters(self, source, destination): # between channels : no transfer of intensity parameters
+        pass
 
     def apply_transform(self, img, aug_params):
         if "histogram_elasticdeform_target_points_delta" in aug_params:
@@ -427,7 +396,7 @@ class KerasImageDataGenerator(ImageDataGenerator):
                 random_transform["ty"] = random_transform["ty"] * img_shape[self.col_axis - 1]
         return random_transform
 
-    def transfer_parameters(self, source, destination):
+    def transfer_parameters(self, source, destination): # between channel: geometrical transformations must be identical
         destination['flip_vertical'] = source.get('flip_vertical', False)
         destination['flip_horizontal'] = source.get('flip_horizontal', False)
         destination['zy'] = source.get('zy', 1)
