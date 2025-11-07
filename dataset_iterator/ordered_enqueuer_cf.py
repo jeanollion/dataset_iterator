@@ -18,22 +18,25 @@ _SHARED_ITERATOR = {}
 # We use a Value to provide unique id to different processes.
 _COUNTER = None
 
-
-class OrderedEnqueuerCF():
-    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=True, name="enqueuer"):
+class OrderedEnqueuerCF:
+    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=True, max_restarts:int=10, name="enqueuer"):
         self.iterator = iterator
         self.shuffle = shuffle
         self.single_epoch = single_epoch
         self.use_shm = use_shm
         self.use_shared_array=use_shared_array
         assert not self.use_shm and not self.use_shared_array or self.use_shm != self.use_shared_array, "either shm or shared_array or none of the 2"
-        self.wait_for_me_supplier = None
-        self.wait_for_me_supplier_relock = False
+        self.wait_for_me_supplier = threading.Event() # wait to start the epoch
+        self.wait_for_me_supplier.set()
+        self.request_lock_list = []
         self.supplying_signal = threading.Event()
         self.supplying_signal.clear() # wait -> until is supplying
         self.supplying_end_signal = threading.Event()
         self.supplying_end_signal.set()  # wait -> until end of epoch
-        self.wait_for_me_consumer = None
+        self.wait_for_me_consumer = threading.Event()
+        self.wait_for_me_consumer.set()
+        assert max_restarts > 0
+        self.max_restarts=max_restarts
         self.name=name
         global _COUNTER
         if _COUNTER is None:
@@ -53,13 +56,19 @@ class OrderedEnqueuerCF():
             with _COUNTER.get_lock():
                 self.uid = _COUNTER.value
                 _COUNTER.value += 1
-
         self.workers = 0
         self.queue = None
         self.run_thread = None
         self.stop_signal = None
         self.stop_signal = None
         self.semaphore = None
+
+    def request_lock(self):
+        return True in self.request_lock_list
+
+    def append_request_lock(self, request_lock):
+        self.request_lock_list.append(request_lock)
+        return len(self.request_lock_list) - 1
 
     def is_running(self):
         return self.stop_signal is not None and not self.stop_signal.is_set()
@@ -93,17 +102,12 @@ class OrderedEnqueuerCF():
                 return
             time.sleep(0.1)
 
-    def _task_done(self, _):
-        """Called once task is done, releases the queue if blocked."""
-        self.semaphore.release()
-
     def _run(self):
         """Submits request to the executor and queue the `Future` objects."""
         if self.wait_for_me_supplier is not None:
+            #print(f"{self.name}({self.uid}) S waiting supplier...", flush=True)
             self.wait_for_me_supplier.wait()
-            if self.wait_for_me_supplier_relock:
-                self.wait_for_me_supplier.clear()
-                self.wait_for_me_supplier_relock=False
+            #print(f"{self.name}({self.uid}) S waiting supplier done", flush=True)
         if self.use_shm:
             task = get_item_shm
         elif self.use_shared_array:
@@ -124,49 +128,54 @@ class OrderedEnqueuerCF():
         while True:
             self.supplying_signal.set()
             self.supplying_end_signal.clear()
-            #print("supplying signal on", flush=True)
+            #print(f"{self.name}({self.uid}) enqueueur start epoch. semaphore: {self.semaphore._value}", flush=True)
             if self.shuffle:
                 random.shuffle(indices)
             executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
             for idx, i in enumerate(indices):
-                if self.stop_signal.is_set():
-                    shutdown_executor(executor)
-                    self._clear_iterator()
-                    return
+                restarts = 0
                 self.semaphore.acquire()
-                if executor._broken:
-                    print(f"Executor broken: waiting for queue: {len(self.queue)}...", flush=True)
-                    self.wait_queue(True)
-                    print(f"Executor broken: restarting...", flush=True)
-                    shutdown_executor(executor)
-                    executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
-                    print(f"Executor restarted!", flush=True)
-                future = executor.submit(task, self.uid, i)
-                self.queue.append((future, i))
+                #print(f"{self.name}({self.uid}) task: {i} semaphore: {self.semaphore._value} queue: {len(self.queue)}", flush=True)
+                while restarts < self.max_restarts:
+                    if self.stop_signal.is_set():
+                        shutdown_executor(executor)
+                        self._clear_iterator()
+                        return
+                    try:
+                        future = executor.submit(task, self.uid, i)
+                        self.queue.append((future, i))
+                        break  # Task submitted successfully, move to next task
+                    except Exception as e:
+                        if restarts == self.max_restarts:
+                            raise ValueError(f"Failed to submit task for index {i} after {self.max_restarts} attempts. {e}")
+                        print(f"Executor {self.name}({self.uid}) error for index {i} (attempt {restarts + 1}/{self.max_restarts}): {e}. Restarting executor...", flush=True)
+                        self.wait_queue(True)
+                        #with _EXECUTOR_LOCK:
+                        shutdown_executor(executor)
+                        executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
+                        print(f"Executor {self.name}({self.uid}) restarted! ", flush=True)
+                        restarts += 1
+
             # Done with the current epoch, waiting for the final batches
             self.wait_queue(True)  # safer to wait before calling shutdown than calling directly shutdown with wait=True
+            self.supplying_signal.clear()
             shutdown_executor(executor)
             self._clear_iterator()
+            del executor
             gc.collect()
-            self.supplying_signal.clear()
             self.supplying_end_signal.set()
-            #print("supplying signal off", flush=True)
-            if self.stop_signal.is_set() or self.single_epoch:
-                shutdown_executor(executor)
-                self._clear_iterator()
-                return
+            #print(f"{self.name}({self.uid}) Supplying signal off", flush=True)
+
             if self.wait_for_me_supplier is not None:
-                #if not self.wait_for_me_supplier.is_set():
-                #    print("supplier waiting...", flush=True)
-                self.wait_for_me_supplier.wait()
-                #print("supplier waiting done", flush=True)
-                if self.wait_for_me_supplier_relock:
+                if self.request_lock() and self.wait_for_me_supplier.is_set():
+                    #print(f"{self.name}({self.uid}) lock requested", flush=True)
                     self.wait_for_me_supplier.clear()
-                    #print("supplier relock", flush=True)
-                    self.wait_for_me_supplier_relock = False
-            #self.supplying_signal.set()
-            #print("supplying signal on", flush=True)
+                #if not self.wait_for_me_supplier.is_set():
+                    #print(f"{self.name}({self.uid}) waiting supplier...", flush=True)
+                self.wait_for_me_supplier.wait()
+                #print(f"{self.name}({self.uid}) supplier waiting done", flush=True)
             #log_used_mem()
+            #print(f"{self.name}({self.uid}) sending iterator")
             indices = list(range(len(self.iterator)))
             self._send_iterator()  # Update the pool
 
@@ -186,10 +195,10 @@ class OrderedEnqueuerCF():
         global _SHARED_ITERATOR
         _SHARED_ITERATOR[self.uid] = None
 
-    def get(self):
-        return self.get_wfm(self.wait_for_me_consumer)
+    def get(self, block:bool=True, name="main"):
+        return self.get_wfm(self.wait_for_me_consumer, block=block, name=name)
 
-    def get_wfm(self, wait_for_me:threading.Event):
+    def get_wfm(self, wait_for_me:threading.Event, block:bool=True, name:str="main"):
         """Creates a generator to extract data from the queue.
 
         Skip the data if it is `None`.
@@ -200,14 +209,17 @@ class OrderedEnqueuerCF():
             `(inputs, targets, sample_weights)`.
         """
         while self.is_running():
-            self.wait_queue(False)
-            if wait_for_me is not None:
-                wait_for_me.wait()
+            if block:
                 self.wait_queue(False)
-
+            if wait_for_me is not None:
+                #print(f"{name}({self.uid}) waiting consumer...", flush=True)
+                wait_for_me.wait()
+                #print(f"{name}({self.uid}) waiting consumer done", flush=True)
+                if block:
+                    self.wait_queue(False)
             if len(self.queue) > 0:
                 future, i = self.queue[0]
-                #print(f"processing task: {i}")
+                #print(f"{name}({self.uid}) is processing task: {i} (queue: {len(self.queue)})", flush=True)
                 ex = future.exception()
                 if ex is None:
                     inputs = future.result()
@@ -229,6 +241,9 @@ class OrderedEnqueuerCF():
                 future.cancel()
                 del future
                 yield inputs
+            elif not block and not self.supplying_signal.is_set():
+                #print(f"{name}({self.uid}) yield item 0 to avoid blocking")
+                yield get_item(self.uid, 0)
 
     def stop(self, timeout=5):
         """Stops running threads and wait for them to exit, if necessary.
@@ -296,3 +311,4 @@ def shutdown_executor(executor):
     del executor
     if processes is not None:
         kill_processes(processes, timeout=3, verbose=True)
+    time.sleep(0.1)
