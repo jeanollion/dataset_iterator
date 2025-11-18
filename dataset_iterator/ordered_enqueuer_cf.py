@@ -128,14 +128,14 @@ class OrderedEnqueuerCF:
         while True:
             self.supplying_signal.set()
             self.supplying_end_signal.clear()
-            #print(f"{self.name}({self.uid}) enqueueur start epoch. semaphore: {self.semaphore._value}", flush=True)
+            #print(f"{self.name}({self.uid}) enqueuer start epoch. semaphore: {self.semaphore._value}", flush=True)
             if self.shuffle:
                 random.shuffle(indices)
             executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
             for idx, i in enumerate(indices):
                 restarts = 0
                 self.semaphore.acquire()
-                #print(f"{self.name}({self.uid}) task: {i} semaphore: {self.semaphore._value} queue: {len(self.queue)}", flush=True)
+                #print(f"{self.name}({self.uid}) supply task: {i} semaphore: {self.semaphore._value} queue: {len(self.queue)}", flush=True)
                 while restarts < self.max_restarts:
                     if self.stop_signal.is_set():
                         shutdown_executor(executor)
@@ -240,6 +240,7 @@ class OrderedEnqueuerCF:
                 self.semaphore.release()  # release is done here and not as a future callback to limit effective number of samples in memory
                 future.cancel()
                 del future
+                #print(f"{name}({self.uid}) has processed task: {i} (semaphore: {self.semaphore._value} queue: {len(self.queue)})", flush=True)
                 yield inputs
             elif not block and not self.supplying_signal.is_set():
                 #print(f"{name}({self.uid}) yield item 0 to avoid blocking")
@@ -280,7 +281,7 @@ class OrderedEnqueuerCF:
 def get_item_shm(uid, i):
     tensors = _SHARED_ITERATOR[uid][i]
     #print(f"item {i} -> {_SHARED_SEQUENCES[uid].index_array[i]} process: {os.getpid()}", flush=True)
-    return to_shm(tensors)
+    return to_shm(tensors, use_shared_array=False)
 
 
 def get_item_shared_array(uid, i):

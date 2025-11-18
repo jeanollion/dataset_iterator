@@ -33,8 +33,11 @@ class ValidationCallback(Callback):
             self.train_enqueuer.wait_for_me_supplier.set()
 
     def start_test(self):
-        #print(f"start test train enq is set={self.train_enqueuer.wait_for_me_supplier.is_set()}")
+        #print(f"start test", flush=True)
+        #if not self.train_enqueuer.wait_for_me_supplier.is_set():
+        #    print(f"waiting train eqn to end...", flush=True)
         self.train_enqueuer.supplying_end_signal.wait()
+        #print(f"waiting train eqn to end done. starting val enqueuer", flush=True)
         self.val_enqueuer.wait_for_me_supplier.set()
 
     def stop_test(self):
@@ -77,6 +80,9 @@ class ValidationCallback(Callback):
     def on_epoch_end(self, epoch, logs=None):
         #print(f"epoch {epoch} end", flush=True)
         if not self._should_eval(epoch) and self._should_eval(epoch + 1):
+            #if not self.train_enqueuer.supplying_signal.is_set():
+            #    print("will eval at next epoch. waiting supplier...", flush=True)
             self.train_enqueuer.supplying_signal.wait()
+            #print("will eval at next epoch. waiting supplier done", flush=True)
             self.train_enqueuer.request_lock_list[self.request_lock_index] = self._should_eval(epoch + 1) # in case test was not run on this epoch
 
