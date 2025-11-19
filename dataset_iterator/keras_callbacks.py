@@ -173,39 +173,3 @@ class LogsCallback(Callback):
                     headers.insert(0, "epoch")
                     writer.writerow(headers)
                 writer.writerow(losses)
-
-
-# composite loss with sublosses of variable scales: normalize each subloss with ExponentialMovingAverage so that all subloss are comparable. Loss is the average of the scaled sublosses
-class EMALossNormalizationCallback(Callback):
-    def __init__(self, step_number: int, val_step_number: int = None, alpha: float = 0.95):
-        super().__init__()
-        self.epoch_alpha = alpha  # Desired smoothing over one epoch
-        self.ema_losses = {}  # EMA for training losses
-        self.ema_val_losses = {}  # EMA for validation losses
-        self.steps_per_epoch = step_number
-        self.val_steps = val_step_number if val_step_number is not None else step_number
-
-    def on_train_begin(self, logs=None):
-        self.ema_losses = {}
-        self.ema_val_losses = {}
-
-    def _accumulate(self, logs, val: bool):
-        if val:
-            step_alpha = 1 - (1 - self.epoch_alpha) / self.val_steps
-        else:
-            step_alpha = 1 - (1 - self.epoch_alpha) / self.steps_per_epoch  # Scale alpha for per-step updates
-        ema_losses = self.ema_val_losses if val else self.ema_losses
-
-        for name in logs:
-            if name != "loss":
-                if name not in ema_losses:
-                    ema_losses[name] = logs[name]
-                else:
-                    ema_losses[name] = step_alpha * ema_losses[name] + (1 - step_alpha) * logs[name]
-        logs["loss"] = np.sum([logs[name] / ema_losses[name] for name in ema_losses]) / len(ema_losses)
-
-    def on_train_batch_end(self, batch, logs=None):
-        self._accumulate(logs, False)
-
-    def on_test_batch_end(self, batch, logs=None):
-        self._accumulate(logs, val=True)

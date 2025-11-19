@@ -49,7 +49,7 @@ def get_histogram_normalization_center_scale_ranges(histogram, bins, center_perc
     if scale_percentile_max is not None:
         scale_range.append(values[4] - mode_value)
     if verbose:
-        print("normalization_center_scale: modal value: {}, center_range: [{}; {}] scale_range: [{}; {}] {}".format(mode_value, mode_range[0], mode_range[1], scale_range[0], scale_range[1], "" if scale_percentile_max is None else f"scale max: {scale_range[2]}"))
+        print("normalization_center_scale: modal value: {}, center_range: [{}; {}] scale_range: [{}; {}] {}".format(mode_value, mode_range[0], mode_range[1], scale_range[0], scale_range[1], "" if scale_percentile_max is None else f"default scale: {scale_range[2]}"))
     return mode_range, scale_range
 
 def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool = False, bf_sd_factor:float=3., fluo_scale_centile_range:list=[75, 99.9], fluo_center_centile_extent:list=[20, 30], fluo_scale_centile_max:float=None, per_image:bool=True, return_center:bool=False, verbose:bool=True):
@@ -96,7 +96,7 @@ def get_center_scale_range(dataset, channel_name:str = "/raw", fluorescence:bool
             histo, _ = get_histogram(dataset, channel_name, bins=bins)
             center_range, scale_range = get_histogram_normalization_center_scale_ranges(histo, bins, fluo_center_centile_extent, fluo_scale_centile_range, scale_percentile_max=fluo_scale_centile_max, return_mode=return_center, verbose=False)
             if verbose:
-                print("center: [{}; {}] / scale: [{}; {}] {}".format(center_range[0], center_range[1], scale_range[0], scale_range[1], f"scale max: {scale_range[2]}"))
+                print("center: [{}; {}] / scale range: [{}; {}] {}".format(center_range[0], center_range[1], scale_range[0], scale_range[1], f"default scale: {scale_range[2]}"))
         return center_range, scale_range
     else:
         if per_image:
