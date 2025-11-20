@@ -6,7 +6,7 @@ from tensorflow.keras.metrics import Metric
 class EMANormalization(Metric):
     def __init__(self, num_losses: int, step_number: int, alpha: float = 0.95, init_ema_values=None, name="ema_normalized_loss", **kwargs):
         super().__init__(name=name, **kwargs)
-        self.num_losses = num_losses
+        self.num_losses = int(num_losses)
         self.alpha = alpha  # Epoch-level alpha
         self.step_number = float(step_number)
         self.step_alpha = 1 - (1 - alpha) / self.step_number
@@ -31,7 +31,8 @@ class EMANormalization(Metric):
 
         # Update EMA for each loss
         if not val: # only accumulated at train time: must be the same for training and validation
-            self.ema_losses.assign( tf.cond(self.ema_losses == 0, lambda:losses, lambda: self.step_alpha * self.ema_losses + (1 - self.step_alpha) * losses) )
+            init = tf.logical_and(tf.math.equal(self.sample_weight_sum, 0), tf.math.equal(tf.math.count_nonzero(self.ema_losses), 0))
+            self.ema_losses.assign( tf.cond( init, lambda:losses, lambda: self.step_alpha * self.ema_losses + (1 - self.step_alpha) * losses ) )
 
         # Compute normalized loss for this batch
         normalized_loss = tf.reduce_mean(losses / (self.ema_losses + tf.keras.backend.epsilon()))
