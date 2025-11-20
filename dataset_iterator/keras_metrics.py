@@ -4,20 +4,25 @@ import tensorflow as tf
 from tensorflow.keras.metrics import Metric
 
 class EMANormalization(Metric):
-    def __init__(self, num_losses: int, step_number: int, alpha: float = 0.95, name="ema_normalized_loss", **kwargs):
+    def __init__(self, num_losses: int, step_number: int, alpha: float = 0.95, init_ema_values=None, name="ema_normalized_loss", **kwargs):
         super().__init__(name=name, **kwargs)
         self.num_losses = num_losses
         self.alpha = alpha  # Epoch-level alpha
         self.step_number = float(step_number)
         self.step_alpha = 1 - (1 - alpha) / self.step_number
 
-
-        # Track EMA for each loss. stateful variables among epochs
+        # Track EMA for each loss (stateful variable, not reset in reset_state)
         self.ema_losses = self.add_weight(name="ema_losses", shape=(num_losses,), initializer="zeros")
-
+        if init_ema_values is not None:
+            self.ema_losses.assign(init_ema_values)
         # Track accumulated normalized loss and sample weight
         self.normalized_loss_sum = self.add_weight(name="normalized_loss_sum", initializer="zeros")
         self.sample_weight_sum = self.add_weight(name="sample_weight_sum", initializer="zeros")
+
+    def get_config(self):
+        config = super().get_config().copy()
+        config.update({"num_losses": self.num_losses, "step_number": int(self.step_number), "alpha": self.alpha, "init_ema_values":self.ema_losses.numpy()})
+        return config
 
     def update_state(self, losses, sample_weight=None, val: bool = False):
         # Cast inputs
@@ -26,7 +31,7 @@ class EMANormalization(Metric):
 
         # Update EMA for each loss
         if not val: # only accumulated at train time: must be the same for training and validation
-            self.ema_losses.assign( tf.cond(self.sample_weight_sum == 0, lambda:losses, lambda: self.step_alpha * self.ema_losses + (1 - self.step_alpha) * losses) )
+            self.ema_losses.assign( tf.cond(self.ema_losses == 0, lambda:losses, lambda: self.step_alpha * self.ema_losses + (1 - self.step_alpha) * losses) )
 
         # Compute normalized loss for this batch
         normalized_loss = tf.reduce_mean(losses / (self.ema_losses + tf.keras.backend.epsilon()))
