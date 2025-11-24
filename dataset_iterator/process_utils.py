@@ -53,3 +53,7 @@ def log_used_mem():
     result = result.splitlines()
     free_memory = int(result[1].split()[2])/1000
     print(f"used memory: {free_memory:.1f}Gb", flush=True)
+
+def get_num_fds():
+    proc = Process(os.getpid())
+    return proc.num_fds()

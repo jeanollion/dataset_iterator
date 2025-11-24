@@ -2,7 +2,8 @@ import gc
 import os
 import traceback
 import dill
-from .process_utils import kill_processes, log_used_mem  # this import needs to be before any import related to concurrent futures to patch
+from .process_utils import kill_processes, log_used_mem, \
+    get_num_fds  # this import needs to be before any import related to concurrent futures to patch
 from concurrent.futures import ProcessPoolExecutor, CancelledError, TimeoutError, as_completed
 import multiprocessing
 import random
@@ -126,6 +127,7 @@ class OrderedEnqueuerCF:
             return self.uid, iterator if mp_context_method == "fork" else dill.dumps(iterator), mp_context_method != "fork"
 
         while True:
+            #print(f"{self.name}({self.uid}) epoch start: open fds: {get_num_fds()}", flush=True)
             self.supplying_signal.set()
             self.supplying_end_signal.clear()
             #print(f"{self.name}({self.uid}) enqueuer start epoch. semaphore: {self.semaphore._value}", flush=True)
