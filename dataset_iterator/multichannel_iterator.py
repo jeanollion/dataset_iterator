@@ -581,7 +581,7 @@ class MultiChannelIterator(IndexArrayIterator):
             is_mask = [chan_idx in self.mask_channels for chan_idx in channels]
             if self.perform_data_augmentation and self.index_probability is not None and len(self.index_probability.shape)==2: # index_probability includes probabilities per tile
                 tile_probabilities = self.index_probability[index_array, :]
-                tile_probabilities = tile_probabilities / np.sum(tile_probabilities, axis=1)
+                tile_probabilities = tile_probabilities / np.sum(tile_probabilities, axis=1, keepdims=True)
             else:
                 tile_probabilities = None
             batches = self.extract_tile_function(batches, is_mask, allow_random=self.perform_data_augmentation, tile_probabilities=tile_probabilities)
