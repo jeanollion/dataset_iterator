@@ -20,7 +20,7 @@ _SHARED_ITERATOR = {}
 _COUNTER = None
 
 class OrderedEnqueuerCF:
-    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=True, max_restarts:int=10, name="enqueuer"):
+    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=True, max_restarts:int=10, max_steps=0, name="enqueuer"):
         self.iterator = iterator
         self.shuffle = shuffle
         self.single_epoch = single_epoch
@@ -38,6 +38,7 @@ class OrderedEnqueuerCF:
         self.wait_for_me_consumer.set()
         assert max_restarts > 0
         self.max_restarts=max_restarts
+        self.max_steps=max_steps
         self.name=name
         global _COUNTER
         if _COUNTER is None:
@@ -60,7 +61,6 @@ class OrderedEnqueuerCF:
         self.workers = 0
         self.queue = None
         self.run_thread = None
-        self.stop_signal = None
         self.stop_signal = None
         self.semaphore = None
 
@@ -116,6 +116,7 @@ class OrderedEnqueuerCF:
         else:
             task = get_item
         indices = list(range(len(self.iterator)))
+        step_number = min(self.max_steps, len(indices)) if self.max_steps > 0 else len(indices)
         self._send_iterator()  # Share the initial sequence
         mp_context_method = "fork"
         try:
@@ -134,7 +135,8 @@ class OrderedEnqueuerCF:
             if self.shuffle:
                 random.shuffle(indices)
             executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
-            for idx, i in enumerate(indices):
+            for idx in range(step_number):
+                i = indices[idx]
                 restarts = 0
                 self.semaphore.acquire()
                 #print(f"{self.name}({self.uid}) supply task: {i} semaphore: {self.semaphore._value} queue: {len(self.queue)}", flush=True)

@@ -145,14 +145,37 @@ class ReduceLROnPlateau2(ReduceLROnPlateau):
     """Small variation from Original: best value is reset each time LR is reduced.
     """
 
+    def __init__(self, min_epsilon:float = None, **kwargs):
+        super().__init__(**kwargs)
+        self.min_epsilon = float(min_epsilon) if min_epsilon is not None else None
+
     def on_epoch_end(self, epoch, logs=None):
+        if self.min_epsilon is not None:
+            logs['epsilon'] = self._get_epsilon()
         old_lr = backend.get_value(self.model.optimizer.lr)
         super().on_epoch_end(epoch, logs)
         lr = backend.get_value(self.model.optimizer.lr)
         if lr < old_lr:
             self._reset()
             self.cooldown_counter = self.cooldown
+            if self.min_epsilon is not None:
+                if logs['epsilon'] > np.float32(self.min_epsilon):
+                    new_epsilon = logs['epsilon'] * self.factor
+                    new_epsilon = max(new_epsilon, self.min_epsilon)
+                    if new_epsilon != logs['epsilon']:
+                        self._set_epsilon(new_epsilon)
 
+    def _get_epsilon(self):
+        optimizer = self.model.optimizer
+        if hasattr(optimizer, 'inner_optimizer'):
+            optimizer = optimizer.inner_optimizer
+        return optimizer.epsilon
+
+    def _set_epsilon(self, epsilon):
+        optimizer = self.model.optimizer
+        if hasattr(optimizer, 'inner_optimizer'):
+            optimizer = optimizer.inner_optimizer
+        optimizer.epsilon = epsilon
 
 class LogsCallback(Callback):
     def __init__(self, filepath, start_epoch=0):
