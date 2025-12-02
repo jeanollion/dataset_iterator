@@ -116,7 +116,6 @@ class OrderedEnqueuerCF:
         else:
             task = get_item
         indices = list(range(len(self.iterator)))
-        step_number = min(self.max_steps, len(indices)) if self.max_steps > 0 else len(indices)
         self._send_iterator()  # Share the initial sequence
         mp_context_method = "fork"
         try:
@@ -135,6 +134,7 @@ class OrderedEnqueuerCF:
             if self.shuffle:
                 random.shuffle(indices)
             executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
+            step_number = min(self.max_steps, len(indices)) if self.max_steps > 0 else len(indices)
             for idx in range(step_number):
                 i = indices[idx]
                 restarts = 0
