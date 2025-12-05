@@ -17,11 +17,12 @@ from dataset_iterator.ordered_enqueuer_cf import OrderedEnqueuerCF
 import threading
 
 class HardSampleMiningCallback(Callback):
-    def __init__(self, iterator, target_iterator, predict_fun, metrics_fun, period:int=10, start_epoch:int=0, start_from_epoch:int=0, enrich_factor:float=10., quantile_max:float=0.99, quantile_min:float=None, verbose:int=1):
+    def __init__(self, iterator, target_iterator, predict_fun, metrics_fun, n_epochs:int, period:int=10, start_epoch:int=0, start_from_epoch:int=0, enrich_factor:float=10., quantile_max:float=0.99, quantile_min:float=None, verbose:int=1):
         super().__init__()
         self.period = period
         self.start_epoch = start_epoch
         self.start_from_epoch = start_from_epoch
+        self.n_epochs=n_epochs
         self.iterator = iterator
         self.target_iterator = target_iterator
         self.predict_fun = predict_fun
@@ -62,6 +63,8 @@ class HardSampleMiningCallback(Callback):
         self.iterator.close()
 
     def need_compute(self, epoch):
+        if epoch+1 >= self.n_epochs:
+            return False
         return epoch + 1 >= self.start_from_epoch and (self.period == 1 or (epoch + 1 - self.start_from_epoch) % self.period == 0)
 
     def initialize(self):
