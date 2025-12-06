@@ -103,9 +103,12 @@ class LogLRCallback(Callback):
         super().__init__()
 
     def on_train_batch_end(self, batch, logs=None):
-        if logs is not None:
-            logs['lr'] = backend.get_value(self.model.optimizer.lr)
+        logs = logs or {}
+        logs['lr'] = backend.get_value(self.model.optimizer.lr)
 
+    def on_epoch_end(self, batch, logs=None):
+        logs = logs or {}
+        logs['lr'] = backend.get_value(self.model.optimizer.lr)
 
 class EpsilonCosineDecayCallback(Callback):
     """Reduce optimizer epsilon parameter.
@@ -131,8 +134,12 @@ class EpsilonCosineDecayCallback(Callback):
 
     def on_train_batch_end(self, batch, logs=None):
         self.step_counter +=1
-        if logs is not None:
-            logs['epsilon'] = self.model.optimizer.epsilon
+        logs = logs or {}
+        logs['epsilon'] = self.model.optimizer.epsilon
+
+    def on_epoch_end(self, batch, logs=None):
+        logs = logs or {}
+        logs['epsilon'] = self.model.optimizer.epsilon
 
     def _decayed_epsilon(self, step):
         step = min(step, self.decay_steps)
@@ -150,6 +157,7 @@ class ReduceLROnPlateau2(ReduceLROnPlateau):
         self.min_epsilon = float(min_epsilon) if min_epsilon is not None else None
 
     def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
         if self.min_epsilon is not None:
             logs['epsilon'] = self._get_epsilon()
         old_lr = backend.get_value(self.model.optimizer.lr)
