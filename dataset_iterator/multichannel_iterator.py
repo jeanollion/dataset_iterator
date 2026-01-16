@@ -362,7 +362,7 @@ class MultiChannelIterator(IndexArrayIterator):
         return result
 
     def enqueuer_end(self, params):
-        if "dataset" in params:
+        if params is not None and "dataset" in params:
             self.dataset = params["dataset"]
 
     def disable_random_transforms(self, data_augmentation:bool=True, channels_postprocessing:bool=False):

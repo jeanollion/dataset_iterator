@@ -132,15 +132,15 @@ class ImageGeneratorList():
 
 # image scaling
 SCALING_MODES = ["RANDOM_CENTILES", "RANDOM_MIN_MAX", "FLUORESCENCE", "BRIGHT_FIELD", "CONSTANT"]
-def get_random_scaling_function(mode="RANDOM_CENTILES", dataset=None, channel_name:str=None, **kwargs):
-    data_gen = ScalingImageGenerator(mode, dataset, channel_name, **kwargs)
+def get_random_scaling_function(mode="RANDOM_CENTILES", dataset=None, channel_name:str=None, group_keyword:str=None, **kwargs):
+    data_gen = ScalingImageGenerator(mode, dataset, channel_name, group_keyword=group_keyword, **kwargs)
     def fun(img):
         params = data_gen.get_random_transform(img.shape)
         return data_gen.apply_transform(img, params)
     return fun
 
 class ScalingImageGenerator():
-    def __init__(self, mode="RANDOM_CENTILES", dataset=None, channel_name: str = None, **kwargs):
+    def __init__(self, mode="RANDOM_CENTILES", dataset=None, channel_name: str = None, group_keyword:str=None, **kwargs):
         assert mode in SCALING_MODES, f"invalid mode={mode}, should be in {SCALING_MODES}"
         self.mode = mode
         if mode == "CONSTANT":
@@ -187,7 +187,7 @@ class ScalingImageGenerator():
                 self.center = kwargs.get("center", np.mean(self.center_range))
                 self.scale = kwargs.get("scale", np.mean(self.scale_range))
             else:
-                center_range, scale_range = get_center_scale_range(dataset, channel_name=channel_name, fluorescence=fluo, return_center=True, **kwargs)
+                center_range, scale_range = get_center_scale_range(dataset, channel_name=channel_name, group_keyword=group_keyword, fluorescence=fluo, return_center=True, **kwargs)
                 self.center = center_range[-1] if len(center_range)==3 else np.mean(center_range)
                 self.center_range = center_range[:2]
                 self.scale_range = scale_range[:2]

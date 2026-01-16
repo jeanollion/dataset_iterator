@@ -42,7 +42,8 @@ class NonVoidIterator(IndexArrayIterator):
         self.iterator.enqueuer_init()
 
     def enqueuer_end(self, params):
-        self.iterator.enqueuer_end(params)
+        if params is not None:
+            self.iterator.enqueuer_end(params)
 
     def __len__(self):
         return self.iterator.__len__()
