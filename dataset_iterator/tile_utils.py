@@ -122,7 +122,12 @@ def extract_tiles(batch, tile_shape, overlap_mode=OVERLAP_MODE[1], min_overlap=1
         if n_tiles is None:  # infer n_tiles from overlap
             n_tiles = _get_tile_coords_overlap(image_shape, tile_shape, overlap_mode, min_overlap, random_stride=False)[0].shape[0]
         anchor_point_list = np.stack([ random_choice_multidim(anchor_point_list, size=n_tiles, replace=True, p=tile_probabilities[b] ) for b in range(batch_size)])
-        tile_coords_bat = [[_get_tile_coords(image_shape, tile_shape, (1, 1), random_stride, anchor_point=anchor_point_list[b][t])[0] for t in range(n_tiles)] for b in range(batch_size) ]
+        tile_coords_bat = []
+        for b in range(batch_size):
+            tile_coords_ta = [
+                _get_tile_coords(image_shape, tile_shape, (1, 1), random_stride, anchor_point=anchor_point_list[b][t])
+                for t in range(n_tiles)]
+            tile_coords_bat.append( [np.concatenate([tile_coords_ta[t][a] for t in range(n_tiles)], axis=0) for a in range(rank)])
         anchor_intervals = None
     else:
         if anchor_point_mask_idx is not None:  # single anchor point per batch item, n_tiles around this anchor point

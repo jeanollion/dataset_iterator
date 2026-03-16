@@ -362,7 +362,7 @@ class MultiChannelIterator(IndexArrayIterator):
         return result
 
     def enqueuer_end(self, params):
-        if "dataset" in params:
+        if params is not None and "dataset" in params:
             self.dataset = params["dataset"]
 
     def disable_random_transforms(self, data_augmentation:bool=True, channels_postprocessing:bool=False):
@@ -486,12 +486,14 @@ class MultiChannelIterator(IndexArrayIterator):
 
         batch_by_channel = dict()
         channels = self.input_channels if input_only else [c_idx for c_idx, key in enumerate(self.channel_keywords) if key is not None]
-        #if len(self.mask_channels)>0 and self.mask_channels[0] in channels: # put mask channel first so it can be used for determining some data augmentation parameters
-        #    channels.insert(0, channels.pop(channels.index(self.mask_channels[0])))
+        ref_channel_idx = kwargs["ref_channel_idx"] if "ref_channel_idx" in kwargs else channels[0]
+        if ref_channel_idx!=channels[0]: # put ref_channel first so it can be used for determining some data augmentation parameters
+            assert ref_channel_idx in channels, f"ref_channel {ref_channel_idx} not in channels {channels}"
+            channels.insert(0, channels.pop(channels.index(ref_channel_idx)))
         aug_param_array = [[dict()]*len(self.channel_keywords) for i in range(len(index_array))]
         for chan_idx in channels:
-            batch_by_channel[chan_idx] = self._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, channels[0], aug_param_array, perform_augmentation=perform_augmentation, **kwargs)
-            if chan_idx == channels[0] and self.return_image_index:
+            batch_by_channel[chan_idx] = self._get_batches_of_transformed_samples_by_channel(index_ds, index_array, chan_idx, ref_channel_idx, aug_param_array, perform_augmentation=perform_augmentation, **kwargs)
+            if chan_idx == ref_channel_idx and self.return_image_index:
                 batch_by_channel["image_idx"] = batch_by_channel[chan_idx][1] # image index
                 batch_by_channel[chan_idx] = batch_by_channel[chan_idx][0] # batch
         if perform_elasticdeform or perform_tiling: ## elastic deform do not support float16 type -> temporarily convert to float32
@@ -516,12 +518,12 @@ class MultiChannelIterator(IndexArrayIterator):
         if len(self.array_keywords)>0:
             for c, n in enumerate(self.array_keywords):
                 if n is not None:
-                    arrays[c] = self._read_image_batch(index_ds, index_array, c, channels[0], aug_param_array, is_array=True, **kwargs)[0]
+                    arrays[c] = self._read_image_batch(index_ds, index_array, c, ref_channel_idx, aug_param_array, is_array=True, **kwargs)[0]
 
         if self.channels_postprocessing_function is not None:
             self.channels_postprocessing_function(batch_by_channel)
 
-        return batch_by_channel, aug_param_array, channels[0]
+        return batch_by_channel, aug_param_array, ref_channel_idx
 
     def _apply_elasticdeform(self, batch_by_channel):
         if self.elasticdeform_parameters is not None:
@@ -579,7 +581,7 @@ class MultiChannelIterator(IndexArrayIterator):
             is_mask = [chan_idx in self.mask_channels for chan_idx in channels]
             if self.perform_data_augmentation and self.index_probability is not None and len(self.index_probability.shape)==2: # index_probability includes probabilities per tile
                 tile_probabilities = self.index_probability[index_array, :]
-                tile_probabilities = tile_probabilities / np.sum(tile_probabilities, axis=1)
+                tile_probabilities = tile_probabilities / np.sum(tile_probabilities, axis=1, keepdims=True)
             else:
                 tile_probabilities = None
             batches = self.extract_tile_function(batches, is_mask, allow_random=self.perform_data_augmentation, tile_probabilities=tile_probabilities)

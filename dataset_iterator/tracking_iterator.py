@@ -120,7 +120,12 @@ class TrackingIterator(MultiChannelIterator):
         if self.verbose:
             print(f"read n_frames={n_frames} (aug remove: {aug_remove}) -> {index_array}")
         if (not is_array and self.channels_prev[chan_idx]) or (is_array and self.channels_prev[ref_chan_idx]):
-            for increment in range(1, n_frames+1):
+            increment_range = range(1, n_frames+1)
+            kw = "frame_increment_per_array" if is_array else  "frame_increment_per_channel"
+            if not aug_remove and kw in kwargs and chan_idx in kwargs[kw]:
+                increment_range = np.abs(np.array(kwargs[kw][chan_idx][:self.def_n_frames], copy=True)[::-1])
+
+            for increment in increment_range:
                 neigh = self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, True, aug_param_array, increment * subsampling, aug_remove, is_array, **kwargs)
                 if neigh is None: # repeat previous one
                     neigh = batch_list[-1]
@@ -133,7 +138,12 @@ class TrackingIterator(MultiChannelIterator):
             index_array_list = index_array_list[::-1]
 
         if (not is_array and self.channels_next[chan_idx]) or (is_array and self.channels_next[ref_chan_idx]):
-            for increment in range(1, n_frames+1):
+            increment_range = range(1, n_frames + 1)
+            kw = "frame_increment_per_array" if is_array else "frame_increment_per_channel"
+            if not aug_remove and kw in kwargs and chan_idx in kwargs[kw]:
+                increment_range = np.array(kwargs[kw][chan_idx], copy=True)[-self.def_n_frames:]
+
+            for increment in increment_range:
                 neigh = self._read_image_batch_neigh(index_ds, index_array, chan_idx, ref_chan_idx, False, aug_param_array, increment * subsampling, aug_remove, is_array=is_array, **kwargs)
                 if neigh is None: # repeat previous one
                     neigh = batch_list[-1]

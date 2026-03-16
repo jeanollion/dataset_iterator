@@ -103,9 +103,12 @@ class LogLRCallback(Callback):
         super().__init__()
 
     def on_train_batch_end(self, batch, logs=None):
-        if logs is not None:
-            logs['lr'] = backend.get_value(self.model.optimizer.lr)
+        logs = logs or {}
+        logs['lr'] = backend.get_value(self.model.optimizer.lr)
 
+    def on_epoch_end(self, batch, logs=None):
+        logs = logs or {}
+        logs['lr'] = backend.get_value(self.model.optimizer.lr)
 
 class EpsilonCosineDecayCallback(Callback):
     """Reduce optimizer epsilon parameter.
@@ -131,8 +134,12 @@ class EpsilonCosineDecayCallback(Callback):
 
     def on_train_batch_end(self, batch, logs=None):
         self.step_counter +=1
-        if logs is not None:
-            logs['epsilon'] = self.model.optimizer.epsilon
+        logs = logs or {}
+        logs['epsilon'] = self.model.optimizer.epsilon
+
+    def on_epoch_end(self, batch, logs=None):
+        logs = logs or {}
+        logs['epsilon'] = self.model.optimizer.epsilon
 
     def _decayed_epsilon(self, step):
         step = min(step, self.decay_steps)
@@ -145,14 +152,38 @@ class ReduceLROnPlateau2(ReduceLROnPlateau):
     """Small variation from Original: best value is reset each time LR is reduced.
     """
 
+    def __init__(self, min_epsilon:float = None, **kwargs):
+        super().__init__(**kwargs)
+        self.min_epsilon = float(min_epsilon) if min_epsilon is not None else None
+
     def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        if self.min_epsilon is not None:
+            logs['epsilon'] = self._get_epsilon()
         old_lr = backend.get_value(self.model.optimizer.lr)
         super().on_epoch_end(epoch, logs)
         lr = backend.get_value(self.model.optimizer.lr)
         if lr < old_lr:
             self._reset()
             self.cooldown_counter = self.cooldown
+            if self.min_epsilon is not None:
+                if logs['epsilon'] > np.float32(self.min_epsilon):
+                    new_epsilon = logs['epsilon'] * self.factor
+                    new_epsilon = max(new_epsilon, self.min_epsilon)
+                    if new_epsilon != logs['epsilon']:
+                        self._set_epsilon(new_epsilon)
 
+    def _get_epsilon(self):
+        optimizer = self.model.optimizer
+        if hasattr(optimizer, 'inner_optimizer'):
+            optimizer = optimizer.inner_optimizer
+        return optimizer.epsilon
+
+    def _set_epsilon(self, epsilon):
+        optimizer = self.model.optimizer
+        if hasattr(optimizer, 'inner_optimizer'):
+            optimizer = optimizer.inner_optimizer
+        optimizer.epsilon = epsilon
 
 class LogsCallback(Callback):
     def __init__(self, filepath, start_epoch=0):

@@ -2,7 +2,8 @@ import gc
 import os
 import traceback
 import dill
-from .process_utils import kill_processes, log_used_mem  # this import needs to be before any import related to concurrent futures to patch
+from .process_utils import kill_processes, log_used_mem, \
+    get_num_fds  # this import needs to be before any import related to concurrent futures to patch
 from concurrent.futures import ProcessPoolExecutor, CancelledError, TimeoutError, as_completed
 import multiprocessing
 import random
@@ -19,7 +20,7 @@ _SHARED_ITERATOR = {}
 _COUNTER = None
 
 class OrderedEnqueuerCF:
-    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=True, max_restarts:int=10, name="enqueuer"):
+    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=True, max_restarts:int=10, max_steps=0, name="enqueuer"):
         self.iterator = iterator
         self.shuffle = shuffle
         self.single_epoch = single_epoch
@@ -37,6 +38,7 @@ class OrderedEnqueuerCF:
         self.wait_for_me_consumer.set()
         assert max_restarts > 0
         self.max_restarts=max_restarts
+        self.max_steps=max_steps
         self.name=name
         global _COUNTER
         if _COUNTER is None:
@@ -59,7 +61,6 @@ class OrderedEnqueuerCF:
         self.workers = 0
         self.queue = None
         self.run_thread = None
-        self.stop_signal = None
         self.stop_signal = None
         self.semaphore = None
 
@@ -126,16 +127,19 @@ class OrderedEnqueuerCF:
             return self.uid, iterator if mp_context_method == "fork" else dill.dumps(iterator), mp_context_method != "fork"
 
         while True:
+            #print(f"{self.name}({self.uid}) epoch start: open fds: {get_num_fds()}", flush=True)
             self.supplying_signal.set()
             self.supplying_end_signal.clear()
-            #print(f"{self.name}({self.uid}) enqueueur start epoch. semaphore: {self.semaphore._value}", flush=True)
+            #print(f"{self.name}({self.uid}) enqueuer start epoch. semaphore: {self.semaphore._value}", flush=True)
             if self.shuffle:
                 random.shuffle(indices)
             executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
-            for idx, i in enumerate(indices):
+            step_number = min(self.max_steps, len(indices)) if self.max_steps > 0 else len(indices)
+            for idx in range(step_number):
+                i = indices[idx]
                 restarts = 0
                 self.semaphore.acquire()
-                #print(f"{self.name}({self.uid}) task: {i} semaphore: {self.semaphore._value} queue: {len(self.queue)}", flush=True)
+                #print(f"{self.name}({self.uid}) supply task: {i} semaphore: {self.semaphore._value} queue: {len(self.queue)}", flush=True)
                 while restarts < self.max_restarts:
                     if self.stop_signal.is_set():
                         shutdown_executor(executor)
@@ -240,6 +244,7 @@ class OrderedEnqueuerCF:
                 self.semaphore.release()  # release is done here and not as a future callback to limit effective number of samples in memory
                 future.cancel()
                 del future
+                #print(f"{name}({self.uid}) has processed task: {i} (semaphore: {self.semaphore._value} queue: {len(self.queue)})", flush=True)
                 yield inputs
             elif not block and not self.supplying_signal.is_set():
                 #print(f"{name}({self.uid}) yield item 0 to avoid blocking")
@@ -280,7 +285,7 @@ class OrderedEnqueuerCF:
 def get_item_shm(uid, i):
     tensors = _SHARED_ITERATOR[uid][i]
     #print(f"item {i} -> {_SHARED_SEQUENCES[uid].index_array[i]} process: {os.getpid()}", flush=True)
-    return to_shm(tensors)
+    return to_shm(tensors, use_shared_array=False)
 
 
 def get_item_shared_array(uid, i):
