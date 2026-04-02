@@ -42,6 +42,7 @@ class ValidationCallback(Callback):
 
     def stop_test(self):
         #print(f"test end", flush=True)
+        self.val_enqueuer.supplying_end_signal.wait()  # ensure val executor is fully shut down before unlocking training, to avoid concurrent fork
         eval_at_next_epoch = self._should_eval(self.current_epoch + 1)
         self.train_enqueuer.request_lock_list[self.request_lock_index] = False
         if not self.train_enqueuer.request_lock(): # no other agent had required lock -> unlock

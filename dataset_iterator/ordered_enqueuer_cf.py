@@ -5,6 +5,7 @@ import dill
 from .process_utils import kill_processes, log_used_mem, \
     get_num_fds  # this import needs to be before any import related to concurrent futures to patch
 from concurrent.futures import ProcessPoolExecutor, CancelledError, TimeoutError, as_completed
+from collections import deque
 import multiprocessing
 import random
 import threading
@@ -90,7 +91,7 @@ class OrderedEnqueuerCF:
         if max_queue_size <= 0:
             max_queue_size = self.workers
         self.semaphore = BoundedSemaphore(max_queue_size)
-        self.queue = []
+        self.queue = deque()
         self.stop_signal = threading.Event()
         self.run_thread = threading.Thread(target=self._run)
         self.run_thread.daemon = True
@@ -240,15 +241,17 @@ class OrderedEnqueuerCF:
                         traceback.print_exception(e)
                         self.stop()
                         return
-                self.queue.pop(0)  # only remove after result() is called to avoid terminating pool while a process is still running
+                self.queue.popleft()  # only remove after result() is called to avoid terminating pool while a process is still running
                 self.semaphore.release()  # release is done here and not as a future callback to limit effective number of samples in memory
                 future.cancel()
                 del future
                 #print(f"{name}({self.uid}) has processed task: {i} (semaphore: {self.semaphore._value} queue: {len(self.queue)})", flush=True)
                 yield inputs
-            elif not block and not self.supplying_signal.is_set():
+            elif not block and not self.supplying_signal.is_set() and _SHARED_ITERATOR.get(self.uid) is not None:
                 #print(f"{name}({self.uid}) yield item 0 to avoid blocking")
                 yield get_item(self.uid, 0)
+            else:
+                time.sleep(0.01)
 
     def stop(self, timeout=5):
         """Stops running threads and wait for them to exit, if necessary.
@@ -310,10 +313,15 @@ def init_pool_generator(uid, seq, unpickle):
     _SHARED_ITERATOR = {uid:dill.loads(seq) if unpickle else seq}
 
 
-def shutdown_executor(executor):
+def shutdown_executor(executor, timeout=10):
     processes = list(executor._processes.keys()) if executor._processes is not None else None
-    executor.shutdown(wait=True,  cancel_futures=True)  # wait=True often hangs because no timeout is set to Process.join().
+    # Run shutdown in a thread with a timeout to avoid hanging indefinitely
+    shutdown_thread = threading.Thread(target=lambda: executor.shutdown(wait=True, cancel_futures=True))
+    shutdown_thread.start()
+    shutdown_thread.join(timeout=timeout)
+    if shutdown_thread.is_alive():
+        print(f"Warning: executor.shutdown() did not complete within {timeout}s, force-killing workers", flush=True)
     del executor
     if processes is not None:
-        kill_processes(processes, timeout=3, verbose=True)
+        kill_processes(processes, timeout=timeout, verbose=True)
     time.sleep(0.1)
