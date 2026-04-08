@@ -564,11 +564,13 @@ class MultiChannelIterator(IndexArrayIterator):
 
             displacement = np.random.randn(len(deform_shape), *points) * sigma
             # set zero displacement at edges to avoid out-of-bounds artifacts
-            displacement[:, [0,-1], :] = 0
-            displacement[:, :, [0,-1]] = 0
+            for ax in range(len(deform_shape)):
+                slc = [slice(None)] * (1 + len(deform_shape))
+                slc[ax + 1] = [0, -1]  # +1 because first dim is the displacement component
+                displacement[tuple(slc)] = 0
             # limit displacement to half of grid spacing to avoid "spirals" (crossing points)
-            displacement[0] = np.minimum(np.abs(displacement[0]), grid_spacing[0]/4) * np.sign(displacement[0])
-            displacement[1] = np.minimum(np.abs(displacement[1]), grid_spacing[1]/4) * np.sign(displacement[1])
+            for ax in range(len(deform_shape)):
+                displacement[ax] = np.minimum(np.abs(displacement[ax]), grid_spacing[ax]/4) * np.sign(displacement[ax])
             batches = ed.deform_grid(batches, displacement, order=order, mode=mode, axis=axis, **elasticdeform_parameters)
 
             for i, chan_idx in enumerate(channels):
