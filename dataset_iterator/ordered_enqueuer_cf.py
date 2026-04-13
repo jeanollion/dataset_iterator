@@ -21,7 +21,7 @@ _SHARED_ITERATOR = {}
 _COUNTER = None
 
 class OrderedEnqueuerCF:
-    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=True, max_restarts:int=10, max_steps=0, name="enqueuer"):
+    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=True, max_restarts:int=10, max_steps=0, step_timeout=10, name="enqueuer"):
         self.iterator = iterator
         self.shuffle = shuffle
         self.single_epoch = single_epoch
@@ -40,6 +40,7 @@ class OrderedEnqueuerCF:
         assert max_restarts > 0
         self.max_restarts=max_restarts
         self.max_steps=max_steps
+        self.task_timeout=step_timeout
         self.name=name
         global _COUNTER
         if _COUNTER is None:
@@ -64,6 +65,8 @@ class OrderedEnqueuerCF:
         self.run_thread = None
         self.stop_signal = None
         self.semaphore = None
+        #if isinstance(self.iterator.datasetIO, MemoryIO):
+        #    print(f"{self.name}({self.uid}) iterator is shm {self.iterator.datasetIO.use_shm} sa {self.iterator.datasetIO.use_shared_array} open datasets: {len(self.iterator.datasetIO.datasets)}", flush=True)
 
     def request_lock(self):
         return True in self.request_lock_list
@@ -107,9 +110,12 @@ class OrderedEnqueuerCF:
     def _run(self):
         """Submits request to the executor and queue the `Future` objects."""
         if self.wait_for_me_supplier is not None:
-            #print(f"{self.name}({self.uid}) S waiting supplier...", flush=True)
+            #was_locked = not self.wait_for_me_supplier.is_set()
+            #if was_locked:
+            #    print(f"{self.name}({self.uid}) S waiting supplier...", flush=True)
             self.wait_for_me_supplier.wait()
-            #print(f"{self.name}({self.uid}) S waiting supplier done", flush=True)
+            #if was_locked:
+            #    print(f"{self.name}({self.uid}) S waiting supplier done", flush=True)
         if self.use_shm:
             task = get_item_shm
         elif self.use_shared_array:
@@ -175,10 +181,12 @@ class OrderedEnqueuerCF:
                 if self.request_lock() and self.wait_for_me_supplier.is_set():
                     #print(f"{self.name}({self.uid}) lock requested", flush=True)
                     self.wait_for_me_supplier.clear()
-                #if not self.wait_for_me_supplier.is_set():
-                    #print(f"{self.name}({self.uid}) waiting supplier...", flush=True)
+                #was_locked = not self.wait_for_me_supplier.is_set()
+                #if was_locked:
+                #    print(f"{self.name}({self.uid}) waiting supplier...", flush=True)
                 self.wait_for_me_supplier.wait()
-                #print(f"{self.name}({self.uid}) supplier waiting done", flush=True)
+                #if was_locked:
+                #    print(f"{self.name}({self.uid}) supplier waiting done", flush=True)
             #log_used_mem()
             #print(f"{self.name}({self.uid}) sending iterator")
             indices = list(range(len(self.iterator)))
@@ -217,25 +225,31 @@ class OrderedEnqueuerCF:
             if block:
                 self.wait_queue(False)
             if wait_for_me is not None:
-                #print(f"{name}({self.uid}) waiting consumer...", flush=True)
+                #was_locked = not wait_for_me.is_set()
+                #if was_locked:
+                #    print(f"{name}({self.uid}) waiting consumer...", flush=True)
                 wait_for_me.wait()
-                #print(f"{name}({self.uid}) waiting consumer done", flush=True)
+                #if was_locked:
+                #    print(f"{name}({self.uid}) waiting consumer done", flush=True)
                 if block:
                     self.wait_queue(False)
             if len(self.queue) > 0:
                 future, i = self.queue[0]
                 #print(f"{name}({self.uid}) is processing task: {i} (queue: {len(self.queue)})", flush=True)
-                ex = future.exception()
+                try:
+                    ex = future.exception(timeout=self.task_timeout)
+                except TimeoutError as toex: # this happens often when validation is enabled. TODO: findout why
+                    ex = toex
                 if ex is None:
                     inputs = future.result()
                     if self.use_shm or self.use_shared_array:
                         inputs = from_shm(*inputs)
                 else:
-                    print(f"Exception raised while getting future result from task: {i}. Task will be re-computed.", flush=True)
-                    traceback.print_exception(ex)
+                    #print(f"Exception raised while getting future result from task: {i}. Task will be re-computed.", flush=True)
+                    #traceback.print_exception(ex)
                     try:
                         inputs = get_item(self.uid, i)
-                        print(f"Task {i} successfully re-computed.", flush=True)
+                        #print(f"Task {i} successfully re-computed.", flush=True)
                     except Exception as e:
                         print(f"Exception raised while trying to re-compute task {i}. Stopping the pool.", flush=True)
                         traceback.print_exception(e)
