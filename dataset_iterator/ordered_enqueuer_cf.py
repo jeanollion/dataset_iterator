@@ -65,6 +65,7 @@ class OrderedEnqueuerCF:
         self.run_thread = None
         self.stop_signal = None
         self.semaphore = None
+        self._orphaned_futures = []  # futures that timed out but may still hold shm references
         #if isinstance(self.iterator.datasetIO, MemoryIO):
         #    print(f"{self.name}({self.uid}) iterator is shm {self.iterator.datasetIO.use_shm} sa {self.iterator.datasetIO.use_shared_array} open datasets: {len(self.iterator.datasetIO.datasets)}", flush=True)
 
@@ -172,6 +173,7 @@ class OrderedEnqueuerCF:
             self.supplying_signal.clear()
             shutdown_executor(executor)
             self._clear_iterator()
+            self._cleanup_orphaned_futures()
             del executor
             gc.collect()
             self.supplying_end_signal.set()
@@ -207,6 +209,38 @@ class OrderedEnqueuerCF:
         # For new processes that may spawn
         global _SHARED_ITERATOR
         _SHARED_ITERATOR[self.uid] = None
+
+    def _cleanup_future_shm(self, future):
+        """Try to clean up shm from a failed/timed-out future. If not ready yet, track it for later cleanup."""
+        try:
+            result = future.result(timeout=0.1)
+            if self.use_shm:
+                unlink_tensor_ref(*result)
+            else:
+                unlink_shared_array(*result[0])
+        except (CancelledError, TimeoutError):
+            # Worker may still be running — track for later cleanup
+            self._orphaned_futures.append(future)
+        except Exception:
+            pass
+
+    def _cleanup_orphaned_futures(self):
+        """Clean up shm from futures that previously timed out but may have completed since."""
+        remaining = []
+        for future in self._orphaned_futures:
+            if future.done():
+                if future.exception() is None:
+                    try:
+                        result = future.result(timeout=0.1)
+                        if self.use_shm:
+                            unlink_tensor_ref(*result)
+                        else:
+                            unlink_shared_array(*result[0])
+                    except Exception:
+                        pass
+            else:
+                remaining.append(future)
+        self._orphaned_futures = remaining
 
     def get(self, block:bool=True, name="main"):
         return self.get_wfm(self.wait_for_me_consumer, block=block, name=name)
@@ -247,6 +281,9 @@ class OrderedEnqueuerCF:
                 else:
                     #print(f"Exception raised while getting future result from task: {i}. Task will be re-computed.", flush=True)
                     #traceback.print_exception(ex)
+                    # Clean up shared memory that may have been allocated by the worker
+                    if self.use_shm or self.use_shared_array:
+                        self._cleanup_future_shm(future)
                     try:
                         inputs = get_item(self.uid, i)
                         #print(f"Task {i} successfully re-computed.", flush=True)
@@ -281,14 +318,26 @@ class OrderedEnqueuerCF:
         self.run_thread.join(timeout)
         if (self.use_shm or self.use_shared_array) and self.queue is not None and len(self.queue) > 0:  # clean shm
             for (future, _) in self.queue:
-                if future.exception() is None:
+                try:
+                    ex = future.exception(timeout=1)
+                except (CancelledError, TimeoutError):
+                    continue
+                if ex is None:
                     try:
                         if self.use_shm:
                             unlink_tensor_ref(*future.result(timeout=0.1))
                         else:
                             unlink_shared_array(*future.result(timeout=0.1)[0])
-                    except CancelledError | TimeoutError:  # save to shm is the last step, if task was not finished it is likely not saved to shm
+                    except (CancelledError, TimeoutError):
                         pass
+        if self.use_shm or self.use_shared_array:
+            self._cleanup_orphaned_futures()
+            if self._orphaned_futures:
+                # Last resort: wait a bit for remaining orphans then clean
+                time.sleep(1)
+                self._cleanup_orphaned_futures()
+                if self._orphaned_futures:
+                    print(f"Warning: {self.name}({self.uid}) {len(self._orphaned_futures)} orphaned shm futures could not be cleaned up", flush=True)
         self.queue = None
         self.semaphore = None
         self._clear_iterator()
