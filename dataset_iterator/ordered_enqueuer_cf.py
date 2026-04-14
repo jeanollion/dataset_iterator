@@ -13,6 +13,20 @@ import time
 from threading import BoundedSemaphore
 from .shared_memory import to_shm, from_shm, unlink_tensor_ref, unlink_shared_array
 
+def _poll_event(event, poll_interval=0.05):
+    """Fork-safe alternative to Event.wait().
+
+    Event.wait() internally acquires a Condition lock. If fork() happens
+    while another thread is inside Event.wait(), the child inherits the
+    lock in a held state with no thread to release it — causing a deadlock
+    in the forked worker. Polling with is_set() + sleep avoids this:
+    is_set() is a plain attribute read (no lock), and sleep holds no
+    Python locks.
+    """
+    while not event.is_set():
+        time.sleep(poll_interval)
+
+
 # adapted from https://github.com/keras-team/keras/blob/v2.13.1/keras/utils/data_utils.py#L651-L776
 # uses concurrent.futures, solves a memory leak in case of hard sample mining run as callback with regular orderedEnqueur. Option to pass tensors through shared memory
 # Global variables to be shared across processes
@@ -114,7 +128,7 @@ class OrderedEnqueuerCF:
             #was_locked = not self.wait_for_me_supplier.is_set()
             #if was_locked:
             #    print(f"{self.name}({self.uid}) S waiting supplier...", flush=True)
-            self.wait_for_me_supplier.wait()
+            _poll_event(self.wait_for_me_supplier)
             #if was_locked:
             #    print(f"{self.name}({self.uid}) S waiting supplier done", flush=True)
         if self.use_shm:
@@ -186,7 +200,7 @@ class OrderedEnqueuerCF:
                 #was_locked = not self.wait_for_me_supplier.is_set()
                 #if was_locked:
                 #    print(f"{self.name}({self.uid}) waiting supplier...", flush=True)
-                self.wait_for_me_supplier.wait()
+                _poll_event(self.wait_for_me_supplier)
                 #if was_locked:
                 #    print(f"{self.name}({self.uid}) supplier waiting done", flush=True)
             #log_used_mem()
@@ -262,7 +276,7 @@ class OrderedEnqueuerCF:
                 #was_locked = not wait_for_me.is_set()
                 #if was_locked:
                 #    print(f"{name}({self.uid}) waiting consumer...", flush=True)
-                wait_for_me.wait()
+                _poll_event(wait_for_me)
                 #if was_locked:
                 #    print(f"{name}({self.uid}) waiting consumer done", flush=True)
                 if block:
@@ -273,6 +287,7 @@ class OrderedEnqueuerCF:
                 try:
                     ex = future.exception(timeout=self.task_timeout)
                 except TimeoutError as toex: # this happens often when validation is enabled. TODO: findout why
+                    print("timeout error consumer")
                     ex = toex
                 if ex is None:
                     inputs = future.result()

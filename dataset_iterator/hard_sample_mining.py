@@ -13,7 +13,7 @@ else:
     from keras.utils import Progbar
 from .index_array_iterator import IndexArrayIterator, INCOMPLETE_LAST_BATCH_MODE
 from .concat_iterator import ConcatIterator
-from dataset_iterator.ordered_enqueuer_cf import OrderedEnqueuerCF
+from dataset_iterator.ordered_enqueuer_cf import OrderedEnqueuerCF, _poll_event
 import threading
 
 class HardSampleMiningCallback(Callback):
@@ -80,7 +80,7 @@ class HardSampleMiningCallback(Callback):
                 self.enqueuer.wait_for_me_supplier.set()
             if self.need_compute(self.start_epoch + 1):  # request lock for next epoch
                 #print("HSM: requesting lock for next epoch, waiting...", flush=True)
-                self.enqueuer.supplying_signal.wait()
+                _poll_event(self.enqueuer.supplying_signal)
                 #print("HSM: requesting lock for next epoch, waiting done", flush=True)
                 self.enqueuer.request_lock_list[self.request_lock_index] = True
 
@@ -93,7 +93,7 @@ class HardSampleMiningCallback(Callback):
         if self.proba_per_metric is not None:
             #if not self.enqueuer.supplying_end_signal.is_set():
             #    print(f"waiting supplier signal end...", flush=True)
-            self.enqueuer.supplying_end_signal.wait()
+            _poll_event(self.enqueuer.supplying_end_signal)
             self.metric_idx = (self.metric_idx + 1) % self.n_metrics
             proba = self.proba_per_metric[self.metric_idx]
             #print(f"setting proba for metrics: {self.metric_idx+1}/{self.n_metrics}", flush=True)
@@ -104,7 +104,7 @@ class HardSampleMiningCallback(Callback):
             if not self.enqueuer.wait_for_me_supplier.is_set():
                 self.enqueuer.wait_for_me_supplier.set()  # release lock
             #print("HSM: requesting lock for next epoch, waiting...", flush=True)
-            self.enqueuer.supplying_signal.wait()
+            _poll_event(self.enqueuer.supplying_signal)
             #print("HSM: requesting lock for next epoch, waiting done", flush=True)
             self.enqueuer.request_lock_list[self.request_lock_index] = True
 
@@ -133,7 +133,7 @@ class HardSampleMiningCallback(Callback):
         if self.verbose >=1:
             print(f"Hard Sample Mining: computing metrics...", flush=True)
         if self.enqueuer is not None:
-            self.enqueuer.supplying_end_signal.wait()
+            _poll_event(self.enqueuer.supplying_end_signal)
             main_sequence = self.enqueuer.iterator
             self.enqueuer.wait_for_me_consumer.clear()  # lock the main generator consumer
             self.enqueuer.request_lock_list[self.request_lock_index] = True # will lock at each epoch (one epoch per iterator)
@@ -144,7 +144,7 @@ class HardSampleMiningCallback(Callback):
             if self.enqueuer is not None: # reuse the same enqueur -> set the iterator
                 if not self.enqueuer.supplying_end_signal.is_set():
                     #print(f"HSM: waiting supplying end signal (compute metrics @{i})", flush=True)
-                    self.enqueuer.supplying_end_signal.wait()
+                    _poll_event(self.enqueuer.supplying_end_signal)
                 self.enqueuer.iterator = self.simple_iterator_list[i]
                 self.enqueuer.wait_for_me_supplier.set()
                 #print(f"HSM: supplier unlock (compute metrics @{i})", flush=True)
@@ -162,7 +162,7 @@ class HardSampleMiningCallback(Callback):
             self.wait_for_me_consumer_hsm.clear()  # lock the hsm consumer
             if not self.enqueuer.supplying_end_signal.is_set():
                   #print(f"HSM: end of metric computation: waiting for end of supplyer...", flush=True)
-                self.enqueuer.supplying_end_signal.wait()
+                _poll_event(self.enqueuer.supplying_end_signal)
             #print(f"HSM: end of metric computation: reset main enqueuer", flush=True)
             self.enqueuer.iterator = main_sequence
             self.enqueuer.wait_for_me_consumer.set()  # unlock the main consumer
