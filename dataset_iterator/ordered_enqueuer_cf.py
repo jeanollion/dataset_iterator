@@ -1,5 +1,6 @@
 import gc
 import os
+import statistics
 import traceback
 import dill
 from .process_utils import kill_processes, log_used_mem, \
@@ -35,7 +36,7 @@ _SHARED_ITERATOR = {}
 _COUNTER = None
 
 class OrderedEnqueuerCF:
-    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=True, max_restarts:int=10, max_steps=0, step_timeout=10, name="enqueuer"):
+    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=False, max_restarts:int=10, max_steps=0, step_duration=60, name="enqueuer"):
         self.iterator = iterator
         self.shuffle = shuffle
         self.single_epoch = single_epoch
@@ -54,7 +55,7 @@ class OrderedEnqueuerCF:
         assert max_restarts > 0
         self.max_restarts=max_restarts
         self.max_steps=max_steps
-        self.task_timeout=step_timeout
+        self.step_duration=step_duration # estimate used for timeout, will be measured after 1st epoch
         self.name=name
         global _COUNTER
         if _COUNTER is None:
@@ -80,6 +81,7 @@ class OrderedEnqueuerCF:
         self.stop_signal = None
         self.semaphore = None
         self._orphaned_futures = []  # futures that timed out but may still hold shm references
+        self._step_durations = [] # step duration for the epoch
         #if isinstance(self.iterator.datasetIO, MemoryIO):
         #    print(f"{self.name}({self.uid}) iterator is shm {self.iterator.datasetIO.use_shm} sa {self.iterator.datasetIO.use_shared_array} open datasets: {len(self.iterator.datasetIO.datasets)}", flush=True)
 
@@ -128,6 +130,7 @@ class OrderedEnqueuerCF:
             #was_locked = not self.wait_for_me_supplier.is_set()
             #if was_locked:
             #    print(f"{self.name}({self.uid}) S waiting supplier...", flush=True)
+            #self.wait_for_me_supplier.wait()
             _poll_event(self.wait_for_me_supplier)
             #if was_locked:
             #    print(f"{self.name}({self.uid}) S waiting supplier done", flush=True)
@@ -149,6 +152,7 @@ class OrderedEnqueuerCF:
             return self.uid, iterator if mp_context_method == "fork" else dill.dumps(iterator), mp_context_method != "fork"
 
         while True:
+            self._step_durations.clear()
             #print(f"{self.name}({self.uid}) epoch start: open fds: {get_num_fds()}", flush=True)
             self.supplying_signal.set()
             self.supplying_end_signal.clear()
@@ -164,7 +168,7 @@ class OrderedEnqueuerCF:
                 #print(f"{self.name}({self.uid}) supply task: {i} semaphore: {self.semaphore._value} queue: {len(self.queue)}", flush=True)
                 while restarts < self.max_restarts:
                     if self.stop_signal.is_set():
-                        shutdown_executor(executor)
+                        shutdown_executor(executor, timeout=self.step_duration)
                         self._clear_iterator()
                         return
                     try:
@@ -177,7 +181,7 @@ class OrderedEnqueuerCF:
                         print(f"Executor {self.name}({self.uid}) error for index {i} (attempt {restarts + 1}/{self.max_restarts}): {e}. Restarting executor...", flush=True)
                         self.wait_queue(True)
                         #with _EXECUTOR_LOCK:
-                        shutdown_executor(executor)
+                        shutdown_executor(executor, timeout=self.step_duration)
                         executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
                         print(f"Executor {self.name}({self.uid}) restarted! ", flush=True)
                         restarts += 1
@@ -185,11 +189,14 @@ class OrderedEnqueuerCF:
             # Done with the current epoch, waiting for the final batches
             self.wait_queue(True)  # safer to wait before calling shutdown than calling directly shutdown with wait=True
             self.supplying_signal.clear()
-            shutdown_executor(executor)
+            shutdown_executor(executor, timeout=self.step_duration)
             self._clear_iterator()
             self._cleanup_orphaned_futures()
             del executor
             gc.collect()
+            step_duration = statistics.median(self._step_durations)
+            #print(f"{self.name}({self.uid}) step duration: median={step_duration} range: [{min(self._step_durations)}, {max(self._step_durations)}] timeout: {self.step_duration} -> {step_duration * 1.5}")
+            self.step_duration = step_duration
             self.supplying_end_signal.set()
             #print(f"{self.name}({self.uid}) Supplying signal off", flush=True)
 
@@ -200,6 +207,7 @@ class OrderedEnqueuerCF:
                 #was_locked = not self.wait_for_me_supplier.is_set()
                 #if was_locked:
                 #    print(f"{self.name}({self.uid}) waiting supplier...", flush=True)
+                #self.wait_for_me_supplier.wait()
                 _poll_event(self.wait_for_me_supplier)
                 #if was_locked:
                 #    print(f"{self.name}({self.uid}) supplier waiting done", flush=True)
@@ -276,6 +284,7 @@ class OrderedEnqueuerCF:
                 #was_locked = not wait_for_me.is_set()
                 #if was_locked:
                 #    print(f"{name}({self.uid}) waiting consumer...", flush=True)
+                #wait_for_me.wait()
                 _poll_event(wait_for_me)
                 #if was_locked:
                 #    print(f"{name}({self.uid}) waiting consumer done", flush=True)
@@ -285,14 +294,15 @@ class OrderedEnqueuerCF:
                 future, i = self.queue[0]
                 #print(f"{name}({self.uid}) is processing task: {i} (queue: {len(self.queue)})", flush=True)
                 try:
-                    ex = future.exception(timeout=self.task_timeout)
-                except TimeoutError as toex: # this happens often when validation is enabled. TODO: findout why
-                    print("timeout error consumer")
+                    ex = future.exception(timeout=self.step_duration * 1.75)
+                except TimeoutError as toex:
+                    #print(f"{name}({self.uid}) timeout error consumer")
                     ex = toex
                 if ex is None:
-                    inputs = future.result()
+                    tensors, dt = future.result()
                     if self.use_shm or self.use_shared_array:
-                        inputs = from_shm(*inputs)
+                        tensors = from_shm(*tensors)
+                    self._step_durations.append(dt)
                 else:
                     #print(f"Exception raised while getting future result from task: {i}. Task will be re-computed.", flush=True)
                     #traceback.print_exception(ex)
@@ -300,7 +310,8 @@ class OrderedEnqueuerCF:
                     if self.use_shm or self.use_shared_array:
                         self._cleanup_future_shm(future)
                     try:
-                        inputs = get_item(self.uid, i)
+                        tensors, dt = get_item(self.uid, i)
+                        self._step_durations.append(dt)
                         #print(f"Task {i} successfully re-computed.", flush=True)
                     except Exception as e:
                         print(f"Exception raised while trying to re-compute task {i}. Stopping the pool.", flush=True)
@@ -312,10 +323,11 @@ class OrderedEnqueuerCF:
                 future.cancel()
                 del future
                 #print(f"{name}({self.uid}) has processed task: {i} (semaphore: {self.semaphore._value} queue: {len(self.queue)})", flush=True)
-                yield inputs
+                yield tensors
             elif not block and not self.supplying_signal.is_set() and _SHARED_ITERATOR.get(self.uid) is not None:
                 #print(f"{name}({self.uid}) yield item 0 to avoid blocking")
-                yield get_item(self.uid, 0)
+                tensors, _ = get_item(self.uid, 0)
+                yield tensors
             else:
                 time.sleep(0.01)
 
@@ -364,20 +376,26 @@ class OrderedEnqueuerCF:
 
 
 def get_item_shm(uid, i):
+    start = time.time()
     tensors = _SHARED_ITERATOR[uid][i]
-    #print(f"item {i} -> {_SHARED_SEQUENCES[uid].index_array[i]} process: {os.getpid()}", flush=True)
-    return to_shm(tensors, use_shared_array=False)
+    tensors = to_shm(tensors, use_shared_array=False)
+    end = time.time()
+    return tensors, end - start
 
 
 def get_item_shared_array(uid, i):
+    start = time.time()
     tensors = _SHARED_ITERATOR[uid][i]
-    #print(f"item {i} -> {_SHARED_SEQUENCES[uid].index_array[i]} process: {os.getpid()}", flush=True)
-    return to_shm(tensors, use_shared_array=True)
+    tensors = to_shm(tensors, use_shared_array=True)
+    end = time.time()
+    return tensors, end - start
 
 
 def get_item(uid, i):
-    return _SHARED_ITERATOR[uid][i]
-
+    start = time.time()
+    tensors = _SHARED_ITERATOR[uid][i]
+    end = time.time()
+    return tensors, end - start
 
 def close_iterator(uid):  # method intended to be called by each process to free memory related to iterator
     if _SHARED_ITERATOR[uid] is not None:
@@ -391,14 +409,14 @@ def init_pool_generator(uid, seq, unpickle):
     _SHARED_ITERATOR = {uid:dill.loads(seq) if unpickle else seq}
 
 
-def shutdown_executor(executor, timeout=10):
+def shutdown_executor(executor, timeout=30):
     processes = list(executor._processes.keys()) if executor._processes is not None else None
     # Run shutdown in a thread with a timeout to avoid hanging indefinitely
     shutdown_thread = threading.Thread(target=lambda: executor.shutdown(wait=True, cancel_futures=True))
     shutdown_thread.start()
     shutdown_thread.join(timeout=timeout)
-    if shutdown_thread.is_alive():
-        print(f"Warning: executor.shutdown() did not complete within {timeout}s, force-killing workers", flush=True)
+    #if shutdown_thread.is_alive():
+    #    print(f"Warning: executor.shutdown() did not complete within {timeout}s, force-killing workers", flush=True)
     del executor
     if processes is not None:
         kill_processes(processes, timeout=timeout, verbose=True)
