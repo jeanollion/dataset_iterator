@@ -74,42 +74,43 @@ class HardSampleMiningCallback(Callback):
             self.set_metrics()
             self.on_epoch_end(self.start_epoch-1)
         if self.n_metrics == 0: # metrics not computed during initialization, so main enqueuer may not be already unlocked: unlock main enqueuer that was locked at set_enqueuer
-            self.enqueuer.request_lock_list[self.request_lock_index] = self.need_compute(self.start_epoch)
             self.enqueuer.wait_for_me_consumer.set()
             if not self.enqueuer.wait_for_me_supplier.is_set():
                 self.enqueuer.wait_for_me_supplier.set()
-            if self.need_compute(self.start_epoch + 1):  # request lock for next epoch
-                #print("HSM: requesting lock for next epoch, waiting...", flush=True)
-                #self.enqueuer.supplying_signal.wait()
-                _poll_event(self.enqueuer.supplying_signal)
-                #print("HSM: requesting lock for next epoch, waiting done", flush=True)
-                self.enqueuer.request_lock_list[self.request_lock_index] = True
+            if self.verbose > 2:
+                print(f"HSM: need to compute at next epoch (=={self.start_epoch+1}): {self.need_compute(self.start_epoch)}", flush=True)
+            if self.need_compute(self.start_epoch):  # request lock for next epoch
+                self._request_lock()
 
     def on_epoch_end(self, epoch, logs=None):
         if self.need_compute(epoch):
             self.set_metrics()
-            #print("Hard sample mining metrics computed", flush=True)
-        if not self.enqueuer.request_lock_list[self.request_lock_index]:
-            self.enqueuer.request_lock_list[self.request_lock_index] = self.proba_per_metric is not None # flag need lock
+            if self.verbose > 2 :
+                print("Hard sample mining metrics computed", flush=True)
         if self.proba_per_metric is not None:
-            #if not self.enqueuer.supplying_end_signal.is_set():
-            #    print(f"waiting supplier signal end...", flush=True)
-            #self.enqueuer.supplying_end_signal.wait()
+            if not self.enqueuer.supplying_end_signal.is_set() and self.verbose > 2:
+                print(f"HSM: waiting supplier signal end...", flush=True)
             _poll_event(self.enqueuer.supplying_end_signal)
             self.metric_idx = (self.metric_idx + 1) % self.n_metrics
             proba = self.proba_per_metric[self.metric_idx]
-            #print(f"setting proba for metrics: {self.metric_idx+1}/{self.n_metrics}", flush=True)
+            if self.verbose > 2 :
+                print(f"HSM: setting proba for metrics: {self.metric_idx+1}/{self.n_metrics}", flush=True)
             self.target_iterator.set_index_probability(proba, n_tiles = self.n_tiles)
-            self.enqueuer.wait_for_me_supplier.set()
-            #print(f"HSM: main enqueuer unlocked", flush=True)
-        elif self.need_compute(epoch+1): # request lock for next epoch
+            self.enqueuer.wait_for_me_supplier.set() # unlock main enqueuer
+            self._request_lock() # lock at next epoch in order to switch metric on iterator
+        elif self.need_compute(epoch+1): # request lock for next epoch in order to compute probabilities
             if not self.enqueuer.wait_for_me_supplier.is_set():
                 self.enqueuer.wait_for_me_supplier.set()  # release lock
-            #print("HSM: requesting lock for next epoch, waiting...", flush=True)
-            #self.enqueuer.supplying_signal.wait()
-            _poll_event(self.enqueuer.supplying_signal)
-            #print("HSM: requesting lock for next epoch, waiting done", flush=True)
-            self.enqueuer.request_lock_list[self.request_lock_index] = True
+            self._request_lock()
+
+    def _request_lock(self):
+        need_to_wait = not self.enqueuer.supplying_signal.is_set()
+        if need_to_wait and self.verbose > 2:
+            print("HSM: requesting lock for next epoch, waiting...", flush=True)
+        _poll_event(self.enqueuer.supplying_signal)
+        if need_to_wait and self.verbose > 2:
+            print("HSM: requesting lock for next epoch, waiting done", flush=True)
+        self.enqueuer.request_lock_list[self.request_lock_index] = True
 
     def on_train_end(self, logs=None):
         self.close()
@@ -118,14 +119,14 @@ class HardSampleMiningCallback(Callback):
         metrics, n_tiles = self.compute_metrics()  # [ B, M or B x T, M ] , T can differ between iterators
         gc.collect()
         first = self.proba_per_metric is None
-        if first:
+        if (first and self.verbose > 0) or self.verbose > 1:
             for i in range(metrics.shape[1]):
-                print(f"metric: range: [{np.min(metrics[:,i])}, {np.max(metrics[:,i])}] mean: {np.mean(metrics[:,i])}")
+                print(f"HSM metric: range: [{np.min(metrics[:,i])}, {np.max(metrics[:,i])}] mean: {np.mean(metrics[:,i])}")
         self.proba_per_metric = get_index_probability(metrics, enrich_factor=self.enrich_factor,  quantile_max=self.quantile_max, quantile_min=self.quantile_min, verbose=self.verbose)
         self.n_metrics = self.proba_per_metric.shape[0]
-        if first:
+        if (first and self.verbose > 0) or self.verbose > 1:
             for i in range(self.n_metrics):
-                print( f"proba for metric: {i + 1}/{self.n_metrics}: range: [{np.min(self.proba_per_metric[i])}; {np.max(self.proba_per_metric[i])}]: NA count: {np.sum(np.isnan(self.proba_per_metric[i]))}")
+                print( f"HSM proba for metric: {i + 1}/{self.n_metrics}: range: [{np.min(self.proba_per_metric[i])}; {np.max(self.proba_per_metric[i])}]: NA count: {np.sum(np.isnan(self.proba_per_metric[i]))}")
         if first and self.n_metrics > self.period:
             warnings.warn(  f"Hard sample mining period = {self.period} should be greater than metric number = {self.n_metrics}")
         self.n_tiles = n_tiles
@@ -133,11 +134,15 @@ class HardSampleMiningCallback(Callback):
     def compute_metrics(self):
         metric_list = []
         tile_list = []
-        if self.verbose >=1:
+        if self.verbose > 0:
             print(f"Hard Sample Mining: computing metrics...", flush=True)
         if self.enqueuer is not None:
-            #self.enqueuer.supplying_end_signal.wait()
+            need_to_wait = not self.enqueuer.supplying_end_signal.is_set()
+            if need_to_wait and self.verbose > 2:
+                print(f"HSM: waiting supplying end signal (main iterator)", flush=True)
             _poll_event(self.enqueuer.supplying_end_signal)
+            if need_to_wait and self.verbose > 2:
+                print(f"HSM: waiting supplying end signal (main iterator) done", flush=True)
             main_sequence = self.enqueuer.iterator
             self.enqueuer.wait_for_me_consumer.clear()  # lock the main generator consumer
             if hasattr(self.enqueuer, "record_step_duration"):
@@ -147,32 +152,34 @@ class HardSampleMiningCallback(Callback):
             self.wait_for_me_consumer_hsm.set()  # unlock hsm consumer
         for i in range(len(self.simple_iterator_list)):
             # unlock temporarily the corresponding enqueuer so that it starts
-            #print(f"compute metrics for iterator #{i}: start of loop", flush=True)
+            if self.verbose > 2:
+                print(f"compute metrics for iterator #{i}: start of loop", flush=True)
             if self.enqueuer is not None: # reuse the same enqueur -> set the iterator
-                if not self.enqueuer.supplying_end_signal.is_set():
-                    #print(f"HSM: waiting supplying end signal (compute metrics @{i})", flush=True)
-                    #self.enqueuer.supplying_end_signal.wait()
-                    _poll_event(self.enqueuer.supplying_end_signal)
+                if not self.enqueuer.supplying_end_signal.is_set() and self.verbose > 2:
+                    print(f"HSM: waiting supplying end signal (compute metrics @{i})", flush=True)
+                _poll_event(self.enqueuer.supplying_end_signal)
                 self.enqueuer.iterator = self.simple_iterator_list[i]
                 self.enqueuer.wait_for_me_supplier.set()
-                #print(f"HSM: supplier unlock (compute metrics @{i})", flush=True)
-                #print(f"hsm consumer unlock", flush=True)
+                if self.verbose > 2:
+                    print(f"HSM: supplier unlock (compute metrics @{i})", flush=True)
                 gen = self.generator
             else:
                 gen = self.simple_iterator_list[i]
-            #print(f"HSM: compute metrics for iterator #{i} start computing", flush=True)
+            if self.verbose > 2:
+                print(f"HSM: compute metrics for iterator #{i} start computing", flush=True)
             compute_metrics_fun = get_compute_metrics_fun(self.predict_fun, self.metrics_fun)
             metrics, n_tiles = compute_metrics_loop(compute_metrics_fun, gen, self.batch_size[i], self.n_batches[i], self.verbose) # B, M or B, T, M
-            #print(f"HSM: iterator {i}: {metrics.shape[1]} computed metrics on {metrics.shape[0]//n_tiles} samples x {n_tiles} tiles", flush=True)
+            if self.verbose > 2:
+                print(f"HSM: iterator {i}: {metrics.shape[1]} computed metrics on {metrics.shape[0]//n_tiles} samples x {n_tiles} tiles", flush=True)
             metric_list.append(metrics)
             tile_list.append(n_tiles)
         if self.enqueuer is not None:
             self.wait_for_me_consumer_hsm.clear()  # lock the hsm consumer
-            if not self.enqueuer.supplying_end_signal.is_set():
-                #print(f"HSM: end of metric computation: waiting for end of supplyer...", flush=True)
-                #self.enqueuer.supplying_end_signal.wait()
-                _poll_event(self.enqueuer.supplying_end_signal)
-            #print(f"HSM: end of metric computation: reset main enqueuer", flush=True)
+            if not self.enqueuer.supplying_end_signal.is_set() and self.verbose > 2:
+                print(f"HSM: end of metric computation: waiting for end of supplyer...", flush=True)
+            _poll_event(self.enqueuer.supplying_end_signal)
+            if self.verbose > 2:
+                print(f"HSM: end of metric computation: reset main enqueuer", flush=True)
             if hasattr(self.enqueuer, "record_step_duration"):
                 self.enqueuer.record_step_duration = record_step_duration
             self.enqueuer.iterator = main_sequence
@@ -262,7 +269,7 @@ def compute_metrics(iterator, predict_function, metrics_function, disable_augmen
     enq.start(workers=workers, max_queue_size=max(3, min(n_batches, workers)))
     gen = enq.get()
     if verbose >= 1:
-        print(f"Hard Sample Mining: computing metrics...", flush=True)
+        print(f"Hard Sample Mining: computing metrics..", flush=True)
     metrics, n_tiles = compute_metrics_loop(compute_metrics_fun, gen, batch_size, n_batches, verbose) # B, M or B, T, M
     enq.stop()
     if data_aug_param is not None:
