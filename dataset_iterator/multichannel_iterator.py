@@ -479,7 +479,7 @@ class MultiChannelIterator(IndexArrayIterator):
             output = _apply_multiplicity(output, self.output_multiplicity) # removes None batches
             return input, output
 
-    def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False, perform_elasticdeform=True, perform_tiling=True, **kwargs):
+    def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False, perform_elasticdeform:bool=True, perform_tiling:bool=True, perform_channels_postprocessing:bool=True, **kwargs):
         self.open()
         index_array = np.copy(index_array) # so that main index array is not modified
         index_ds = self._get_ds_idx(index_array) # modifies index_array
@@ -520,7 +520,7 @@ class MultiChannelIterator(IndexArrayIterator):
                 if n is not None:
                     arrays[c] = self._read_image_batch(index_ds, index_array, c, ref_channel_idx, aug_param_array, is_array=True, **kwargs)[0]
 
-        if self.channels_postprocessing_function is not None:
+        if perform_channels_postprocessing and self.channels_postprocessing_function is not None:
             self.channels_postprocessing_function(batch_by_channel)
 
         return batch_by_channel, aug_param_array, ref_channel_idx
