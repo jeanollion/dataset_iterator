@@ -82,6 +82,7 @@ class OrderedEnqueuerCF:
         self.semaphore = None
         self._orphaned_futures = []  # futures that timed out but may still hold shm references
         self._step_durations = [] # step duration for the epoch
+        self.record_step_duration = True
         #if isinstance(self.iterator.datasetIO, MemoryIO):
         #    print(f"{self.name}({self.uid}) iterator is shm {self.iterator.datasetIO.use_shm} sa {self.iterator.datasetIO.use_shared_array} open datasets: {len(self.iterator.datasetIO.datasets)}", flush=True)
 
@@ -194,9 +195,10 @@ class OrderedEnqueuerCF:
             self._cleanup_orphaned_futures()
             del executor
             gc.collect()
-            step_duration = statistics.median(self._step_durations)
-            #print(f"{self.name}({self.uid}) step duration: median={step_duration} range: [{min(self._step_durations)}, {max(self._step_durations)}] timeout: {self.step_duration} -> {step_duration * 1.5}")
-            self.step_duration = step_duration
+            if self.record_step_duration and len(self._step_durations) > 0:
+                step_duration = statistics.median(self._step_durations)
+                #print(f"{self.name}({self.uid}) step duration: median={step_duration} range: [{min(self._step_durations)}, {max(self._step_durations)}] timeout: {self.step_duration} -> {step_duration * 1.5}")
+                self.step_duration = step_duration
             self.supplying_end_signal.set()
             #print(f"{self.name}({self.uid}) Supplying signal off", flush=True)
 
@@ -302,7 +304,8 @@ class OrderedEnqueuerCF:
                     tensors, dt = future.result()
                     if self.use_shm or self.use_shared_array:
                         tensors = from_shm(*tensors)
-                    self._step_durations.append(dt)
+                    if self.record_step_duration:
+                        self._step_durations.append(dt)
                 else:
                     #print(f"Exception raised while getting future result from task: {i}. Task will be re-computed.", flush=True)
                     #traceback.print_exception(ex)
@@ -311,7 +314,8 @@ class OrderedEnqueuerCF:
                         self._cleanup_future_shm(future)
                     try:
                         tensors, dt = get_item(self.uid, i)
-                        self._step_durations.append(dt)
+                        if self.record_step_duration:
+                            self._step_durations.append(dt)
                         #print(f"Task {i} successfully re-computed.", flush=True)
                     except Exception as e:
                         print(f"Exception raised while trying to re-compute task {i}. Stopping the pool.", flush=True)

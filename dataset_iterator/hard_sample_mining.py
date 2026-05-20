@@ -140,6 +140,9 @@ class HardSampleMiningCallback(Callback):
             _poll_event(self.enqueuer.supplying_end_signal)
             main_sequence = self.enqueuer.iterator
             self.enqueuer.wait_for_me_consumer.clear()  # lock the main generator consumer
+            if hasattr(self.enqueuer, "record_step_duration"):
+                record_step_duration = self.enqueuer.record_step_duration
+                self.enqueuer.record_step_duration=False
             self.enqueuer.request_lock_list[self.request_lock_index] = True # will lock at each epoch (one epoch per iterator)
             self.wait_for_me_consumer_hsm.set()  # unlock hsm consumer
         for i in range(len(self.simple_iterator_list)):
@@ -170,6 +173,8 @@ class HardSampleMiningCallback(Callback):
                 #self.enqueuer.supplying_end_signal.wait()
                 _poll_event(self.enqueuer.supplying_end_signal)
             #print(f"HSM: end of metric computation: reset main enqueuer", flush=True)
+            if hasattr(self.enqueuer, "record_step_duration"):
+                self.enqueuer.record_step_duration = record_step_duration
             self.enqueuer.iterator = main_sequence
             self.enqueuer.wait_for_me_consumer.set()  # unlock the main consumer
         return np.concatenate(metric_list, axis=0), tile_list

@@ -77,13 +77,13 @@ class TrackingIterator(MultiChannelIterator):
         if "aug_remove_prob" in parameters:
             self.aug_remove_prob = parameters["aug_remove_prob"]
 
-    def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False, perform_elasticdeform=True, perform_tiling=True, **kwargs):
+    def _get_batch_by_channel(self, index_array, perform_augmentation, input_only=False, **kwargs):
         if "n_frames" not in kwargs:
             if self.aug_remove_prob>0 and random() < self.aug_remove_prob:
                 kwargs.update({"n_frames":0}) # flag aug remove
         if "frame_subsampling" not in kwargs:
             kwargs.update({"frame_subsampling":self.frame_subsampling()})
-        res = super()._get_batch_by_channel(index_array, perform_augmentation, input_only, perform_elasticdeform, perform_tiling, **kwargs)
+        res = super()._get_batch_by_channel(index_array, perform_augmentation, input_only, **kwargs)
         return res
 
     def _get_frames_to_augment(self, img, chan_idx, aug_params):
