@@ -346,7 +346,12 @@ class OrderedEnqueuerCF:
         if self.run_thread is None:  # has not been started
             return
         self.stop_signal.set()
-        self.run_thread.join(timeout)
+        # Do not join the run thread from within itself: stop() can be reached via
+        # __del__ when the enqueuer is finalized on its own run thread (CPython drops
+        # the bound-method reference inside Thread.run after _run returns), and
+        # joining the current thread raises RuntimeError("cannot join current thread").
+        if threading.current_thread() is not self.run_thread:
+            self.run_thread.join(timeout)
         if (self.use_shm or self.use_shared_array) and self.queue is not None and len(self.queue) > 0:  # clean shm
             for (future, _) in self.queue:
                 try:
