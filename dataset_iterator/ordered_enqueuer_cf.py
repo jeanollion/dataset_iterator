@@ -83,7 +83,6 @@ class OrderedEnqueuerCF:
         self._orphaned_futures = []  # futures that timed out but may still hold shm references
         self._step_durations = [] # step duration for the epoch
         self.record_step_duration = True
-        self._pending_shutdowns = deque()  # background executor-shutdown threads in flight (bounds pool overlap)
         #if isinstance(self.iterator.datasetIO, MemoryIO):
         #    print(f"{self.name}({self.uid}) iterator is shm {self.iterator.datasetIO.use_shm} sa {self.iterator.datasetIO.use_shared_array} open datasets: {len(self.iterator.datasetIO.datasets)}", flush=True)
 
@@ -127,52 +126,45 @@ class OrderedEnqueuerCF:
             time.sleep(0.1)
 
     def _shutdown_timeout(self):
-        # Generous graceful-shutdown window: a fixed floor plus a margin scaled
-        # to the measured step duration. Because the shutdown runs on a
-        # background thread (see _async_shutdown_executor) a large value costs
-        # nothing on the training critical path in the common case.
-        return max(30., 2. * self.step_duration)
+        # Graceful-shutdown grace period, scaled to the measured step duration so a
+        # worker that is legitimately mid-batch can finish (a too-short window is
+        # what SIGKILL-ed busy workers and stranded their results in the parent).
+        # executor.shutdown(wait=True) returns as soon as the (already drained)
+        # workers exit, so in the common case this is not actually waited out; it
+        # only bounds the rare stuck-worker case before we hand off to the reaper.
+        return max(10., 1.5 * self.step_duration)
 
-    def _async_shutdown_executor(self, executor):
-        """Shut down `executor` on a background daemon thread so the next epoch's
-        pool can be forked without waiting for the current workers to drain.
+    def _shutdown_executor_bounded(self, executor):
+        """Synchronously shut `executor` down within a step-scaled grace period,
+        then hand any survivors to the background reaper.
 
-        Graceful first (executor.shutdown(wait=True)) with a generous timeout so
-        workers finish their in-flight task and their results/buffers are
-        collected and freed in the parent. That clean drain is what avoids the
-        parent-side memory growth seen when workers are SIGKILL-ed mid-task and
-        their results are never reclaimed; SIGKILL is only the fallback if they
-        overrun the timeout (handled inside shutdown_executor).
-
-        Pool overlap is bounded by _reap_pending_shutdowns(), which the epoch
-        loop calls before forking the next pool."""
+        Synchronous on purpose: the next epoch must not fork a new pool while this
+        executor's manager thread is still alive — forking over a half-torn-down
+        pool corrupts the child and yields the 'NoneType has no attribute poll'
+        submit errors. So we wait (bounded) for graceful shutdown; if workers
+        overrun the grace period we SIGKILL them so the manager thread can exit
+        promptly, and any process that survives even SIGKILL (e.g. stuck in
+        uninterruptible IO) is queued to the reaper daemon, which keeps hunting it
+        off the training critical path. Net effect: bounded stall, no stranded
+        zombies accumulating across epochs."""
         timeout = self._shutdown_timeout()
-        th = threading.Thread(target=shutdown_executor, args=(executor, timeout),
-                              name=f"{self.name}({self.uid})-shutdown", daemon=True)
-        th.start()
-        self._pending_shutdowns.append(th)
-        return th
-
-    def _reap_pending_shutdowns(self, keep_last:int=1):
-        """Join finished background shutdowns, keeping at most `keep_last` of the
-        most recent ones running. This bounds the number of pools draining
-        concurrently with the live pool to keep_last (=> <= keep_last + 1 pools
-        alive at once) — important because every forked worker copy-on-write
-        shares the (large) parent address space, so a third pool can be the
-        difference that triggers the OOM.
-
-        Almost never blocks: a backgrounded shutdown self-escalates to SIGKILL
-        within ~3*_shutdown_timeout(), far below one epoch's duration. If a
-        shutdown is somehow still alive past the generous join timeout (e.g. a
-        worker stuck in uninterruptible IO), we log and proceed rather than
-        stall training indefinitely."""
-        join_timeout = max(120., 7. * self.step_duration)
-        while len(self._pending_shutdowns) > keep_last:
-            th = self._pending_shutdowns.popleft()
-            th.join(timeout=join_timeout)
-            if th.is_alive():
-                print(f"{self.name}({self.uid}) WARNING: background executor shutdown still running after "
-                      f"{join_timeout:.0f}s; proceeding (transient extra memory possible)", flush=True)
+        processes = list(executor._processes.keys()) if executor._processes is not None else None
+        done = threading.Thread(target=lambda: executor.shutdown(wait=True, cancel_futures=True),
+                                name=f"{self.name}({self.uid})-shutdown", daemon=True)
+        done.start()
+        done.join(timeout)
+        if done.is_alive():
+            # Grace period elapsed: force-kill so the manager thread can join, then
+            # give it a brief moment to finish. Survivors go to the reaper.
+            if processes:
+                survivors = kill_processes(processes, timeout=2, verbose=True)
+                _REAPER.enqueue(survivors)
+            done.join(timeout=min(10., timeout))
+            if done.is_alive():
+                # Extremely rare: manager thread still not exited after kill. The
+                # reaper keeps working; warn because the upcoming fork is then risky.
+                print(f"{self.name}({self.uid}) WARNING: executor manager thread still alive after "
+                      f"force-kill; next pool fork may race it", flush=True)
 
     def _run(self):
         """Submits request to the executor and queue the `Future` objects."""
@@ -209,11 +201,6 @@ class OrderedEnqueuerCF:
             #print(f"{self.name}({self.uid}) enqueuer start epoch. semaphore: {self.semaphore._value}", flush=True)
             if self.shuffle:
                 random.shuffle(indices)
-            # Bound pool overlap before forking: keep at most one previous pool
-            # draining in the background (<= 2 pools alive). Each forked worker
-            # COW-shares the large parent, so a third concurrent pool can tip the
-            # host into OOM.
-            self._reap_pending_shutdowns(keep_last=1)
             executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
             step_number = min(self.max_steps, len(indices)) if self.max_steps > 0 else len(indices)
             for idx in range(step_number):
@@ -223,7 +210,7 @@ class OrderedEnqueuerCF:
                 #print(f"{self.name}({self.uid}) supply task: {i} semaphore: {self.semaphore._value} queue: {len(self.queue)}", flush=True)
                 while restarts < self.max_restarts:
                     if self.stop_signal.is_set():
-                        shutdown_executor(executor, timeout=self._shutdown_timeout())  # stopping: clean shutdown on this thread is fine
+                        self._shutdown_executor_bounded(executor)
                         self._clear_iterator()
                         return
                     try:
@@ -236,10 +223,7 @@ class OrderedEnqueuerCF:
                         print(f"Executor {self.name}({self.uid}) error for index {i} (attempt {restarts + 1}/{self.max_restarts}): {e}. Restarting executor...", flush=True)
                         self.wait_queue(True)
                         #with _EXECUTOR_LOCK:
-                        # Drain the broken pool off the hot path, then bound overlap before
-                        # forking the replacement so repeated restarts can't stack pools.
-                        self._async_shutdown_executor(executor)
-                        self._reap_pending_shutdowns(keep_last=1)
+                        self._shutdown_executor_bounded(executor)
                         executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
                         print(f"Executor {self.name}({self.uid}) restarted! ", flush=True)
                         restarts += 1
@@ -247,12 +231,12 @@ class OrderedEnqueuerCF:
             # Done with the current epoch, waiting for the final batches
             self.wait_queue(True)  # safer to wait before calling shutdown than calling directly shutdown with wait=True
             self.supplying_signal.clear()
-            # Drain the pool on a background thread so the next epoch's fork is not
-            # blocked; overlap is bounded by _reap_pending_shutdowns() at loop top.
-            self._async_shutdown_executor(executor)
+            # Bounded synchronous shutdown so the manager thread is gone before the
+            # next epoch forks; stragglers are reaped in the background.
+            self._shutdown_executor_bounded(executor)
             self._clear_iterator()
             self._cleanup_orphaned_futures()
-            del executor  # only drops this local ref; the background thread keeps the pool alive until it has drained
+            del executor
             gc.collect()
             if self.record_step_duration and len(self._step_durations) > 0:
                 step_duration = statistics.median(self._step_durations)
@@ -411,10 +395,6 @@ class OrderedEnqueuerCF:
         # joining the current thread raises RuntimeError("cannot join current thread").
         if threading.current_thread() is not self.run_thread:
             self.run_thread.join(timeout)
-            # Supplier thread has exited: no more pools will be created, so drain
-            # every remaining background shutdown (keep_last=0) to avoid leaving
-            # orphan worker pools behind.
-            self._reap_pending_shutdowns(keep_last=0)
         if (self.use_shm or self.use_shared_array) and self.queue is not None and len(self.queue) > 0:  # clean shm
             for (future, _) in self.queue:
                 try:
@@ -493,3 +473,54 @@ def shutdown_executor(executor, timeout=30):
     if processes is not None:
         kill_processes(processes, timeout=timeout, verbose=True)
     time.sleep(0.1)
+
+
+class _ProcessReaper:
+    """Single background daemon that hunts down worker processes left over from a
+    bounded executor shutdown (workers that survived the grace period + SIGKILL,
+    e.g. briefly stuck in uninterruptible IO). It keeps killing/reaping them off
+    the training critical path so stragglers can't accumulate across epochs (the
+    memory growth we are trying to avoid) without ever stalling the supplier loop.
+
+    Shared module-wide because worker PIDs are globally unique across the several
+    enqueuers (main / validation / hard-sample-mining)."""
+    def __init__(self, poll_interval:float=2.):
+        self._pending = deque()  # list[int] PID batches still to reap
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._poll_interval = poll_interval
+        self._thread = None
+
+    def enqueue(self, pids):
+        if not pids:
+            return
+        with self._lock:
+            self._pending.append(list(pids))
+        self._ensure_running()
+        self._wake.set()
+
+    def _ensure_running(self):
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._run, name="enqueuer-reaper", daemon=True)
+                self._thread.start()
+
+    def _run(self):
+        while True:
+            self._wake.wait(timeout=self._poll_interval)
+            self._wake.clear()
+            with self._lock:
+                batches = list(self._pending)
+                self._pending.clear()
+            still_alive = []
+            for pids in batches:
+                alive = kill_processes(pids, timeout=1, verbose=False)  # SIGKILL + brief reap
+                if alive:
+                    still_alive.append(alive)
+            if still_alive:  # requeue stubborn PIDs for another sweep
+                with self._lock:
+                    self._pending.extend(still_alive)
+                time.sleep(self._poll_interval)  # don't busy-spin on uninterruptible zombies
+
+
+_REAPER = _ProcessReaper()
