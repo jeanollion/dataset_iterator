@@ -83,6 +83,7 @@ class OrderedEnqueuerCF:
         self._orphaned_futures = []  # futures that timed out but may still hold shm references
         self._step_durations = [] # step duration for the epoch
         self.record_step_duration = True
+        self._pending_shutdowns = deque()  # background executor-shutdown threads in flight (bounds pool overlap)
         #if isinstance(self.iterator.datasetIO, MemoryIO):
         #    print(f"{self.name}({self.uid}) iterator is shm {self.iterator.datasetIO.use_shm} sa {self.iterator.datasetIO.use_shared_array} open datasets: {len(self.iterator.datasetIO.datasets)}", flush=True)
 
@@ -125,6 +126,54 @@ class OrderedEnqueuerCF:
                 return
             time.sleep(0.1)
 
+    def _shutdown_timeout(self):
+        # Generous graceful-shutdown window: a fixed floor plus a margin scaled
+        # to the measured step duration. Because the shutdown runs on a
+        # background thread (see _async_shutdown_executor) a large value costs
+        # nothing on the training critical path in the common case.
+        return max(30., 2. * self.step_duration)
+
+    def _async_shutdown_executor(self, executor):
+        """Shut down `executor` on a background daemon thread so the next epoch's
+        pool can be forked without waiting for the current workers to drain.
+
+        Graceful first (executor.shutdown(wait=True)) with a generous timeout so
+        workers finish their in-flight task and their results/buffers are
+        collected and freed in the parent. That clean drain is what avoids the
+        parent-side memory growth seen when workers are SIGKILL-ed mid-task and
+        their results are never reclaimed; SIGKILL is only the fallback if they
+        overrun the timeout (handled inside shutdown_executor).
+
+        Pool overlap is bounded by _reap_pending_shutdowns(), which the epoch
+        loop calls before forking the next pool."""
+        timeout = self._shutdown_timeout()
+        th = threading.Thread(target=shutdown_executor, args=(executor, timeout),
+                              name=f"{self.name}({self.uid})-shutdown", daemon=True)
+        th.start()
+        self._pending_shutdowns.append(th)
+        return th
+
+    def _reap_pending_shutdowns(self, keep_last:int=1):
+        """Join finished background shutdowns, keeping at most `keep_last` of the
+        most recent ones running. This bounds the number of pools draining
+        concurrently with the live pool to keep_last (=> <= keep_last + 1 pools
+        alive at once) — important because every forked worker copy-on-write
+        shares the (large) parent address space, so a third pool can be the
+        difference that triggers the OOM.
+
+        Almost never blocks: a backgrounded shutdown self-escalates to SIGKILL
+        within ~3*_shutdown_timeout(), far below one epoch's duration. If a
+        shutdown is somehow still alive past the generous join timeout (e.g. a
+        worker stuck in uninterruptible IO), we log and proceed rather than
+        stall training indefinitely."""
+        join_timeout = max(120., 7. * self.step_duration)
+        while len(self._pending_shutdowns) > keep_last:
+            th = self._pending_shutdowns.popleft()
+            th.join(timeout=join_timeout)
+            if th.is_alive():
+                print(f"{self.name}({self.uid}) WARNING: background executor shutdown still running after "
+                      f"{join_timeout:.0f}s; proceeding (transient extra memory possible)", flush=True)
+
     def _run(self):
         """Submits request to the executor and queue the `Future` objects."""
         if self.wait_for_me_supplier is not None:
@@ -160,6 +209,11 @@ class OrderedEnqueuerCF:
             #print(f"{self.name}({self.uid}) enqueuer start epoch. semaphore: {self.semaphore._value}", flush=True)
             if self.shuffle:
                 random.shuffle(indices)
+            # Bound pool overlap before forking: keep at most one previous pool
+            # draining in the background (<= 2 pools alive). Each forked worker
+            # COW-shares the large parent, so a third concurrent pool can tip the
+            # host into OOM.
+            self._reap_pending_shutdowns(keep_last=1)
             executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
             step_number = min(self.max_steps, len(indices)) if self.max_steps > 0 else len(indices)
             for idx in range(step_number):
@@ -169,7 +223,7 @@ class OrderedEnqueuerCF:
                 #print(f"{self.name}({self.uid}) supply task: {i} semaphore: {self.semaphore._value} queue: {len(self.queue)}", flush=True)
                 while restarts < self.max_restarts:
                     if self.stop_signal.is_set():
-                        shutdown_executor(executor, timeout=self.step_duration)
+                        shutdown_executor(executor, timeout=self._shutdown_timeout())  # stopping: clean shutdown on this thread is fine
                         self._clear_iterator()
                         return
                     try:
@@ -182,7 +236,10 @@ class OrderedEnqueuerCF:
                         print(f"Executor {self.name}({self.uid}) error for index {i} (attempt {restarts + 1}/{self.max_restarts}): {e}. Restarting executor...", flush=True)
                         self.wait_queue(True)
                         #with _EXECUTOR_LOCK:
-                        shutdown_executor(executor, timeout=self.step_duration)
+                        # Drain the broken pool off the hot path, then bound overlap before
+                        # forking the replacement so repeated restarts can't stack pools.
+                        self._async_shutdown_executor(executor)
+                        self._reap_pending_shutdowns(keep_last=1)
                         executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp_context, initializer=init_pool_generator, initargs=get_init_pool_args(self.iterator))
                         print(f"Executor {self.name}({self.uid}) restarted! ", flush=True)
                         restarts += 1
@@ -190,10 +247,12 @@ class OrderedEnqueuerCF:
             # Done with the current epoch, waiting for the final batches
             self.wait_queue(True)  # safer to wait before calling shutdown than calling directly shutdown with wait=True
             self.supplying_signal.clear()
-            shutdown_executor(executor, timeout=self.step_duration)
+            # Drain the pool on a background thread so the next epoch's fork is not
+            # blocked; overlap is bounded by _reap_pending_shutdowns() at loop top.
+            self._async_shutdown_executor(executor)
             self._clear_iterator()
             self._cleanup_orphaned_futures()
-            del executor
+            del executor  # only drops this local ref; the background thread keeps the pool alive until it has drained
             gc.collect()
             if self.record_step_duration and len(self._step_durations) > 0:
                 step_duration = statistics.median(self._step_durations)
@@ -352,6 +411,10 @@ class OrderedEnqueuerCF:
         # joining the current thread raises RuntimeError("cannot join current thread").
         if threading.current_thread() is not self.run_thread:
             self.run_thread.join(timeout)
+            # Supplier thread has exited: no more pools will be created, so drain
+            # every remaining background shutdown (keep_last=0) to avoid leaving
+            # orphan worker pools behind.
+            self._reap_pending_shutdowns(keep_last=0)
         if (self.use_shm or self.use_shared_array) and self.queue is not None and len(self.queue) > 0:  # clean shm
             for (future, _) in self.queue:
                 try:
