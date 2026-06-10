@@ -32,6 +32,9 @@ def _poll_event(event, poll_interval=0.05):
 # uses concurrent.futures, solves a memory leak in case of hard sample mining run as callback with regular orderedEnqueur. Option to pass tensors through shared memory
 # Global variables to be shared across processes
 _SHARED_ITERATOR = {}
+# Graceful window when shutting a pool down because stop() was requested: short,
+# since any in-flight results are discarded anyway -> stop returns promptly.
+_STOP_SHUTDOWN_GRACE = 2.
 # We use a Value to provide unique id to different processes.
 _COUNTER = None
 
@@ -136,7 +139,7 @@ class OrderedEnqueuerCF:
         # only bounds the rare stuck-worker case before we hand off to the reaper.
         return max(10., 1.5 * self.step_duration)
 
-    def _shutdown_executor_bounded(self, executor):
+    def _shutdown_executor_bounded(self, executor, timeout=None):
         """Synchronously shut `executor` down within a step-scaled grace period,
         then hand any survivors to the background reaper.
 
@@ -149,7 +152,8 @@ class OrderedEnqueuerCF:
         uninterruptible IO) is queued to the reaper daemon, which keeps hunting it
         off the training critical path. Net effect: bounded stall, no stranded
         zombies accumulating across epochs."""
-        timeout = self._shutdown_timeout()
+        if timeout is None:
+            timeout = self._shutdown_timeout()
         processes = list(executor._processes.keys()) if executor._processes is not None else None
         done = threading.Thread(target=lambda: executor.shutdown(wait=True, cancel_futures=True),
                                 name=f"{self.name}({self.uid})-shutdown", daemon=True)
@@ -163,10 +167,11 @@ class OrderedEnqueuerCF:
                 _REAPER.enqueue(survivors)
             done.join(timeout=min(10., timeout))
             if done.is_alive():
-                # Extremely rare: manager thread still not exited after kill. The
-                # reaper keeps working; warn because the upcoming fork is then risky.
+                # Rare: manager thread still not exited after the workers were killed.
+                # The reaper keeps mopping up; at an epoch boundary the upcoming fork
+                # could race it (on the stop path there is no further fork).
                 print(f"{self.name}({self.uid}) WARNING: executor manager thread still alive after "
-                      f"force-kill; next pool fork may race it", flush=True)
+                      f"force-kill of its workers", flush=True)
 
     def _run(self):
         """Submits request to the executor and queue the `Future` objects."""
@@ -196,6 +201,9 @@ class OrderedEnqueuerCF:
             return self.uid, iterator if mp_context_method == "fork" else dill.dumps(iterator), mp_context_method != "fork"
 
         while True:
+            if self.stop_signal.is_set():  # stop requested between epochs: exit before forking a new pool
+                self._clear_iterator()
+                return
             self._step_durations.clear()
             #print(f"{self.name}({self.uid}) epoch start: open fds: {get_num_fds()}", flush=True)
             self.supplying_signal.set()
@@ -208,11 +216,19 @@ class OrderedEnqueuerCF:
             for idx in range(step_number):
                 i = indices[idx]
                 restarts = 0
-                self.semaphore.acquire()
+                # interruptible acquire: on stop() the consumer stops releasing the
+                # semaphore, so block in short slices and bail out instead of hanging
+                while not self.semaphore.acquire(timeout=0.5):
+                    if self.stop_signal.is_set():
+                        break
+                if self.stop_signal.is_set():
+                    self._shutdown_executor_bounded(executor, timeout=_STOP_SHUTDOWN_GRACE)
+                    self._clear_iterator()
+                    return
                 #print(f"{self.name}({self.uid}) supply task: {i} semaphore: {self.semaphore._value} queue: {len(self.queue)}", flush=True)
                 while restarts < self.max_restarts:
                     if self.stop_signal.is_set():
-                        self._shutdown_executor_bounded(executor)
+                        self._shutdown_executor_bounded(executor, timeout=_STOP_SHUTDOWN_GRACE)
                         self._clear_iterator()
                         return
                     try:
@@ -401,6 +417,15 @@ class OrderedEnqueuerCF:
         # joining the current thread raises RuntimeError("cannot join current thread").
         if threading.current_thread() is not self.run_thread:
             self.run_thread.join(timeout)
+            if self.run_thread.is_alive():
+                # Supplier thread did not exit in time (e.g. still draining a slow
+                # pool). Leave shared state intact and let it wind down on its own:
+                # nulling self.semaphore / self.queue here is exactly what crashed it
+                # with "'NoneType' object has no attribute 'acquire'". State is
+                # released when the enqueuer object itself is dropped.
+                print(f"{self.name}({self.uid}) stop: supplier thread still running after {timeout}s; "
+                      f"deferring teardown (it will exit on its own)", flush=True)
+                return
         if (self.use_shm or self.use_shared_array) and self.queue is not None and len(self.queue) > 0:  # clean shm
             for (future, _) in self.queue:
                 try:
