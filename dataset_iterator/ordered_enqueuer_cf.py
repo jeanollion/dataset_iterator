@@ -4,7 +4,7 @@ import statistics
 import traceback
 import dill
 from .process_utils import kill_processes, log_used_mem, \
-    get_num_fds  # this import needs to be before any import related to concurrent futures to patch
+    get_num_fds, malloc_trim, log_resources  # this import needs to be before any import related to concurrent futures to patch
 from concurrent.futures import ProcessPoolExecutor, CancelledError, TimeoutError, as_completed
 from collections import deque
 import multiprocessing
@@ -36,9 +36,11 @@ _SHARED_ITERATOR = {}
 _COUNTER = None
 
 class OrderedEnqueuerCF:
-    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=False, max_restarts:int=10, max_steps=0, step_duration=60, name="enqueuer"):
+    def __init__(self, iterator, shuffle=False, single_epoch:bool=False, use_shm:bool=False, use_shared_array:bool=False, max_restarts:int=10, max_steps=0, step_duration=60, name="enqueuer", log_resources:bool=False):
         self.iterator = iterator
         self.shuffle = shuffle
+        self.log_resources = log_resources  # per-epoch RSS / thread / child-process diagnostics
+        self._epoch = 0
         self.single_epoch = single_epoch
         self.use_shm = use_shm
         self.use_shared_array=use_shared_array
@@ -238,10 +240,14 @@ class OrderedEnqueuerCF:
             self._cleanup_orphaned_futures()
             del executor
             gc.collect()
+            malloc_trim()  # return the freed heap to the OS so the per-epoch RSS floor does not creep up
             if self.record_step_duration and len(self._step_durations) > 0:
                 step_duration = statistics.median(self._step_durations)
                 #print(f"{self.name}({self.uid}) step duration: median={step_duration} range: [{min(self._step_durations)}, {max(self._step_durations)}] timeout: {self.step_duration} -> {step_duration * 1.5}")
                 self.step_duration = step_duration
+            self._epoch += 1
+            if self.log_resources:
+                log_resources(f"{self.name}({self.uid}) end-epoch {self._epoch} step_dur={self.step_duration:.2f}s reaper_pending={_REAPER.pending_count()}")
             self.supplying_end_signal.set()
             #print(f"{self.name}({self.uid}) Supplying signal off", flush=True)
 
@@ -483,19 +489,34 @@ class _ProcessReaper:
     memory growth we are trying to avoid) without ever stalling the supplier loop.
 
     Shared module-wide because worker PIDs are globally unique across the several
-    enqueuers (main / validation / hard-sample-mining)."""
-    def __init__(self, poll_interval:float=2.):
-        self._pending = deque()  # list[int] PID batches still to reap
+    enqueuers (main / validation / hard-sample-mining).
+
+    Each batch carries an attempt counter; a batch that is still alive after
+    `max_attempts` sweeps is logged and dropped (truly unkillable, e.g. a defunct
+    process the OS will reap, or one wedged in D-state) so the daemon never spins
+    on it forever."""
+    def __init__(self, poll_interval:float=2., max_attempts:int=30):
+        self._pending = deque()  # (list[int] pids, attempts)
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._poll_interval = poll_interval
+        self._max_attempts = max_attempts
         self._thread = None
+        self._total_reaped = 0
+
+    def pending_count(self):
+        with self._lock:
+            return sum(len(pids) for pids, _ in self._pending)
+
+    def total_reaped(self):
+        with self._lock:
+            return self._total_reaped
 
     def enqueue(self, pids):
         if not pids:
             return
         with self._lock:
-            self._pending.append(list(pids))
+            self._pending.append((list(pids), 0))
         self._ensure_running()
         self._wake.set()
 
@@ -512,14 +533,25 @@ class _ProcessReaper:
             with self._lock:
                 batches = list(self._pending)
                 self._pending.clear()
-            still_alive = []
-            for pids in batches:
+            requeue = []
+            for pids, attempts in batches:
                 alive = kill_processes(pids, timeout=1, verbose=False)  # SIGKILL + brief reap
+                reaped = len(pids) - len(alive)
+                if reaped:
+                    with self._lock:
+                        self._total_reaped += reaped
+                    print(f"[reaper] reaped {reaped} straggler worker process(es) "
+                          f"(total {self._total_reaped})", flush=True)
                 if alive:
-                    still_alive.append(alive)
-            if still_alive:  # requeue stubborn PIDs for another sweep
+                    attempts += 1
+                    if attempts >= self._max_attempts:
+                        print(f"[reaper] giving up on {len(alive)} unkillable worker process(es) after "
+                              f"{attempts} attempts (defunct / uninterruptible): {alive}", flush=True)
+                    else:
+                        requeue.append((alive, attempts))
+            if requeue:  # stubborn PIDs: try again next sweep
                 with self._lock:
-                    self._pending.extend(still_alive)
+                    self._pending.extend(requeue)
                 time.sleep(self._poll_interval)  # don't busy-spin on uninterruptible zombies
 
 
