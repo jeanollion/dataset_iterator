@@ -87,6 +87,28 @@ def count_threads(name_substr=None):
     return sum(1 for t in threads if name_substr in t.name)
 
 
+def _read_cgroup_mem():
+    """(current, peak) container memory in bytes from the cgroup (v2 then v1), or
+    (None, None). This is the OOM-relevant figure: it counts shared (copy-on-write)
+    pages once across the parent + all forked workers, unlike summed per-process RSS."""
+    for cur_f, peak_f in (("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.peak"),
+                          ("/sys/fs/cgroup/memory/memory.usage_in_bytes",
+                           "/sys/fs/cgroup/memory/memory.max_usage_in_bytes")):
+        try:
+            with open(cur_f) as f:
+                cur = int(f.read())
+        except OSError:
+            continue
+        peak = None
+        try:
+            with open(peak_f) as f:
+                peak = int(f.read())
+        except OSError:
+            pass
+        return cur, peak
+    return None, None
+
+
 def log_resources(tag=""):
     """One-line snapshot of the current process' resource footprint. Returns the
     values as a dict so callers can also act on them."""
@@ -94,16 +116,31 @@ def log_resources(tag=""):
     rss = p.memory_info().rss / float(2 ** 30)
     os_threads = p.num_threads()
     py_threads = threading.active_count()
-    shutdown_threads = count_threads("-shutdown")  # executor-shutdown threads that have not joined
+    sd = [t for t in threading.enumerate() if "-shutdown" in t.name]  # unjoined executor-shutdown threads
+    cg_cur, cg_peak = _read_cgroup_mem()
+    cg = ""
+    if cg_cur is not None:
+        cg = f"cgroup_cur={cg_cur / 2 ** 30:.2f}Gb"
+        if cg_peak is not None:
+            cg += f" cgroup_peak={cg_peak / 2 ** 30:.2f}Gb"  # high-water of the whole container (incl. workers)
+    child_info = []  # (pid, age_s, rss_gb) -> identifies persistent children and whether they hold memory
     try:
-        children = len(p.children())
+        for c in p.children():
+            try:
+                with c.oneshot():
+                    child_info.append((c.pid, int(time.time() - c.create_time()), c.memory_info().rss / 2 ** 30))
+            except (NoSuchProcess, AccessDenied):
+                pass
     except (NoSuchProcess, AccessDenied):
-        children = -1
+        pass
     try:
         fds = p.num_fds()
     except (NoSuchProcess, AccessDenied):
         fds = -1
-    print(f"[resources] {tag} rss={rss:.2f}Gb os_threads={os_threads} py_threads={py_threads} "
-          f"unjoined_shutdown_threads={shutdown_threads} children={children} fds={fds}", flush=True)
-    return dict(rss_gb=rss, os_threads=os_threads, py_threads=py_threads,
-                shutdown_threads=shutdown_threads, children=children, fds=fds)
+    children_str = ",".join(f"{pid}:{age}s:{r:.1f}Gb" for pid, age, r in child_info) or "none"
+    sd_str = f"={[t.ident for t in sd]}" if sd else ""  # same ident across epochs => real leak; rotating => transient
+    print(f"[resources] {tag} rss={rss:.2f}Gb {cg} os_threads={os_threads} py_threads={py_threads} "
+          f"unjoined_shutdown_threads={len(sd)}{sd_str} children={len(child_info)}[{children_str}] fds={fds}",
+          flush=True)
+    return dict(rss_gb=rss, cgroup_cur=cg_cur, cgroup_peak=cg_peak, os_threads=os_threads, py_threads=py_threads,
+                shutdown_threads=len(sd), children=len(child_info), fds=fds)
