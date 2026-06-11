@@ -256,7 +256,6 @@ class OrderedEnqueuerCF:
             self._cleanup_orphaned_futures()
             del executor
             gc.collect()
-            malloc_trim()  # return the freed heap to the OS so the per-epoch RSS floor does not creep up
             if self.record_step_duration and len(self._step_durations) > 0:
                 step_duration = statistics.median(self._step_durations)
                 #print(f"{self.name}({self.uid}) step duration: median={step_duration} range: [{min(self._step_durations)}, {max(self._step_durations)}] timeout: {self.step_duration} -> {step_duration * 1.5}")
