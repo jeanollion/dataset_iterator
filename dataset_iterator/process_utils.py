@@ -1,15 +1,12 @@
-import os, time, subprocess, ctypes, threading, tracemalloc
+import os, time, subprocess, ctypes, threading, gc
 from psutil import NoSuchProcess, AccessDenied, wait_procs, Process
 import concurrent.futures.process
 
-# Opt-in (DATASET_ITERATOR_TRACEMALLOC=1): track Python allocations so log_resources
-# can attribute a sudden RSS step to Python (and name the line) vs native memory
-# (TF/CUDA/glibc, which tracemalloc cannot see). Has allocation overhead -> diagnostic only.
-_TM_ON = os.environ.get("DATASET_ITERATOR_TRACEMALLOC", "0") == "1"
-if _TM_ON and not tracemalloc.is_tracing():
-    tracemalloc.start(15)  # keep 15 frames so the traceback is informative
-_tm_last_snapshot = None
-_tm_last_rss = None
+# Opt-in (DATASET_ITERATOR_HEAP_PROBE=1): fork-safe Python-heap probe in log_resources,
+# to attribute a sudden RSS step to Python objects (esp. numpy) vs native memory
+# (TF/CUDA/driver/glibc). tracemalloc is deliberately NOT used: its per-allocation
+# lock deadlocks forked ProcessPoolExecutor workers in this many-threaded process.
+_HEAP_PROBE = os.environ.get("DATASET_ITERATOR_HEAP_PROBE", "0") == "1"
 
 # monkey patch -> executor shutdown easily hangs at join
 try:
@@ -118,25 +115,13 @@ def _read_cgroup_mem():
     return None, None
 
 
-def _tracemalloc_report(rss_gb, jump_threshold_gb=1.5):
-    """When tracemalloc is enabled and RSS jumped by >= jump_threshold_gb since the
-    last call, print the top Python allocation growths and the Python-tracked total
-    vs RSS. If tracked << RSS, the step is native (TF/CUDA/glibc), not Python."""
-    global _tm_last_snapshot, _tm_last_rss
-    if not _TM_ON:
-        return
-    snap = tracemalloc.take_snapshot()
-    if _tm_last_snapshot is not None and _tm_last_rss is not None and (rss_gb - _tm_last_rss) >= jump_threshold_gb:
-        traced_cur, traced_peak = tracemalloc.get_traced_memory()
-        verdict = "mostly NATIVE (TF/CUDA/glibc) -- not a Python allocation" if traced_cur / 2 ** 30 < rss_gb * 0.5 \
-            else "Python-visible -- see growths below"
-        print(f"[tracemalloc] RSS step {_tm_last_rss:.2f}->{rss_gb:.2f}Gb | python-tracked={traced_cur / 2 ** 30:.2f}Gb "
-              f"(peak {traced_peak / 2 ** 30:.2f}Gb) => {verdict}", flush=True)
-        for stat in snap.compare_to(_tm_last_snapshot, 'traceback')[:10]:
-            frame = stat.traceback.format()[-1].strip() if stat.traceback else "?"
-            print(f"[tracemalloc]   {stat.size_diff / 2 ** 20:+.1f}MiB ({stat.count_diff:+d} blocks) {frame}", flush=True)
-    _tm_last_snapshot = snap
-    _tm_last_rss = rss_gb
+def _gc_object_count():
+    """Fork-safe count of gc-tracked Python objects. Read-only (no allocator hooks),
+    so unlike tracemalloc it cannot deadlock forked workers. A sudden RSS step that
+    coincides with a jump here is a Python-object pile-up (a growing list/dict/etc.);
+    a step with this count flat is numpy-data or native memory (TF/CUDA/driver/glibc),
+    since numeric numpy arrays and native buffers are not gc-tracked."""
+    return len(gc.get_objects())
 
 
 def log_resources(tag=""):
@@ -144,7 +129,11 @@ def log_resources(tag=""):
     values as a dict so callers can also act on them."""
     p = Process(os.getpid())
     rss = p.memory_info().rss / float(2 ** 30)
-    _tracemalloc_report(rss)
+    heap = ""
+    heap_obj = None
+    if _HEAP_PROBE:
+        heap_obj = _gc_object_count()
+        heap = f"gc_objs={heap_obj} "
     os_threads = p.num_threads()
     py_threads = threading.active_count()
     sd = [t for t in threading.enumerate() if "-shutdown" in t.name]  # unjoined executor-shutdown threads
@@ -170,8 +159,9 @@ def log_resources(tag=""):
         fds = -1
     children_str = ",".join(f"{pid}:{age}s:{r:.1f}Gb" for pid, age, r in child_info) or "none"
     sd_str = f"={[t.ident for t in sd]}" if sd else ""  # same ident across epochs => real leak; rotating => transient
-    print(f"[resources] {tag} rss={rss:.2f}Gb {cg} os_threads={os_threads} py_threads={py_threads} "
+    print(f"[resources] {tag} rss={rss:.2f}Gb {cg} {heap}os_threads={os_threads} py_threads={py_threads} "
           f"unjoined_shutdown_threads={len(sd)}{sd_str} children={len(child_info)}[{children_str}] fds={fds}",
           flush=True)
-    return dict(rss_gb=rss, cgroup_cur=cg_cur, cgroup_peak=cg_peak, os_threads=os_threads, py_threads=py_threads,
+    return dict(rss_gb=rss, cgroup_cur=cg_cur, cgroup_peak=cg_peak, gc_objs=heap_obj,
+                os_threads=os_threads, py_threads=py_threads,
                 shutdown_threads=len(sd), children=len(child_info), fds=fds)
