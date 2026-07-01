@@ -172,6 +172,50 @@ class OrderedEnqueuerCF:
                 # could race it (on the stop path there is no further fork).
                 print(f"{self.name}({self.uid}) WARNING: executor manager thread still alive after "
                       f"force-kill of its workers", flush=True)
+        # Whichever path we took, release the executor's parent-side fds explicitly.
+        # This is what prevents the steady "Too many open files" fd leak: on the
+        # force path join_executor_internals could only Process.terminate() the
+        # stuck workers (Process.close() raises while they are alive), leaving each
+        # worker's sentinel fd — plus the result_queue pipe the patch never closes —
+        # open, ~2 fds per stuck worker per epoch until the process hits its ulimit.
+        self._release_executor_resources(executor)
+
+    def _release_executor_resources(self, executor):
+        """Close the parent-side fds an executor holds: each worker Popen's
+        sentinel fd and the call/result/thread-wakeup pipes. Safe to call once the
+        workers are dead (clean shutdown finished, or reaper SIGKILL); every close
+        is guarded so re-closing already-closed objects (clean path) is a no-op."""
+        procs = getattr(executor, "_processes", None)
+        if procs:
+            for p in list(procs.values()):
+                try:
+                    p.join(0)  # reap if it just died, so close() won't raise
+                except Exception:
+                    pass
+                try:
+                    p.close()  # releases the sentinel fd terminate() leaves open
+                except Exception:
+                    pass
+        for attr in ("_call_queue", "_result_queue"):
+            q = getattr(executor, attr, None)
+            if q is None:
+                continue
+            try:
+                q.close()
+            except Exception:
+                pass
+            jt = getattr(q, "join_thread", None)  # SimpleQueue has no feeder thread
+            if jt is not None:
+                try:
+                    jt()
+                except Exception:
+                    pass
+        tw = getattr(executor, "_thread_wakeup", None)
+        if tw is not None:
+            try:
+                tw.close()  # closes the self-pipe reader+writer
+            except Exception:
+                pass
 
     def _run(self):
         """Submits request to the executor and queue the `Future` objects."""
