@@ -7,3 +7,4 @@ from .multiple_datasetIO import MultipleDatasetIO
 from .concatenate_datasetIO import ConcatenateDatasetIO
 from .group_datasetIO import GroupDatasetIO
 from .memoryIO import MemoryIO
+from .dictDatasetIO import DictDatasetIO
