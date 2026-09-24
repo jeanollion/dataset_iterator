@@ -9,7 +9,9 @@ else:
 import csv
 import os
 import time
+import datetime as dt
 import numpy as np
+
 
 class SafeModelCheckpoint(ModelCheckpoint):
     def __init__(self,
@@ -204,3 +206,76 @@ class LogsCallback(Callback):
                     headers.insert(0, "epoch")
                     writer.writerow(headers)
                 writer.writerow(losses)
+
+
+class TimeWindowPause(Callback):
+    """
+    Pauses training outside an allowed time-of-day window.
+
+    start_hour / end_hour can be fractional (e.g. 10.5 = 10:30, 22.25 = 22:15).
+
+    If start_hour < end_hour: allowed window is [start_hour, end_hour).
+    If start_hour > end_hour: window wraps midnight (e.g. 22 -> 6).
+    """
+
+    def __init__(self, start_hour, end_hour, check_every=300,
+                 check_level='epoch', verbose=1):
+        super().__init__()
+        if not (0 <= start_hour < 24 and 0 <= end_hour < 24):
+            raise ValueError("start_hour and end_hour must be in [0, 24)")
+        if check_level not in ('epoch', 'batch'):
+            raise ValueError("check_level must be 'epoch' or 'batch'")
+
+        self.start_hour = start_hour
+        self.end_hour = end_hour
+        self.start_min = round(start_hour * 60)
+        self.end_min = round(end_hour * 60)
+        self.check_every = check_every
+        self.check_level = check_level
+        self.verbose = verbose
+
+    @staticmethod
+    def _minutes_since_midnight(now):
+        return now.hour * 60 + now.minute + now.second / 60.0
+
+    def _is_allowed(self, now=None):
+        now = now or dt.datetime.now()
+        m = self._minutes_since_midnight(now)
+
+        if self.start_min < self.end_min:
+            return self.start_min <= m < self.end_min
+        elif self.start_min > self.end_min:
+            return m >= self.start_min or m < self.end_min
+        else:
+            return True
+
+    def _fmt(self, hour_float):
+        h = int(hour_float)
+        m = round((hour_float - h) * 60)
+        return f"{h:02d}:{m:02d}"
+
+    def _wait_until_allowed(self):
+        if self._is_allowed():
+            return
+
+        if self.verbose:
+            now = dt.datetime.now()
+            print(f"\n[TimeWindowPause] {now:%Y-%m-%d %H:%M:%S} - "
+                  f"outside allowed window ({self._fmt(self.start_hour)}-{self._fmt(self.end_hour)}). Pausing training...")
+
+        while not self._is_allowed():
+            time.sleep(self.check_every)
+
+        if self.verbose:
+            now = dt.datetime.now()
+            print(f"[TimeWindowPause] {now:%Y-%m-%d %H:%M:%S} -  resuming training.")
+
+    def on_train_begin(self, logs=None):
+        self._wait_until_allowed()
+
+    def on_epoch_end(self, epoch, logs=None):
+        self._wait_until_allowed()
+
+    def on_batch_end(self, batch, logs=None):
+        if self.check_level == 'batch':
+            self._wait_until_allowed()
